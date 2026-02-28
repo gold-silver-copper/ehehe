@@ -56,13 +56,15 @@ fn draw_system(
         let render_height = area.height.saturating_sub(1); // reserve 1 row for status
 
         let mut render_packet =
-            game_map.0.create_render_packet(&camera.0, render_width, render_height);
+            game_map
+                .0
+                .create_render_packet(&camera.0, render_width, render_height);
 
         // Overlay the player @ at their screen-relative position
         let w_radius = render_width as CoordinateUnit / 2;
         let h_radius = render_height as CoordinateUnit / 2;
-        let player_screen_x = player.0 .0 - (camera.0 .0 - w_radius);
-        let player_screen_y = player.0 .1 - (camera.0 .1 - h_radius);
+        let player_screen_x = player.0.0 - (camera.0.0 - w_radius);
+        let player_screen_y = player.0.1 - (camera.0.1 - h_radius);
 
         if player_screen_x >= 0
             && player_screen_x < render_width as CoordinateUnit
@@ -97,7 +99,10 @@ fn draw_system(
             width: area.width,
             height: render_height,
         };
-        frame.render_widget(Paragraph::new(Text::from(render_lines)).on_black(), game_area);
+        frame.render_widget(
+            Paragraph::new(Text::from(render_lines)).on_black(),
+            game_area,
+        );
 
         // Status bar
         let status_area = ratatui::layout::Rect {
@@ -108,7 +113,7 @@ fn draw_system(
         };
         let status = Line::from(format!(
             " Roguelike | Player: ({}, {}) | WASD/Arrows: move | Q: quit",
-            player.0 .0, player.0 .1
+            player.0.0, player.0.1
         ));
         frame.render_widget(Paragraph::new(status).on_dark_gray(), status_area);
     })?;
@@ -119,6 +124,7 @@ fn draw_system(
 fn input_system(
     mut messages: MessageReader<KeyMessage>,
     mut exit: MessageWriter<AppExit>,
+    game_map: Res<GameMapResource>,
     mut player: ResMut<PlayerPosition>,
 ) {
     for message in messages.read() {
@@ -127,16 +133,28 @@ fn input_system(
                 exit.write_default();
             }
             KeyCode::Char('w') | KeyCode::Up => {
-                player.0 .1 += 1;
+                let next = (player.0.0, player.0.1 + 1);
+                if game_map.0.can_move_to(&next) {
+                    player.0 = next;
+                }
             }
             KeyCode::Char('s') | KeyCode::Down => {
-                player.0 .1 -= 1;
+                let next = (player.0.0, player.0.1 - 1);
+                if game_map.0.can_move_to(&next) {
+                    player.0 = next;
+                }
             }
             KeyCode::Char('a') | KeyCode::Left => {
-                player.0 .0 -= 1;
+                let next = (player.0.0 - 1, player.0.1);
+                if game_map.0.can_move_to(&next) {
+                    player.0 = next;
+                }
             }
             KeyCode::Char('d') | KeyCode::Right => {
-                player.0 .0 += 1;
+                let next = (player.0.0 + 1, player.0.1);
+                if game_map.0.can_move_to(&next) {
+                    player.0 = next;
+                }
             }
             _ => {}
         }
