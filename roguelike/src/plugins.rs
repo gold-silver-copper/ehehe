@@ -2,12 +2,19 @@ use std::collections::HashSet;
 
 use bevy::prelude::*;
 
-use crate::components::{CameraFollow, CombatStats, Health, Player, Position, Renderable, Viewshed};
+use crate::components::{
+    AiState, BlocksMovement, CameraFollow, CombatStats, Energy, Health, Hostile, Name,
+    Player, Position, Renderable, Speed, Viewshed, ACTION_COST,
+};
 use crate::events::{AttackIntent, DamageEvent, MoveIntent};
 use crate::gamemap::GameMap;
-use crate::resources::{CameraPosition, GameMapResource, GameState, MapSeed, SpatialIndex, TurnState};
-use crate::systems::{camera, combat, input, movement, render, spatial_index, turn, visibility};
-use crate::typedefs::{RatColor, SPAWN_X, SPAWN_Y};
+use crate::grid_vec::GridVec;
+use crate::noise::value_noise;
+use crate::resources::{
+    CameraPosition, CombatLog, GameMapResource, GameState, MapSeed, SpatialIndex, TurnState,
+};
+use crate::systems::{ai, camera, combat, input, movement, render, spatial_index, turn, visibility};
+use crate::typedefs::{RatColor, SPAWN_POINT, SPAWN_X, SPAWN_Y};
 
 // ─────────────────────────── System Sets ───────────────────────────
 
@@ -57,13 +64,14 @@ impl Plugin for RoguelikePlugin {
             // ── Resources ──
             .insert_resource(MapSeed(seed))
             .insert_resource(GameMapResource(GameMap::new(120, 80, seed)))
-            .insert_resource(CameraPosition((SPAWN_X, SPAWN_Y)))
+            .insert_resource(CameraPosition(SPAWN_POINT))
             .init_resource::<SpatialIndex>()
+            .init_resource::<CombatLog>()
             // ── States ──
             .init_state::<GameState>()
             .add_sub_state::<TurnState>()
             // ── Startup ──
-            .add_systems(Startup, spawn_player)
+            .add_systems(Startup, (spawn_player, spawn_monsters).chain())
             // ── System-set ordering ──
             .configure_sets(
                 Update,
@@ -89,6 +97,7 @@ impl Plugin for RoguelikePlugin {
                     movement::movement_system,
                     combat::combat_system,
                     combat::apply_damage_system,
+                    combat::death_system,
                 )
                     .chain()
                     .in_set(RoguelikeSet::Action)
@@ -112,9 +121,21 @@ impl Plugin for RoguelikePlugin {
                     .after(RoguelikeSet::Consequence)
                     .run_if(in_state(TurnState::PlayerTurn)),
             )
+            // ── World turn: energy accumulation + AI + action resolution ──
+            .add_systems(
+                Update,
+                (
+                    ai::energy_accumulate_system,
+                    ai::ai_system,
+                )
+                    .chain()
+                    .after(RoguelikeSet::Consequence)
+                    .run_if(in_state(TurnState::WorldTurn)),
+            )
             .add_systems(
                 Update,
                 turn::end_world_turn
+                    .after(ai::ai_system)
                     .after(RoguelikeSet::Consequence)
                     .run_if(in_state(TurnState::WorldTurn)),
             )
@@ -134,6 +155,7 @@ fn spawn_player(mut commands: Commands) {
             y: SPAWN_Y,
         },
         Player,
+        Name("Player".into()),
         Renderable {
             symbol: "@".into(),
             fg: RatColor::White,
@@ -148,6 +170,8 @@ fn spawn_player(mut commands: Commands) {
             attack: 5,
             defense: 2,
         },
+        Speed(ACTION_COST), // normal speed: one action per tick
+        Energy(0),
         Viewshed {
             range: 15,
             visible_tiles: HashSet::new(),
@@ -155,4 +179,115 @@ fn spawn_player(mut commands: Commands) {
             dirty: true, // compute on first frame
         },
     ));
+}
+
+/// Monster archetypes for procedural spawning.
+struct MonsterTemplate {
+    name: &'static str,
+    symbol: &'static str,
+    fg: RatColor,
+    health: i32,
+    attack: i32,
+    defense: i32,
+    speed: i32,
+    sight_range: i32,
+}
+
+const MONSTER_TEMPLATES: &[MonsterTemplate] = &[
+    MonsterTemplate {
+        name: "Goblin",
+        symbol: "g",
+        fg: RatColor::Rgb(0, 200, 0),
+        health: 8,
+        attack: 3,
+        defense: 1,
+        speed: 80,
+        sight_range: 8,
+    },
+    MonsterTemplate {
+        name: "Orc",
+        symbol: "o",
+        fg: RatColor::Rgb(180, 0, 0),
+        health: 16,
+        attack: 4,
+        defense: 2,
+        speed: 60,
+        sight_range: 6,
+    },
+    MonsterTemplate {
+        name: "Rat",
+        symbol: "r",
+        fg: RatColor::Rgb(160, 120, 80),
+        health: 4,
+        attack: 2,
+        defense: 0,
+        speed: 120,
+        sight_range: 5,
+    },
+];
+
+/// Spawns monsters on passable tiles using deterministic noise placement.
+///
+/// Monster locations are derived from the map seed, ensuring deterministic
+/// spawning: same seed → same monsters at same positions.
+fn spawn_monsters(mut commands: Commands, map: Res<GameMapResource>, seed: Res<MapSeed>) {
+    let spawn_seed = seed.0.wrapping_add(54321);
+    let template_seed = seed.0.wrapping_add(98765);
+    let min_spawn_dist_sq = 12 * 12; // min squared distance from player spawn
+
+    for y in 1..map.0.height - 1 {
+        for x in 1..map.0.width - 1 {
+            let pos = GridVec::new(x, y);
+
+            // Skip tiles near the spawn point.
+            if pos.distance_squared(SPAWN_POINT) < min_spawn_dist_sq {
+                continue;
+            }
+
+            // Skip impassable tiles.
+            if !map.0.is_passable(&pos) {
+                continue;
+            }
+
+            // Noise-based spawn chance (~2% of passable tiles).
+            let noise = value_noise(x, y, spawn_seed);
+            if noise > 0.02 {
+                continue;
+            }
+
+            // Select monster type deterministically.
+            let template_noise = value_noise(x, y, template_seed);
+            let idx = (template_noise * MONSTER_TEMPLATES.len() as f64) as usize;
+            let template = &MONSTER_TEMPLATES[idx.min(MONSTER_TEMPLATES.len() - 1)];
+
+            commands.spawn((
+                Position { x, y },
+                Name(template.name.into()),
+                Renderable {
+                    symbol: template.symbol.into(),
+                    fg: template.fg,
+                    bg: RatColor::Black,
+                },
+                BlocksMovement,
+                Hostile,
+                Health {
+                    current: template.health,
+                    max: template.health,
+                },
+                CombatStats {
+                    attack: template.attack,
+                    defense: template.defense,
+                },
+                Speed(template.speed),
+                Energy(0),
+                AiState::Idle,
+                Viewshed {
+                    range: template.sight_range,
+                    visible_tiles: HashSet::new(),
+                    revealed_tiles: HashSet::new(),
+                    dirty: true,
+                },
+            ));
+        }
+    }
 }

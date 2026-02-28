@@ -39,7 +39,7 @@ pub enum GameState {
 ///
 /// - **AwaitingInput** – input system is active; game waits for player action.
 /// - **PlayerTurn** – player's action is resolved (movement, combat).
-/// - **WorldTurn** – NPC AI and world-tick systems run.
+/// - **WorldTurn** – NPC AI and world-tick systems run; energy is accumulated.
 #[derive(SubStates, Clone, Copy, Default, Eq, PartialEq, Hash, Debug)]
 #[source(GameState = GameState::Playing)]
 pub enum TurnState {
@@ -64,4 +64,11 @@ impl SpatialIndex {
     pub fn entities_at(&self, point: &MyPoint) -> &[Entity] {
         self.map.get(point).map_or(&[], |v| v.as_slice())
     }
+}
+
+/// Accumulator for combat log messages displayed in the status bar.
+/// Cleared each frame after rendering.
+#[derive(Resource, Debug, Default)]
+pub struct CombatLog {
+    pub messages: Vec<String>,
 }

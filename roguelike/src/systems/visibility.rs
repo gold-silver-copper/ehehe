@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 
 use crate::components::{Position, Viewshed};
+use crate::grid_vec::GridVec;
 use crate::resources::GameMapResource;
 use crate::typedefs::{CoordinateUnit, MyPoint};
 
@@ -26,7 +27,7 @@ pub fn visibility_system(
         }
 
         viewshed.visible_tiles.clear();
-        let origin = (pos.x, pos.y);
+        let origin = pos.as_grid_vec();
         let range = viewshed.range;
 
         // The origin is always visible.
@@ -91,14 +92,14 @@ fn is_opaque(game_map: &GameMapResource, point: MyPoint) -> bool {
 /// Octant 0 is "north-northeast": row increases upward, col goes right.
 fn transform(origin: MyPoint, octant: u8, row: CoordinateUnit, col: CoordinateUnit) -> MyPoint {
     match octant {
-        0 => (origin.0 + col, origin.1 + row),
-        1 => (origin.0 + row, origin.1 + col),
-        2 => (origin.0 + row, origin.1 - col),
-        3 => (origin.0 + col, origin.1 - row),
-        4 => (origin.0 - col, origin.1 - row),
-        5 => (origin.0 - row, origin.1 - col),
-        6 => (origin.0 - row, origin.1 + col),
-        7 => (origin.0 - col, origin.1 + row),
+        0 => origin + GridVec::new(col, row),
+        1 => origin + GridVec::new(row, col),
+        2 => origin + GridVec::new(row, -col),
+        3 => origin + GridVec::new(col, -row),
+        4 => origin + GridVec::new(-col, -row),
+        5 => origin + GridVec::new(-row, -col),
+        6 => origin + GridVec::new(-row, col),
+        7 => origin + GridVec::new(-col, row),
         _ => unreachable!(),
     }
 }

@@ -13,6 +13,6 @@ pub fn spatial_index_system(
 ) {
     index.map.clear();
     for (entity, pos) in &query {
-        index.map.entry((pos.x, pos.y)).or_default().push(entity);
+        index.map.entry(pos.as_grid_vec()).or_default().push(entity);
     }
 }
