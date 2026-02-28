@@ -4,17 +4,18 @@ use ratatui::style::Stylize;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 
-use crate::components::{Player, Position, Renderable};
+use crate::components::{Player, Position, Renderable, Viewshed};
 use crate::resources::{CameraPosition, GameMapResource, GameState};
 use crate::typedefs::CoordinateUnit;
 
 /// Renders the game map and all `Renderable` entities to the terminal.
+/// Uses the player's `Viewshed` to determine tile visibility.
 pub fn draw_system(
     mut context: ResMut<RatatuiContext>,
     game_map: Res<GameMapResource>,
     camera: Res<CameraPosition>,
     renderables: Query<(&Position, &Renderable)>,
-    player_query: Query<&Position, With<Player>>,
+    player_query: Query<(&Position, Option<&Viewshed>), With<Player>>,
     state: Res<State<GameState>>,
 ) -> Result {
     context.draw(|frame| {
@@ -22,25 +23,57 @@ pub fn draw_system(
         let render_width = area.width;
         let render_height = area.height.saturating_sub(1); // reserve 1 row for status
 
-        let mut render_packet =
-            game_map.0.create_render_packet(&camera.0, render_width, render_height);
+        // Collect the player's visible tiles (if they have a Viewshed)
+        let visible_tiles = player_query
+            .single()
+            .ok()
+            .and_then(|(_, vs)| vs)
+            .map(|vs| &vs.visible_tiles);
 
-        // Overlay all renderable entities at their screen-relative positions
         let w_radius = render_width as CoordinateUnit / 2;
         let h_radius = render_height as CoordinateUnit / 2;
+        let bottom_left_x = camera.0 .0 - w_radius;
+        let bottom_left_y = camera.0 .1 - h_radius;
 
+        // Build the render packet with per-tile visibility
+        let mut render_packet = crate::typedefs::create_2d_array(
+            render_width as usize,
+            render_height as usize,
+        );
+
+        for ry in 0..render_height as CoordinateUnit {
+            for rx in 0..render_width as CoordinateUnit {
+                let world_x = bottom_left_x + rx;
+                let world_y = bottom_left_y + ry;
+
+                if let Some(voxel) = game_map.0.get_voxel_at(&(world_x, world_y)) {
+                    let visible = visible_tiles
+                        .map(|vt| vt.contains(&(world_x, world_y)))
+                        .unwrap_or(true); // if no viewshed, show everything
+                    render_packet[ry as usize][rx as usize] = voxel.to_graphic(visible);
+                }
+            }
+        }
+
+        // Overlay all renderable entities at their screen-relative positions
         for (pos, renderable) in &renderables {
-            let screen_x = pos.x - (camera.0 .0 - w_radius);
-            let screen_y = pos.y - (camera.0 .1 - h_radius);
+            let screen_x = pos.x - bottom_left_x;
+            let screen_y = pos.y - bottom_left_y;
 
             if screen_x >= 0
                 && screen_x < render_width as CoordinateUnit
                 && screen_y >= 0
                 && screen_y < render_height as CoordinateUnit
             {
-                let bg = render_packet[screen_y as usize][screen_x as usize].2;
-                render_packet[screen_y as usize][screen_x as usize] =
-                    (renderable.symbol.clone(), renderable.fg, bg);
+                // Only draw entities that are visible (or if no viewshed exists)
+                let entity_visible = visible_tiles
+                    .map(|vt| vt.contains(&(pos.x, pos.y)))
+                    .unwrap_or(true);
+                if entity_visible {
+                    let bg = render_packet[screen_y as usize][screen_x as usize].2;
+                    render_packet[screen_y as usize][screen_x as usize] =
+                        (renderable.symbol.clone(), renderable.fg, bg);
+                }
             }
         }
 
@@ -90,7 +123,7 @@ pub fn draw_system(
         // Status bar — show player position (gracefully handles missing player)
         let player_info = player_query
             .single()
-            .map(|p| format!("({}, {})", p.x, p.y))
+            .map(|(p, _)| format!("({}, {})", p.x, p.y))
             .unwrap_or_default();
 
         let status_area = ratatui::layout::Rect {

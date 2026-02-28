@@ -1,9 +1,11 @@
+use std::collections::HashSet;
+
 use bevy::prelude::*;
 
-use crate::components::{CameraFollow, Player, Position, Renderable};
+use crate::components::{CameraFollow, Player, Position, Renderable, Viewshed};
 use crate::gamemap::GameMap;
 use crate::resources::{CameraPosition, GameMapResource, GameState};
-use crate::systems::{camera, input, movement, render};
+use crate::systems::{camera, input, movement, render, visibility};
 use crate::typedefs::{RatColor, SPAWN_X, SPAWN_Y};
 
 /// Bevy plugin that registers all roguelike ECS systems, resources, and
@@ -25,6 +27,7 @@ impl Plugin for RoguelikePlugin {
                 Update,
                 (
                     movement::movement_system,
+                    visibility::visibility_system,
                     camera::camera_follow_system,
                 )
                     .chain()
@@ -49,5 +52,10 @@ fn spawn_player(mut commands: Commands) {
             bg: RatColor::Black,
         },
         CameraFollow,
+        Viewshed {
+            range: 15,
+            visible_tiles: HashSet::new(),
+            dirty: true, // compute on first frame
+        },
     ));
 }

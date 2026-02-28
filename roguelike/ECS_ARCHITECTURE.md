@@ -10,8 +10,9 @@ roguelike, built with Bevy and rendered through `bevy_ratatui`.
 1. **Entities** represent every discrete game object (player, NPCs, items, projectiles).
 2. **Components** are plain data attached to entities — no behavior.
 3. **Systems** contain all logic; they query for combinations of components.
-4. **Resources** hold global/singleton state (the tile map, turn counter, RNG).
-5. **Events** decouple intent from execution (e.g., `MoveIntent` → collision check → position update).
+4. **Resources** hold global/singleton state (the tile map, camera position).
+5. **Events (Messages)** decouple intent from execution (e.g., `MoveIntent` → collision check → position update).
+6. **States** control which systems run each frame (e.g., `Playing` vs `Paused`).
 
 ---
 
@@ -24,6 +25,7 @@ roguelike, built with Bevy and rendered through `bevy_ratatui`.
 | `Renderable` | `{ symbol: String, fg: Color, bg: Color }` | Visual representation of an entity |
 | `CameraFollow` | marker | Tags the entity the camera tracks |
 | `BlocksMovement` | marker | Marks an entity as impassable |
+| `Viewshed` | `{ range: i32, visible_tiles: HashSet, dirty: bool }` | Field-of-view data, recomputed when dirty |
 
 ### Why markers?
 
@@ -41,8 +43,9 @@ concrete "player struct."
 Entity
  ├─ Position { x, y }
  ├─ Player          (marker)
- ├─ Renderable { symbol: "@", fg: White, bg: transparent }
- └─ CameraFollow    (marker)
+ ├─ Renderable { symbol: "@", fg: White, bg: Black }
+ ├─ CameraFollow    (marker)
+ └─ Viewshed { range: 15, dirty: true }
 ```
 
 ### Future: NPC / Monster
@@ -51,7 +54,8 @@ Entity
 Entity
  ├─ Position { x, y }
  ├─ Renderable { symbol: "g", fg: Red, … }
- └─ BlocksMovement
+ ├─ BlocksMovement
+ └─ Viewshed { range: 8 }
 ```
 
 ### Future: Item
@@ -72,7 +76,7 @@ new component combinations.
 
 | Resource | Purpose |
 |---|---|
-| `GameMap` | 2D tile grid (floor + furniture). Kept as a resource because tiles are static spatial data best accessed by coordinate, not by query. |
+| `GameMapResource` | Wraps the 2D tile grid (`GameMap`). Kept as a resource because tiles are static spatial data best accessed by coordinate, not by query. |
 | `CameraPosition` | Cached viewport center, updated each frame by `camera_follow_system`. |
 
 > **Design note:** Tiles are *not* individual entities. A 120×80 map would
@@ -82,9 +86,21 @@ new component combinations.
 
 ---
 
-## Events
+## States
 
-| Event | Fields | Emitted by | Consumed by |
+| State | Variant | Effect |
+|---|---|---|
+| `GameState` | `Playing` (default) | Movement, visibility, and camera systems run normally |
+| `GameState` | `Paused` | Movement and visibility systems are skipped; draw system shows PAUSED overlay |
+
+States use Bevy's `States` derive macro and `in_state()` run conditions.
+The input system always runs so the player can unpause or quit.
+
+---
+
+## Events (Messages)
+
+| Message | Fields | Emitted by | Consumed by |
 |---|---|---|---|
 | `MoveIntent` | `entity: Entity, dx: i32, dy: i32` | `input_system` | `movement_system` |
 
@@ -97,28 +113,38 @@ also emit `MoveIntent` without touching the movement code.
 
 ```text
 PreUpdate
-  └─ input_system          reads KeyMessage → emits MoveIntent
+  └─ input_system            reads KeyMessage → emits MoveIntent / toggles GameState
 
-Update  (chained)
-  ├─ movement_system       reads MoveIntent → collision check → mutates Position
-  ├─ camera_follow_system  queries Position + CameraFollow → updates CameraPosition
-  └─ draw_system           queries all Renderable + Position → renders frame
+Update  (chained, gated on GameState::Playing)
+  ├─ movement_system         reads MoveIntent → collision check → mutates Position, marks Viewshed dirty
+  ├─ visibility_system       recalculates Viewshed.visible_tiles via Bresenham ray casting
+  └─ camera_follow_system    queries Position + CameraFollow → updates CameraPosition
+
+Update  (always runs, after camera_follow_system)
+  └─ draw_system             queries Renderable + Position + Viewshed → renders frame
 ```
 
 ### System Details
 
 #### `input_system`
-- **Reads:** `MessageReader<KeyMessage>`
-- **Writes:** `MessageWriter<MoveIntent>`, `MessageWriter<AppExit>`
-- Translates key presses into `MoveIntent` events. Does *not* mutate any
-  position directly.
+- **Reads:** `MessageReader<KeyMessage>`, `Res<State<GameState>>`
+- **Writes:** `MessageWriter<MoveIntent>`, `MessageWriter<AppExit>`, `ResMut<NextState<GameState>>`
+- Translates key presses into `MoveIntent` events (only when `Playing`).
+  Always handles quit (`q`/`Esc`) and pause toggle (`p`).
 
 #### `movement_system`
-- **Reads:** `MessageReader<MoveIntent>`, `Res<GameMap>`
-- **Writes:** `Query<&mut Position>`
+- **Reads:** `MessageReader<MoveIntent>`, `Res<GameMapResource>`
+- **Writes:** `Query<(&mut Position, Option<&mut Viewshed>)>`
 - For each `MoveIntent`, computes the target tile and checks the `GameMap`
   for walkability (walls, furniture that blocks). Updates `Position` only
-  if the tile is passable.
+  if the tile is passable. Marks the entity's `Viewshed` as dirty.
+
+#### `visibility_system`
+- **Reads:** `Res<GameMapResource>`
+- **Writes:** `Query<(&Position, &mut Viewshed)>`
+- For each entity with a dirty `Viewshed`, casts Bresenham rays from the
+  entity's position to the perimeter of its sight range. Tiles with
+  furniture (walls, trees) block line-of-sight but are themselves visible.
 
 #### `camera_follow_system`
 - **Reads:** `Query<&Position, With<CameraFollow>>`
@@ -126,11 +152,33 @@ Update  (chained)
 - Copies the followed entity's position into the camera resource.
 
 #### `draw_system`
-- **Reads:** `Res<GameMap>`, `Res<CameraPosition>`,
-  `Query<(&Position, &Renderable)>`
+- **Reads:** `Res<GameMapResource>`, `Res<CameraPosition>`,
+  `Query<(&Position, &Renderable)>`, `Query<(&Position, Option<&Viewshed>), With<Player>>`,
+  `Res<State<GameState>>`
 - **Writes:** `ResMut<RatatuiContext>`
-- Builds a render packet from the map, overlays all `Renderable` entities
-  at their screen-relative positions, and draws the frame.
+- Builds a render packet from the map using per-tile visibility from the
+  player's `Viewshed`. Tiles outside the FOV are dimmed. Overlays all
+  visible `Renderable` entities and draws the frame. Shows a PAUSED
+  overlay when the game is paused.
+
+---
+
+## Plugin
+
+`RoguelikePlugin` is the single entry point. It:
+
+1. Adds `StatesPlugin` (required for `MinimalPlugins` setups)
+2. Inserts resources (`GameMapResource`, `CameraPosition`)
+3. Initialises `GameState`
+4. Registers the `spawn_player` startup system
+5. Registers all gameplay systems with correct ordering and state gating
+
+`main.rs` only needs:
+```rust
+App::new()
+    .add_plugins((MinimalPlugins, RatatuiPlugins::default(), RoguelikePlugin))
+    .run();
+```
 
 ---
 
@@ -138,18 +186,20 @@ Update  (chained)
 
 ```
 roguelike/src/
-├── main.rs            App entry point, plugin registration
+├── main.rs            App entry point (minimal — just plugin registration)
 ├── lib.rs             Module declarations
-├── components.rs      All ECS components (Position, Player, Renderable, …)
+├── components.rs      All ECS components (Position, Player, Renderable, Viewshed, …)
 ├── events.rs          MoveIntent and future game events
+├── resources.rs       GameMapResource, CameraPosition, GameState
+├── plugins.rs         RoguelikePlugin (groups systems + resources + states)
 ├── systems/
 │   ├── mod.rs         Re-exports
 │   ├── input.rs       input_system
 │   ├── movement.rs    movement_system
+│   ├── visibility.rs  visibility_system (Bresenham FOV)
 │   ├── camera.rs      camera_follow_system
 │   └── render.rs      draw_system
-├── plugins.rs         RoguelikePlugin (groups systems + events)
-├── gamemap.rs         GameMap resource & tile grid
+├── gamemap.rs         GameMap struct & tile grid
 ├── voxel.rs           Voxel struct & rendering helpers
 ├── typeenums.rs       Floor / Furniture enums
 ├── typedefs.rs        Type aliases, constants, helpers
@@ -165,12 +215,12 @@ features slot in naturally:
 
 | Feature | Implementation |
 |---|---|
-| NPCs / Monsters | Spawn entities with `Position + Renderable + AI + BlocksMovement` |
+| NPCs / Monsters | Spawn entities with `Position + Renderable + AI + BlocksMovement + Viewshed` |
 | Turn system | Add `TurnOrder` resource; gate `MoveIntent` processing on turn state |
 | Items & inventory | `Item` marker + `InBackpack(Entity)` component |
-| Field of view | `Viewshed` component + `visibility_system` |
 | Combat | `CombatStats` component + `AttackIntent` event + `combat_system` |
 | Procedural generation | Replace `GameMap::new()` with a generation plugin |
+| Fog of war (memory) | Add `revealed_tiles: HashSet` to track explored tiles |
 
 ---
 

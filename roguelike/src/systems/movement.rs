@@ -1,18 +1,19 @@
 use bevy::prelude::*;
 
-use crate::components::Position;
+use crate::components::{Position, Viewshed};
 use crate::events::MoveIntent;
 use crate::resources::GameMapResource;
 
 /// Processes `MoveIntent` events: checks the target tile on the `GameMap` for
 /// walkability, then updates the entity's `Position` if the move is valid.
+/// Also marks the entity's `Viewshed` as dirty so FOV is recalculated.
 pub fn movement_system(
     mut intents: MessageReader<MoveIntent>,
     game_map: Res<GameMapResource>,
-    mut positions: Query<&mut Position>,
+    mut movers: Query<(&mut Position, Option<&mut Viewshed>)>,
 ) {
     for intent in intents.read() {
-        let Ok(mut pos) = positions.get_mut(intent.entity) else {
+        let Ok((mut pos, viewshed)) = movers.get_mut(intent.entity) else {
             continue;
         };
 
@@ -25,6 +26,10 @@ pub fn movement_system(
         {
             pos.x = target_x;
             pos.y = target_y;
+            // Mark viewshed dirty so visibility is recalculated
+            if let Some(mut vs) = viewshed {
+                vs.dirty = true;
+            }
         }
     }
 }
