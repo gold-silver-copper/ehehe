@@ -4,21 +4,29 @@ use ratatui::crossterm::event::KeyCode;
 
 use crate::components::Player;
 use crate::events::MoveIntent;
-use crate::resources::GameState;
+use crate::resources::{GameState, TurnState};
 
 /// Reads keyboard input. Global keys (quit, pause) are always handled.
-/// Movement keys are only processed while `GameState::Playing`.
+/// Movement keys are only processed while `TurnState::AwaitingInput`,
+/// which transitions the game into `PlayerTurn` so that the action is
+/// resolved before the next input is accepted.
 pub fn input_system(
     mut messages: MessageReader<KeyMessage>,
     mut exit: MessageWriter<AppExit>,
     mut move_intents: MessageWriter<MoveIntent>,
     player_query: Query<Entity, With<Player>>,
-    state: Res<State<GameState>>,
-    mut next_state: ResMut<NextState<GameState>>,
+    game_state: Res<State<GameState>>,
+    mut next_game_state: ResMut<NextState<GameState>>,
+    turn_state: Option<Res<State<TurnState>>>,
+    mut next_turn_state: Option<ResMut<NextState<TurnState>>>,
 ) {
     let Ok(player_entity) = player_query.single() else {
         return;
     };
+
+    let awaiting_input = turn_state
+        .as_ref()
+        .is_some_and(|s| *s.get() == TurnState::AwaitingInput);
 
     for message in messages.read() {
         match message.code {
@@ -26,42 +34,40 @@ pub fn input_system(
                 exit.write_default();
             }
             KeyCode::Char('p') => {
-                let new = match state.get() {
+                let new = match game_state.get() {
                     GameState::Playing => GameState::Paused,
                     GameState::Paused => GameState::Playing,
                 };
-                next_state.set(new);
+                next_game_state.set(new);
             }
-            // Movement keys only processed while playing
-            KeyCode::Char('w') | KeyCode::Up if *state.get() == GameState::Playing => {
-                move_intents.write(MoveIntent {
-                    entity: player_entity,
-                    dx: 0,
-                    dy: 1,
-                });
+            // Movement keys only processed while awaiting input
+            KeyCode::Char('w') | KeyCode::Up if awaiting_input => {
+                emit_move(&mut move_intents, &mut next_turn_state, player_entity, 0, 1);
             }
-            KeyCode::Char('s') | KeyCode::Down if *state.get() == GameState::Playing => {
-                move_intents.write(MoveIntent {
-                    entity: player_entity,
-                    dx: 0,
-                    dy: -1,
-                });
+            KeyCode::Char('s') | KeyCode::Down if awaiting_input => {
+                emit_move(&mut move_intents, &mut next_turn_state, player_entity, 0, -1);
             }
-            KeyCode::Char('a') | KeyCode::Left if *state.get() == GameState::Playing => {
-                move_intents.write(MoveIntent {
-                    entity: player_entity,
-                    dx: -1,
-                    dy: 0,
-                });
+            KeyCode::Char('a') | KeyCode::Left if awaiting_input => {
+                emit_move(&mut move_intents, &mut next_turn_state, player_entity, -1, 0);
             }
-            KeyCode::Char('d') | KeyCode::Right if *state.get() == GameState::Playing => {
-                move_intents.write(MoveIntent {
-                    entity: player_entity,
-                    dx: 1,
-                    dy: 0,
-                });
+            KeyCode::Char('d') | KeyCode::Right if awaiting_input => {
+                emit_move(&mut move_intents, &mut next_turn_state, player_entity, 1, 0);
             }
             _ => {}
         }
+    }
+}
+
+/// Helper: emits a `MoveIntent` and advances the turn state to `PlayerTurn`.
+fn emit_move(
+    move_intents: &mut MessageWriter<MoveIntent>,
+    next_turn_state: &mut Option<ResMut<NextState<TurnState>>>,
+    entity: Entity,
+    dx: i32,
+    dy: i32,
+) {
+    move_intents.write(MoveIntent { entity, dx, dy });
+    if let Some(next) = next_turn_state {
+        next.set(TurnState::PlayerTurn);
     }
 }

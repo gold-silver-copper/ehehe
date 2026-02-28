@@ -79,18 +79,25 @@ impl GameMap {
         render_width: u16,
         render_height: u16,
     ) -> RenderPacket {
-        self.create_render_packet_with_visibility(center, render_width, render_height, None)
+        self.create_render_packet_with_fog(center, render_width, render_height, None, None)
     }
 
-    /// Creates a RenderPacket with per-tile visibility support.
-    /// When `visible_tiles` is `Some`, tiles outside the set are dimmed.
-    /// When `None`, all tiles are shown at full brightness.
-    pub fn create_render_packet_with_visibility(
+    /// Creates a RenderPacket with full fog-of-war support.
+    ///
+    /// Tiles are rendered in three states:
+    /// - **Visible** (in `visible_tiles`): full brightness.
+    /// - **Revealed** (in `revealed_tiles` but not `visible_tiles`): heavily dimmed
+    ///   to show the player has been there, but the area is not currently lit.
+    /// - **Unseen** (in neither set): solid black.
+    ///
+    /// When both sets are `None`, all tiles render at full brightness (no FOV).
+    pub fn create_render_packet_with_fog(
         &self,
         center: &MyPoint,
         render_width: u16,
         render_height: u16,
         visible_tiles: Option<&std::collections::HashSet<MyPoint>>,
+        revealed_tiles: Option<&std::collections::HashSet<MyPoint>>,
     ) -> RenderPacket {
         let w_radius = render_width as CoordinateUnit / 2;
         let h_radius = render_height as CoordinateUnit / 2;
@@ -103,12 +110,22 @@ impl GameMap {
             for rx in 0..render_width as CoordinateUnit {
                 let world_x = bottom_left.0 + rx;
                 let world_y = bottom_left.1 + ry;
+                let world_pos = (world_x, world_y);
 
-                if let Some(voxel) = self.get_voxel_at(&(world_x, world_y)) {
-                    let visible = visible_tiles
-                        .map(|vt| vt.contains(&(world_x, world_y)))
+                if let Some(voxel) = self.get_voxel_at(&world_pos) {
+                    let is_visible = visible_tiles
+                        .map(|vt| vt.contains(&world_pos))
                         .unwrap_or(true);
-                    grid[ry as usize][rx as usize] = voxel.to_graphic(visible);
+                    let is_revealed = revealed_tiles
+                        .map(|rt| rt.contains(&world_pos))
+                        .unwrap_or(true);
+
+                    if is_visible {
+                        grid[ry as usize][rx as usize] = voxel.to_graphic(true);
+                    } else if is_revealed {
+                        grid[ry as usize][rx as usize] = voxel.to_graphic(false);
+                    }
+                    // else: unseen → stays as the default black cell
                 }
             }
         }
