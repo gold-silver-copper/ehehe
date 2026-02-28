@@ -9,8 +9,10 @@ pub enum Floor {
 }
 
 impl Floor {
+    const NOISE_BUCKETS: u32 = 10;
+
     pub fn from_noise(noise: u32) -> Self {
-        match noise % 10 {
+        match noise % Self::NOISE_BUCKETS {
             0 => Floor::Moss,
             1 | 2 => Floor::GrassDeep,
             3..=7 => Floor::Grass,

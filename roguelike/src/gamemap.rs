@@ -2,6 +2,16 @@ use crate::typedefs::{CoordinateUnit, MyPoint, RenderPacket, SPAWN_X, SPAWN_Y, c
 use crate::typeenums::{BlockingFurniture, Floor, Furniture, WalkableFurniture};
 use crate::voxel::Voxel;
 
+const NOISE_RANGE: u32 = 100;
+const BLOCKING_FURNITURE_THRESHOLD: u32 = 8;
+const WALKABLE_FURNITURE_THRESHOLD: u32 = 19;
+const SPAWN_CLEAR_RADIUS: CoordinateUnit = 2;
+// Hash constants for lightweight 2D coordinate mixing (deterministic pseudo-random layout).
+const NOISE_X_PRIME: u64 = 73_856_093;
+const NOISE_Y_PRIME: u64 = 19_349_663;
+const NOISE_MIXER: u64 = 1_274_126_177;
+const NOISE_FINALIZER: u32 = 2_654_435_761;
+
 /// The game map: a simple 2D grid of voxels.
 pub struct GameMap {
     pub width: CoordinateUnit,
@@ -18,19 +28,20 @@ impl GameMap {
             for x in 0..width {
                 let noise = procedural_noise(x, y);
                 let floor = Floor::from_noise(noise);
-                let is_spawn_clear = (x - SPAWN_X).abs() <= 2 && (y - SPAWN_Y).abs() <= 2;
+                let is_spawn_clear =
+                    (x - SPAWN_X).abs() <= SPAWN_CLEAR_RADIUS && (y - SPAWN_Y).abs() <= SPAWN_CLEAR_RADIUS;
 
                 let furniture = if x == 0 || y == 0 || x == width - 1 || y == height - 1 {
                     Some(Furniture::Blocking(BlockingFurniture::Wall))
                 } else if is_spawn_clear {
                     None
-                } else if noise % 100 < 8 {
+                } else if noise % NOISE_RANGE < BLOCKING_FURNITURE_THRESHOLD {
                     Some(Furniture::Blocking(match noise % 3 {
                         0 => BlockingFurniture::OakTree,
                         1 => BlockingFurniture::PineTree,
                         _ => BlockingFurniture::BirchTree,
                     }))
-                } else if noise % 100 < 19 {
+                } else if noise % NOISE_RANGE < WALKABLE_FURNITURE_THRESHOLD {
                     Some(Furniture::Walkable(match noise % 4 {
                         0 => WalkableFurniture::Shrub,
                         1 => WalkableFurniture::Fern,
@@ -107,10 +118,11 @@ impl GameMap {
     }
 }
 
+/// Hash-based deterministic pseudo-noise used for procedural tile variation.
 fn procedural_noise(x: CoordinateUnit, y: CoordinateUnit) -> u32 {
-    let mut n = (x as u64).wrapping_mul(73_856_093) ^ (y as u64).wrapping_mul(19_349_663);
-    n = (n ^ (n >> 13)).wrapping_mul(1_274_126_177);
-    (n as u32).wrapping_mul(2_654_435_761)
+    let mut n = (x as u64).wrapping_mul(NOISE_X_PRIME) ^ (y as u64).wrapping_mul(NOISE_Y_PRIME);
+    n = (n ^ (n >> 13)).wrapping_mul(NOISE_MIXER);
+    (n as u32).wrapping_mul(NOISE_FINALIZER)
 }
 
 impl Default for GameMap {
@@ -183,5 +195,11 @@ mod tests {
 
         assert!(map.can_move_to(&walkable_plant));
         assert!(!map.can_move_to(&tree));
+    }
+
+    #[test]
+    fn procedural_noise_is_deterministic() {
+        assert_eq!(procedural_noise(10, 20), procedural_noise(10, 20));
+        assert_ne!(procedural_noise(10, 20), procedural_noise(11, 20));
     }
 }
