@@ -12,6 +12,21 @@ pub struct GameMap {
 impl GameMap {
     /// Creates a new game map filled with a simple pattern of floor and furniture tiles.
     pub fn new(width: CoordinateUnit, height: CoordinateUnit) -> Self {
+        let spawn_x = 60;
+        let spawn_y = 40;
+
+        // Positions of trees placed around the spawn point
+        let spawn_trees: &[(CoordinateUnit, CoordinateUnit)] = &[
+            (spawn_x - 3, spawn_y + 2),
+            (spawn_x + 4, spawn_y + 1),
+            (spawn_x - 2, spawn_y - 3),
+            (spawn_x + 3, spawn_y - 2),
+            (spawn_x + 5, spawn_y + 3),
+            (spawn_x - 4, spawn_y - 1),
+            (spawn_x + 1, spawn_y + 4),
+            (spawn_x - 1, spawn_y - 4),
+        ];
+
         let mut voxels = Vec::with_capacity(height as usize);
         for y in 0..height {
             let mut row = Vec::with_capacity(width as usize);
@@ -25,6 +40,8 @@ impl GameMap {
 
                 let furniture = if x == 0 || y == 0 || x == width - 1 || y == height - 1 {
                     Some(Furniture::Wall)
+                } else if spawn_trees.contains(&(x, y)) {
+                    Some(Furniture::Tree)
                 } else if (x % 7 == 0) && (y % 5 == 0) {
                     Some(Furniture::Tree)
                 } else {

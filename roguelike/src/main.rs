@@ -9,15 +9,22 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 
 use roguelike::gamemap::GameMap;
-use roguelike::typedefs::MyPoint;
+use roguelike::typedefs::{CoordinateUnit, MyPoint, RatColor};
 
 /// Bevy resource holding the game map.
 #[derive(Resource)]
 struct GameMapResource(GameMap);
 
-/// Bevy resource holding the camera/player position.
+/// Bevy resource holding the camera position (follows the player).
 #[derive(Resource)]
 struct CameraPosition(MyPoint);
+
+/// Bevy resource holding the player's world position.
+#[derive(Resource)]
+struct PlayerPosition(MyPoint);
+
+const SPAWN_X: CoordinateUnit = 60;
+const SPAWN_Y: CoordinateUnit = 40;
 
 fn main() {
     App::new()
@@ -28,24 +35,49 @@ fn main() {
             RatatuiPlugins::default(),
         ))
         .insert_resource(GameMapResource(GameMap::new(120, 80)))
-        .insert_resource(CameraPosition((60, 40)))
+        .insert_resource(PlayerPosition((SPAWN_X, SPAWN_Y)))
+        .insert_resource(CameraPosition((SPAWN_X, SPAWN_Y)))
         .add_systems(PreUpdate, input_system)
-        .add_systems(Update, draw_system)
+        .add_systems(Update, (camera_follow_system, draw_system).chain())
         .run();
+}
+
+/// Updates the camera to follow the player position.
+fn camera_follow_system(player: Res<PlayerPosition>, mut camera: ResMut<CameraPosition>) {
+    camera.0 = player.0;
 }
 
 fn draw_system(
     mut context: ResMut<RatatuiContext>,
     game_map: Res<GameMapResource>,
     camera: Res<CameraPosition>,
+    player: Res<PlayerPosition>,
 ) -> Result {
     context.draw(|frame| {
         let area = frame.area();
         let render_width = area.width;
         let render_height = area.height.saturating_sub(1); // reserve 1 row for status
 
-        let render_packet =
+        let mut render_packet =
             game_map.0.create_render_packet(&camera.0, render_width, render_height);
+
+        // Overlay the player @ at their screen-relative position
+        let w_radius = render_width as CoordinateUnit / 2;
+        let h_radius = render_height as CoordinateUnit / 2;
+        let player_screen_x = player.0 .0 - (camera.0 .0 - w_radius);
+        let player_screen_y = player.0 .1 - (camera.0 .1 - h_radius);
+
+        if player_screen_x >= 0
+            && player_screen_x < render_width as CoordinateUnit
+            && player_screen_y >= 0
+            && player_screen_y < render_height as CoordinateUnit
+        {
+            let bg = render_packet[player_screen_y as usize][player_screen_x as usize]
+                .2
+                .clone();
+            render_packet[player_screen_y as usize][player_screen_x as usize] =
+                ("@".into(), RatColor::White, bg);
+        }
 
         let mut render_lines = Vec::new();
 
@@ -78,8 +110,8 @@ fn draw_system(
             height: 1,
         };
         let status = Line::from(format!(
-            " Roguelike | Pos: ({}, {}) | WASD: move | Q: quit",
-            camera.0 .0, camera.0 .1
+            " Roguelike | Player: ({}, {}) | WASD/Arrows: move | Q: quit",
+            player.0 .0, player.0 .1
         ));
         frame.render_widget(Paragraph::new(status).on_dark_gray(), status_area);
     })?;
@@ -90,7 +122,7 @@ fn draw_system(
 fn input_system(
     mut messages: MessageReader<KeyMessage>,
     mut exit: MessageWriter<AppExit>,
-    mut camera: ResMut<CameraPosition>,
+    mut player: ResMut<PlayerPosition>,
 ) {
     for message in messages.read() {
         match message.code {
@@ -98,16 +130,16 @@ fn input_system(
                 exit.write_default();
             }
             KeyCode::Char('w') | KeyCode::Up => {
-                camera.0 .1 += 1;
+                player.0 .1 += 1;
             }
             KeyCode::Char('s') | KeyCode::Down => {
-                camera.0 .1 -= 1;
+                player.0 .1 -= 1;
             }
             KeyCode::Char('a') | KeyCode::Left => {
-                camera.0 .0 -= 1;
+                player.0 .0 -= 1;
             }
             KeyCode::Char('d') | KeyCode::Right => {
-                camera.0 .0 += 1;
+                player.0 .0 += 1;
             }
             _ => {}
         }

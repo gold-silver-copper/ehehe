@@ -41,14 +41,14 @@ impl GraphicElement for Furniture {
     fn symbol(&self) -> String {
         match self {
             Furniture::Wall => "#".into(),
-            Furniture::Tree => "♣".into(),
+            Furniture::Tree => "T".into(),
         }
     }
 
     fn fg_color(&self) -> RatColor {
         match self {
             Furniture::Wall => RatColor::Rgb(139, 105, 20),
-            Furniture::Tree => RatColor::Rgb(205, 170, 125),
+            Furniture::Tree => RatColor::Rgb(34, 139, 34),
         }
     }
 
