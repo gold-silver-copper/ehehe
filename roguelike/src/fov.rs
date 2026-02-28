@@ -15,7 +15,7 @@ impl Fraction {
         }
     }
 
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp_fraction(&self, other: &Self) -> std::cmp::Ordering {
         let left = self.numerator as i64 * other.denominator as i64;
         let right = other.numerator as i64 * self.denominator as i64;
         left.cmp(&right)
@@ -24,7 +24,13 @@ impl Fraction {
 
 impl PartialOrd for Fraction {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
+        Some(self.cmp_fraction(other))
+    }
+}
+
+impl Ord for Fraction {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.cmp_fraction(other)
     }
 }
 
@@ -90,7 +96,7 @@ fn transform_octant((x, y): (i32, i32), octant: i32) -> (i32, i32) {
         5 => (-y, -x),
         6 => (y, -x),
         7 => (x, -y),
-        _ => unreachable!("octant must be in [0, 7]"),
+        _ => unreachable!("octant must be in [0, 8)"),
     }
 }
 
@@ -204,7 +210,7 @@ pub fn has_los(from: (i32, i32), to: (i32, i32), is_opaque: impl Fn(i32, i32) ->
     }
 }
 
-pub fn print_ascii_fov_harness() {
+pub fn print_ascii_fov_demo() {
     let mut map = vec![vec![false; 20]; 20];
     for x in 2..18 {
         map[5][x] = true;
@@ -273,6 +279,6 @@ mod tests {
 
     #[test]
     fn ascii_harness_smoke_test() {
-        print_ascii_fov_harness();
+        print_ascii_fov_demo();
     }
 }
