@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use bevy::prelude::*;
 use bevy_ratatui::RatatuiContext;
 use ratatui::style::Stylize;
@@ -6,10 +8,11 @@ use ratatui::widgets::Paragraph;
 
 use crate::components::{Player, Position, Renderable, Viewshed};
 use crate::resources::{CameraPosition, GameMapResource, GameState};
-use crate::typedefs::CoordinateUnit;
+use crate::typedefs::{CoordinateUnit, MyPoint};
 
 /// Renders the game map and all `Renderable` entities to the terminal.
-/// Uses the player's `Viewshed` to determine tile visibility.
+/// Uses the player's `Viewshed` to determine tile visibility, and the
+/// `revealed_tiles` set for fog-of-war memory (dimmed rendering).
 pub fn draw_system(
     mut context: ResMut<RatatuiContext>,
     game_map: Res<GameMapResource>,
@@ -23,18 +26,24 @@ pub fn draw_system(
         let render_width = area.width;
         let render_height = area.height.saturating_sub(1); // reserve 1 row for status
 
-        // Collect the player's visible tiles (if they have a Viewshed)
-        let visible_tiles = player_query
+        // Collect the player's visible and revealed tiles.
+        let (visible_tiles, revealed_tiles): (
+            Option<&HashSet<MyPoint>>,
+            Option<&HashSet<MyPoint>>,
+        ) = player_query
             .single()
             .ok()
             .and_then(|(_, vs)| vs)
-            .map(|vs| &vs.visible_tiles);
+            .map(|vs| (&vs.visible_tiles, &vs.revealed_tiles))
+            .map(|(vis, rev)| (Some(vis), Some(rev)))
+            .unwrap_or((None, None));
 
-        let mut render_packet = game_map.0.create_render_packet_with_visibility(
+        let mut render_packet = game_map.0.create_render_packet_with_fog(
             &camera.0,
             render_width,
             render_height,
             visible_tiles,
+            revealed_tiles,
         );
 
         // Overlay all renderable entities at their screen-relative positions
@@ -51,7 +60,7 @@ pub fn draw_system(
                 && screen_y >= 0
                 && screen_y < render_height as CoordinateUnit
             {
-                // Only draw entities that are visible (or if no viewshed exists)
+                // Only draw entities that are currently visible (not merely revealed)
                 let entity_visible = visible_tiles
                     .map(|vt| vt.contains(&(pos.x, pos.y)))
                     .unwrap_or(true);

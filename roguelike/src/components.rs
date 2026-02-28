@@ -32,13 +32,32 @@ pub struct CameraFollow;
 pub struct BlocksMovement;
 
 /// Field-of-view component. Attached to entities that "see" the world.
-/// `visible_tiles` is recomputed each frame by `visibility_system`.
+/// `visible_tiles` is recomputed by `visibility_system` when dirty.
+/// `revealed_tiles` accumulates all tiles ever seen (fog of war memory).
 #[derive(Component, Debug)]
 pub struct Viewshed {
     /// Maximum sight range (in tiles).
     pub range: CoordinateUnit,
     /// Set of world-grid coordinates currently visible.
     pub visible_tiles: HashSet<MyPoint>,
+    /// Set of world-grid coordinates that have been seen at least once.
+    /// Used for fog-of-war: revealed tiles are drawn dimmed when not visible.
+    pub revealed_tiles: HashSet<MyPoint>,
     /// Whether the viewshed needs recalculation (dirty flag).
     pub dirty: bool,
+}
+
+/// Health pool for any entity that can take damage or be healed.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Health {
+    pub current: CoordinateUnit,
+    pub max: CoordinateUnit,
+}
+
+/// Combat statistics used by the combat system to resolve attacks.
+/// Damage dealt = max(0, attacker.attack − defender.defense).
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct CombatStats {
+    pub attack: CoordinateUnit,
+    pub defense: CoordinateUnit,
 }
