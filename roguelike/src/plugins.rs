@@ -136,7 +136,6 @@ impl Plugin for RoguelikePlugin {
                 Update,
                 turn::end_world_turn
                     .after(ai::ai_system)
-                    .after(RoguelikeSet::Consequence)
                     .run_if(in_state(TurnState::WorldTurn)),
             )
             // ── Render (always runs — shows PAUSED overlay when paused) ──
@@ -256,6 +255,7 @@ fn spawn_monsters(mut commands: Commands, map: Res<GameMapResource>, seed: Res<M
             }
 
             // Select monster type deterministically.
+            // value_noise returns [0, 1); the .min() is defensive against float edge cases.
             let template_noise = value_noise(x, y, template_seed);
             let idx = (template_noise * MONSTER_TEMPLATES.len() as f64) as usize;
             let template = &MONSTER_TEMPLATES[idx.min(MONSTER_TEMPLATES.len() - 1)];

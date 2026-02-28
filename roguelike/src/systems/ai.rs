@@ -34,13 +34,12 @@ pub fn ai_system(
         if energy.0 < ACTION_COST {
             continue;
         }
-        energy.0 -= ACTION_COST;
 
         let my_pos = pos.as_grid_vec();
 
         match *ai {
             AiState::Idle => {
-                // Check if player is visible.
+                // Check if player is visible — no energy cost for looking.
                 if let Some(vs) = viewshed {
                     if vs.visible_tiles.contains(&player_vec) {
                         *ai = AiState::Chasing;
@@ -59,6 +58,8 @@ pub fn ai_system(
                         dx: step.x,
                         dy: step.y,
                     });
+                    // Only deduct energy when an action is actually emitted.
+                    energy.0 -= ACTION_COST;
                 }
             }
         }

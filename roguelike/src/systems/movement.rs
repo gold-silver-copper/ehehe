@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::components::{BlocksMovement, Hostile, Position, Viewshed};
 use crate::events::{AttackIntent, MoveIntent};
 use crate::grid_vec::GridVec;
-use crate::resources::{GameMapResource, SpatialIndex};
+use crate::resources::{CombatLog, GameMapResource, SpatialIndex};
 
 /// Processes `MoveIntent` events: checks the target tile on the `GameMap` for
 /// walkability *and* the `SpatialIndex` for entities that block movement.
@@ -21,7 +21,11 @@ pub fn movement_system(
     hostiles: Query<(), With<Hostile>>,
     mut attack_intents: MessageWriter<AttackIntent>,
     mut movers: Query<(&mut Position, Option<&mut Viewshed>)>,
+    mut combat_log: ResMut<CombatLog>,
 ) {
+    // Clear combat log at the start of each action phase so messages
+    // persist on screen until the next turn.
+    combat_log.messages.clear();
     for intent in intents.read() {
         let Ok((mut pos, viewshed)) = movers.get_mut(intent.entity) else {
             continue;

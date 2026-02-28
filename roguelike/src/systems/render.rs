@@ -21,7 +21,7 @@ pub fn draw_system(
     renderables: Query<(&Position, &Renderable)>,
     player_query: Query<(&Position, Option<&Viewshed>, Option<&Health>), With<Player>>,
     state: Res<State<GameState>>,
-    mut combat_log: ResMut<CombatLog>,
+    combat_log: Res<CombatLog>,
 ) -> Result {
     context.draw(|frame| {
         let area = frame.area();
@@ -141,9 +141,6 @@ pub fn draw_system(
         ));
         frame.render_widget(Paragraph::new(status).on_dark_gray(), status_area);
     })?;
-
-    // Clear combat log after rendering
-    combat_log.messages.clear();
 
     Ok(())
 }
