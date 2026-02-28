@@ -1,5 +1,5 @@
-use crate::typeenums::{Floor, Furniture};
 use crate::typedefs::{GraphicTriple, RatColor};
+use crate::typeenums::{BlockingFurniture, Floor, Furniture, WalkableFurniture};
 use crate::voxel::dim;
 
 /// Trait for game elements that can be rendered as a GraphicTriple.
@@ -16,19 +16,21 @@ pub trait GraphicElement {
 impl GraphicElement for Floor {
     fn symbol(&self) -> String {
         match self {
-            Floor::Gravel => ".".into(),
-            Floor::Dirt => " ".into(),
+            Floor::GrassDeep => "\"".into(),
             Floor::Grass => "\"".into(),
-            Floor::Sand => ".".into(),
+            Floor::GrassLight => "\"".into(),
+            Floor::Moss => ",".into(),
+            Floor::LeafLitter => ".".into(),
         }
     }
 
     fn fg_color(&self) -> RatColor {
         match self {
-            Floor::Sand => RatColor::Rgb(234, 208, 168),
-            Floor::Dirt => RatColor::Rgb(107, 84, 40),
-            Floor::Gravel => RatColor::Rgb(97, 84, 65),
-            Floor::Grass => RatColor::Rgb(19, 109, 21),
+            Floor::GrassDeep => RatColor::Rgb(17, 95, 24),
+            Floor::Grass => RatColor::Rgb(20, 106, 27),
+            Floor::GrassLight => RatColor::Rgb(22, 113, 29),
+            Floor::Moss => RatColor::Rgb(28, 97, 32),
+            Floor::LeafLitter => RatColor::Rgb(66, 74, 35),
         }
     }
 
@@ -40,15 +42,27 @@ impl GraphicElement for Floor {
 impl GraphicElement for Furniture {
     fn symbol(&self) -> String {
         match self {
-            Furniture::Wall => "#".into(),
-            Furniture::Tree => "T".into(),
+            Furniture::Blocking(BlockingFurniture::Wall) => "#".into(),
+            Furniture::Blocking(BlockingFurniture::OakTree) => "♣".into(),
+            Furniture::Blocking(BlockingFurniture::PineTree) => "♠".into(),
+            Furniture::Blocking(BlockingFurniture::BirchTree) => "♤".into(),
+            Furniture::Walkable(WalkableFurniture::Shrub) => "%".into(),
+            Furniture::Walkable(WalkableFurniture::Fern) => "&".into(),
+            Furniture::Walkable(WalkableFurniture::TallGrass) => ";".into(),
+            Furniture::Walkable(WalkableFurniture::Wildflower) => "*".into(),
         }
     }
 
     fn fg_color(&self) -> RatColor {
         match self {
-            Furniture::Wall => RatColor::Rgb(139, 105, 20),
-            Furniture::Tree => RatColor::Rgb(34, 139, 34),
+            Furniture::Blocking(BlockingFurniture::Wall) => RatColor::Rgb(139, 105, 20),
+            Furniture::Blocking(BlockingFurniture::OakTree) => RatColor::Rgb(34, 120, 30),
+            Furniture::Blocking(BlockingFurniture::PineTree) => RatColor::Rgb(28, 102, 36),
+            Furniture::Blocking(BlockingFurniture::BirchTree) => RatColor::Rgb(170, 198, 128),
+            Furniture::Walkable(WalkableFurniture::Shrub) => RatColor::Rgb(54, 132, 42),
+            Furniture::Walkable(WalkableFurniture::Fern) => RatColor::Rgb(40, 122, 52),
+            Furniture::Walkable(WalkableFurniture::TallGrass) => RatColor::Rgb(71, 145, 62),
+            Furniture::Walkable(WalkableFurniture::Wildflower) => RatColor::Rgb(201, 172, 89),
         }
     }
 

@@ -1,5 +1,5 @@
-use crate::typeenums::{Floor, Furniture};
-use crate::typedefs::{create_2d_array, CoordinateUnit, MyPoint, RenderPacket, SPAWN_X, SPAWN_Y};
+use crate::typedefs::{CoordinateUnit, MyPoint, RenderPacket, SPAWN_X, SPAWN_Y, create_2d_array};
+use crate::typeenums::{BlockingFurniture, Floor, Furniture, WalkableFurniture};
 use crate::voxel::Voxel;
 
 /// The game map: a simple 2D grid of voxels.
@@ -12,35 +12,31 @@ pub struct GameMap {
 impl GameMap {
     /// Creates a new game map filled with a simple pattern of floor and furniture tiles.
     pub fn new(width: CoordinateUnit, height: CoordinateUnit) -> Self {
-        // Positions of trees placed around the spawn point
-        let spawn_trees: &[(CoordinateUnit, CoordinateUnit)] = &[
-            (SPAWN_X - 3, SPAWN_Y + 2),
-            (SPAWN_X + 4, SPAWN_Y + 1),
-            (SPAWN_X - 2, SPAWN_Y - 3),
-            (SPAWN_X + 3, SPAWN_Y - 2),
-            (SPAWN_X + 5, SPAWN_Y + 3),
-            (SPAWN_X - 4, SPAWN_Y - 1),
-            (SPAWN_X + 1, SPAWN_Y + 4),
-            (SPAWN_X - 1, SPAWN_Y - 4),
-        ];
-
         let mut voxels = Vec::with_capacity(height as usize);
         for y in 0..height {
             let mut row = Vec::with_capacity(width as usize);
             for x in 0..width {
-                let floor = match ((x + y) % 4) as u8 {
-                    0 => Floor::Grass,
-                    1 => Floor::Dirt,
-                    2 => Floor::Gravel,
-                    _ => Floor::Sand,
-                };
+                let noise = procedural_noise(x, y);
+                let floor = Floor::from_noise(noise);
+                let is_spawn_clear = (x - SPAWN_X).abs() <= 2 && (y - SPAWN_Y).abs() <= 2;
 
                 let furniture = if x == 0 || y == 0 || x == width - 1 || y == height - 1 {
-                    Some(Furniture::Wall)
-                } else if spawn_trees.contains(&(x, y)) {
-                    Some(Furniture::Tree)
-                } else if (x % 7 == 0) && (y % 5 == 0) {
-                    Some(Furniture::Tree)
+                    Some(Furniture::Blocking(BlockingFurniture::Wall))
+                } else if is_spawn_clear {
+                    None
+                } else if noise % 100 < 8 {
+                    Some(Furniture::Blocking(match noise % 3 {
+                        0 => BlockingFurniture::OakTree,
+                        1 => BlockingFurniture::PineTree,
+                        _ => BlockingFurniture::BirchTree,
+                    }))
+                } else if noise % 100 < 19 {
+                    Some(Furniture::Walkable(match noise % 4 {
+                        0 => WalkableFurniture::Shrub,
+                        1 => WalkableFurniture::Fern,
+                        2 => WalkableFurniture::TallGrass,
+                        _ => WalkableFurniture::Wildflower,
+                    }))
                 } else {
                     None
                 };
@@ -69,6 +65,16 @@ impl GameMap {
         } else {
             None
         }
+    }
+
+    /// Returns true when a map coordinate is in bounds and not blocked by impassable furniture.
+    pub fn can_move_to(&self, point: &MyPoint) -> bool {
+        self.get_voxel_at(point).is_some_and(|voxel| {
+            !voxel
+                .furniture
+                .as_ref()
+                .is_some_and(Furniture::blocks_movement)
+        })
     }
 
     /// Creates a RenderPacket (2D grid of GraphicTriples) for display,
@@ -101,8 +107,81 @@ impl GameMap {
     }
 }
 
+fn procedural_noise(x: CoordinateUnit, y: CoordinateUnit) -> u32 {
+    let mut n = (x as u64).wrapping_mul(73_856_093) ^ (y as u64).wrapping_mul(19_349_663);
+    n = (n ^ (n >> 13)).wrapping_mul(1_274_126_177);
+    (n as u32).wrapping_mul(2_654_435_761)
+}
+
 impl Default for GameMap {
     fn default() -> Self {
         GameMap::new(80, 50)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forest_has_diverse_tiles_and_open_ground() {
+        let map = GameMap::new(120, 80);
+        let mut blocking = 0;
+        let mut walkable_plants = 0;
+        let mut empty_ground = 0;
+        let mut floor_variants = std::collections::HashSet::new();
+
+        for row in &map.voxels {
+            for voxel in row {
+                if let Some(floor) = &voxel.floor {
+                    floor_variants.insert(std::mem::discriminant(floor));
+                }
+                match &voxel.furniture {
+                    Some(Furniture::Blocking(_)) => blocking += 1,
+                    Some(Furniture::Walkable(_)) => walkable_plants += 1,
+                    None => empty_ground += 1,
+                }
+            }
+        }
+
+        assert!(floor_variants.len() >= 4);
+        assert!(blocking > 0);
+        assert!(walkable_plants > 0);
+        assert!(empty_ground > blocking);
+    }
+
+    #[test]
+    fn movement_rules_match_furniture_blocking() {
+        let map = GameMap::new(120, 80);
+        assert!(map.can_move_to(&(SPAWN_X, SPAWN_Y)));
+        assert!(!map.can_move_to(&(0, 0)));
+
+        let walkable_plant = map
+            .voxels
+            .iter()
+            .flatten()
+            .find(|v| matches!(v.furniture, Some(Furniture::Walkable(_))))
+            .map(|v| v.voxel_pos)
+            .expect("expected at least one walkable plant");
+
+        let tree = map
+            .voxels
+            .iter()
+            .flatten()
+            .find(|v| {
+                matches!(
+                    v.furniture,
+                    Some(Furniture::Blocking(
+                        BlockingFurniture::OakTree
+                            | BlockingFurniture::PineTree
+                            | BlockingFurniture::BirchTree
+                    ))
+                )
+            })
+            .map(|v| v.voxel_pos)
+            .expect("expected at least one tree");
+
+        assert!(map.can_move_to(&walkable_plant));
+        assert!(!map.can_move_to(&tree));
     }
 }
