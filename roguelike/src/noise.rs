@@ -94,6 +94,6 @@ pub fn fbm(x: f64, y: f64, octaves: u32, frequency: f64, persistence: f64, seed:
         freq *= 2.0; // lacunarity
     }
 
-    // Normalise to [0, 1].
+    // Normalize to [0, 1].
     value / max_amplitude
 }

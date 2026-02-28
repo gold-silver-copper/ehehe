@@ -217,7 +217,8 @@ fn select_furniture(
     y: CoordinateUnit,
 ) -> Option<Furniture> {
     // ── Spawn clearing ──────────────────────────────────────────
-    // Euclidean distance from spawn; tiles within radius 6 are kept clear.
+    // Tiles within Euclidean distance < 6 from spawn are kept clear.
+    // We compare squared distances to avoid a sqrt per tile.
     let dx = (x - SPAWN_X) as f64;
     let dy = (y - SPAWN_Y) as f64;
     let dist_sq = dx * dx + dy * dy;
