@@ -8,8 +8,10 @@ use ratatui::style::Stylize;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 
+use roguelike::fov::compute_fov;
 use roguelike::gamemap::GameMap;
 use roguelike::typedefs::{CoordinateUnit, MyPoint, RatColor, SPAWN_X, SPAWN_Y};
+use roguelike::typeenums::Furniture;
 
 /// Bevy resource holding the game map.
 #[derive(Resource)]
@@ -54,11 +56,20 @@ fn draw_system(
         let area = frame.area();
         let render_width = area.width;
         let render_height = area.height.saturating_sub(1); // reserve 1 row for status
+        let fov_radius = (render_width.max(render_height) / 2) as CoordinateUnit;
+        let visible_tiles = compute_fov(player.0, fov_radius, |x, y| {
+            game_map.0.get_voxel_at(&(x, y)).is_none_or(|voxel| {
+                voxel
+                    .furniture
+                    .as_ref()
+                    .is_some_and(Furniture::blocks_movement)
+            })
+        });
 
         let mut render_packet =
             game_map
                 .0
-                .create_render_packet(&camera.0, render_width, render_height);
+                .create_render_packet(&camera.0, render_width, render_height, &visible_tiles);
 
         // Overlay the player @ at their screen-relative position
         let w_radius = render_width as CoordinateUnit / 2;

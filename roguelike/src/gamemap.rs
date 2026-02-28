@@ -28,8 +28,8 @@ impl GameMap {
             for x in 0..width {
                 let noise = procedural_noise(x, y);
                 let floor = Floor::from_noise(noise);
-                let is_spawn_clear =
-                    (x - SPAWN_X).abs() <= SPAWN_CLEAR_RADIUS && (y - SPAWN_Y).abs() <= SPAWN_CLEAR_RADIUS;
+                let is_spawn_clear = (x - SPAWN_X).abs() <= SPAWN_CLEAR_RADIUS
+                    && (y - SPAWN_Y).abs() <= SPAWN_CLEAR_RADIUS;
 
                 let furniture = if x == 0 || y == 0 || x == width - 1 || y == height - 1 {
                     Some(Furniture::Blocking(BlockingFurniture::Wall))
@@ -95,6 +95,7 @@ impl GameMap {
         center: &MyPoint,
         render_width: u16,
         render_height: u16,
+        visible_tiles: &std::collections::HashSet<MyPoint>,
     ) -> RenderPacket {
         let w_radius = render_width as CoordinateUnit / 2;
         let h_radius = render_height as CoordinateUnit / 2;
@@ -109,7 +110,15 @@ impl GameMap {
                 let world_y = bottom_left.1 + ry;
 
                 if let Some(voxel) = self.get_voxel_at(&(world_x, world_y)) {
-                    grid[ry as usize][rx as usize] = voxel.to_graphic(true);
+                    if visible_tiles.contains(&(world_x, world_y)) {
+                        grid[ry as usize][rx as usize] = voxel.to_graphic(true);
+                    } else {
+                        grid[ry as usize][rx as usize] = (
+                            " ".into(),
+                            crate::typedefs::RatColor::Black,
+                            crate::typedefs::RatColor::Black,
+                        );
+                    }
                 }
             }
         }
@@ -201,5 +210,31 @@ mod tests {
     fn procedural_noise_is_deterministic() {
         assert_eq!(procedural_noise(10, 20), procedural_noise(10, 20));
         assert_ne!(procedural_noise(10, 20), procedural_noise(11, 20));
+    }
+
+    #[test]
+    fn render_packet_hides_non_visible_tiles_as_black() {
+        let map = GameMap::new(20, 20);
+        let mut visible = std::collections::HashSet::new();
+        visible.insert((10, 10));
+
+        let packet = map.create_render_packet(&(10, 10), 3, 3, &visible);
+
+        assert_ne!(
+            packet[1][1],
+            (
+                " ".into(),
+                crate::typedefs::RatColor::Black,
+                crate::typedefs::RatColor::Black
+            )
+        );
+        assert_eq!(
+            packet[0][0],
+            (
+                " ".into(),
+                crate::typedefs::RatColor::Black,
+                crate::typedefs::RatColor::Black
+            )
+        );
     }
 }

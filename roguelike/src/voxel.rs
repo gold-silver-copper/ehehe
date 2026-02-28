@@ -1,6 +1,6 @@
 use crate::graphic_trait::GraphicElement;
-use crate::typeenums::{Floor, Furniture};
 use crate::typedefs::{GraphicTriple, MyPoint, RatColor};
+use crate::typeenums::{Floor, Furniture};
 
 /// A single cell in the game map grid.
 #[derive(Clone, Debug)]
