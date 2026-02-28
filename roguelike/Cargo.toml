@@ -1,0 +1,19 @@
+[package]
+name = "roguelike"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.18", default-features = false }
+bevy_ratatui = { path = "../bevy_ratatui" }
+ratatui = { version = "0.30.0", default-features = false, features = [
+    "underline-color",
+] }
+
+# Enable a small amount of optimization in debug mode
+[profile.dev]
+opt-level = 1
+
+# Enable high optimizations for dependencies (incl. Bevy), but not for our code:
+[profile.dev.package."*"]
+opt-level = 3
