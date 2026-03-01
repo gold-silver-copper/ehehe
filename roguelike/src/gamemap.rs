@@ -1,6 +1,7 @@
+use crate::grid_vec::GridVec;
 use crate::noise::{fbm, value_noise, NoiseSeed};
 use crate::typeenums::{Floor, Furniture};
-use crate::typedefs::{create_2d_array, CoordinateUnit, MyPoint, RenderPacket, SPAWN_X, SPAWN_Y};
+use crate::typedefs::{create_2d_array, CoordinateUnit, MyPoint, RenderPacket, SPAWN_POINT};
 use crate::voxel::Voxel;
 
 /// The game map: a simple 2D grid of voxels.
@@ -58,15 +59,14 @@ impl GameMap {
                         biome,
                         tree_seed,
                         undergrowth_seed,
-                        x,
-                        y,
+                        GridVec::new(x, y),
                     )
                 };
 
                 row.push(Voxel {
                     floor: Some(floor),
                     furniture,
-                    voxel_pos: (x, y),
+                    voxel_pos: GridVec::new(x, y),
                 });
             }
             voxels.push(row);
@@ -81,12 +81,18 @@ impl GameMap {
 
     /// Get a reference to the voxel at the given map coordinate.
     pub fn get_voxel_at(&self, point: &MyPoint) -> Option<&Voxel> {
-        let (x, y) = *point;
+        let GridVec { x, y } = *point;
         if x >= 0 && x < self.width && y >= 0 && y < self.height {
             Some(&self.voxels[y as usize][x as usize])
         } else {
             None
         }
+    }
+
+    /// Returns `true` if the tile at `point` is passable (no furniture blocking).
+    pub fn is_passable(&self, point: &MyPoint) -> bool {
+        self.get_voxel_at(point)
+            .is_some_and(|v| v.furniture.is_none())
     }
 
     /// Creates a RenderPacket (2D grid of GraphicTriples) for display,
@@ -120,15 +126,13 @@ impl GameMap {
         let w_radius = render_width as CoordinateUnit / 2;
         let h_radius = render_height as CoordinateUnit / 2;
 
-        let bottom_left = (center.0 - w_radius, center.1 - h_radius);
+        let bottom_left = *center - GridVec::new(w_radius, h_radius);
 
         let mut grid = create_2d_array(render_width as usize, render_height as usize);
 
         for ry in 0..render_height as CoordinateUnit {
             for rx in 0..render_width as CoordinateUnit {
-                let world_x = bottom_left.0 + rx;
-                let world_y = bottom_left.1 + ry;
-                let world_pos = (world_x, world_y);
+                let world_pos = bottom_left + GridVec::new(rx, ry);
 
                 if let Some(voxel) = self.get_voxel_at(&world_pos) {
                     let is_visible = visible_tiles
@@ -213,15 +217,12 @@ fn select_furniture(
     biome: f64,
     tree_seed: NoiseSeed,
     undergrowth_seed: NoiseSeed,
-    x: CoordinateUnit,
-    y: CoordinateUnit,
+    pos: GridVec,
 ) -> Option<Furniture> {
     // ── Spawn clearing ──────────────────────────────────────────
     // Tiles within Euclidean distance < 6 from spawn are kept clear.
-    // We compare squared distances to avoid a sqrt per tile.
-    let dx = (x - SPAWN_X) as f64;
-    let dy = (y - SPAWN_Y) as f64;
-    let dist_sq = dx * dx + dy * dy;
+    // We use squared distance to avoid a sqrt per tile.
+    let dist_sq = pos.distance_squared(SPAWN_POINT) as f64;
     let clearing_radius_sq = 6.0 * 6.0;
     if dist_sq < clearing_radius_sq {
         return None;
@@ -242,11 +243,11 @@ fn select_furniture(
     let tree_threshold = 1.0 - (base_density * transition_factor);
 
     // Per-tile jitter prevents perfectly smooth cluster edges.
-    let jitter = value_noise(x, y, tree_seed.wrapping_add(99999));
+    let jitter = value_noise(pos.x, pos.y, tree_seed.wrapping_add(99999));
 
     if tree_noise > tree_threshold && jitter > 0.3 {
         // High density area → trees (with occasional dead trees)
-        let variety = value_noise(x, y, tree_seed.wrapping_add(11111));
+        let variety = value_noise(pos.x, pos.y, tree_seed.wrapping_add(11111));
         if variety < 0.12 {
             return Some(Furniture::DeadTree);
         }
@@ -255,10 +256,10 @@ fn select_furniture(
 
     // ── Undergrowth (bushes, rocks) ─────────────────────────────
     let under_noise = fbm(fx, fy, 3, 0.08, 0.5, undergrowth_seed);
-    let under_jitter = value_noise(x, y, undergrowth_seed.wrapping_add(77777));
+    let under_jitter = value_noise(pos.x, pos.y, undergrowth_seed.wrapping_add(77777));
 
     if under_noise > 0.62 && under_jitter > 0.6 && transition_factor > 0.5 {
-        let pick = value_noise(x, y, undergrowth_seed.wrapping_add(33333));
+        let pick = value_noise(pos.x, pos.y, undergrowth_seed.wrapping_add(33333));
         if pick < 0.6 {
             return Some(Furniture::Bush);
         }

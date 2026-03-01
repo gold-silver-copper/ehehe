@@ -6,8 +6,9 @@ use ratatui::style::Stylize;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 
-use crate::components::{Player, Position, Renderable, Viewshed};
-use crate::resources::{CameraPosition, GameMapResource, GameState};
+use crate::components::{Health, Player, Position, Renderable, Viewshed};
+use crate::grid_vec::GridVec;
+use crate::resources::{CameraPosition, CombatLog, GameMapResource, GameState};
 use crate::typedefs::{CoordinateUnit, MyPoint};
 
 /// Renders the game map and all `Renderable` entities to the terminal.
@@ -18,8 +19,9 @@ pub fn draw_system(
     game_map: Res<GameMapResource>,
     camera: Res<CameraPosition>,
     renderables: Query<(&Position, &Renderable)>,
-    player_query: Query<(&Position, Option<&Viewshed>), With<Player>>,
+    player_query: Query<(&Position, Option<&Viewshed>, Option<&Health>), With<Player>>,
     state: Res<State<GameState>>,
+    combat_log: Res<CombatLog>,
 ) -> Result {
     context.draw(|frame| {
         let area = frame.area();
@@ -33,7 +35,7 @@ pub fn draw_system(
         ) = player_query
             .single()
             .ok()
-            .and_then(|(_, vs)| vs)
+            .and_then(|(_, vs, _)| vs)
             .map(|vs| (&vs.visible_tiles, &vs.revealed_tiles))
             .map(|(vis, rev)| (Some(vis), Some(rev)))
             .unwrap_or((None, None));
@@ -49,24 +51,22 @@ pub fn draw_system(
         // Overlay all renderable entities at their screen-relative positions
         let w_radius = render_width as CoordinateUnit / 2;
         let h_radius = render_height as CoordinateUnit / 2;
-        let bottom_left_x = camera.0 .0 - w_radius;
-        let bottom_left_y = camera.0 .1 - h_radius;
+        let bottom_left = camera.0 - GridVec::new(w_radius, h_radius);
         for (pos, renderable) in &renderables {
-            let screen_x = pos.x - bottom_left_x;
-            let screen_y = pos.y - bottom_left_y;
+            let screen = pos.as_grid_vec() - bottom_left;
 
-            if screen_x >= 0
-                && screen_x < render_width as CoordinateUnit
-                && screen_y >= 0
-                && screen_y < render_height as CoordinateUnit
+            if screen.x >= 0
+                && screen.x < render_width as CoordinateUnit
+                && screen.y >= 0
+                && screen.y < render_height as CoordinateUnit
             {
                 // Only draw entities that are currently visible (not merely revealed)
                 let entity_visible = visible_tiles
-                    .map(|vt| vt.contains(&(pos.x, pos.y)))
+                    .map(|vt| vt.contains(&pos.as_grid_vec()))
                     .unwrap_or(true);
                 if entity_visible {
-                    let bg = render_packet[screen_y as usize][screen_x as usize].2;
-                    render_packet[screen_y as usize][screen_x as usize] =
+                    let bg = render_packet[screen.y as usize][screen.x as usize].2;
+                    render_packet[screen.y as usize][screen.x as usize] =
                         (renderable.symbol.clone(), renderable.fg, bg);
                 }
             }
@@ -115,10 +115,19 @@ pub fn draw_system(
             }
         }
 
-        // Status bar — show player position (gracefully handles missing player)
+        // Status bar — show player position, health, and last combat message
         let player_info = player_query
             .single()
-            .map(|(p, _)| format!("({}, {})", p.x, p.y))
+            .map(|(p, _, h)| {
+                let hp_str = h.map_or(String::new(), |h| format!(" HP:{}/{}", h.current, h.max));
+                format!("({}, {}){hp_str}", p.x, p.y)
+            })
+            .unwrap_or_default();
+
+        let last_msg = combat_log
+            .messages
+            .last()
+            .cloned()
             .unwrap_or_default();
 
         let status_area = ratatui::layout::Rect {
@@ -128,8 +137,7 @@ pub fn draw_system(
             height: 1,
         };
         let status = Line::from(format!(
-            " Roguelike | Player: {} | WASD/Arrows: move | P: pause/resume | Q: quit",
-            player_info
+            " Roguelike | {player_info} | {last_msg} | WASD: move | P: pause | Q: quit",
         ));
         frame.render_widget(Paragraph::new(status).on_dark_gray(), status_area);
     })?;

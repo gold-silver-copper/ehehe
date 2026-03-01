@@ -10,6 +10,6 @@ pub fn camera_follow_system(
     mut camera: ResMut<CameraPosition>,
 ) {
     if let Ok(pos) = query.single() {
-        camera.0 = (pos.x, pos.y);
+        camera.0 = pos.as_grid_vec();
     }
 }
