@@ -675,7 +675,7 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
 
     let mut lines = vec![
         Line::from(""),
-        Line::from("  🤠  DEAD MAN'S HAND  🤠").bold().yellow(),
+        Line::from("  -*-  DEAD MAN'S HAND  -*-").bold().yellow(),
         Line::from(""),
         Line::from("  Destroy the Outlaw Hideout (Ω) to win!").white(),
         Line::from("  Enemies will keep spawning from it.").white(),

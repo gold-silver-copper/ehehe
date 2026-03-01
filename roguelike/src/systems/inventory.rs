@@ -87,7 +87,9 @@ pub fn use_item_system(
 
         let item_name = name.map_or("item", |n| n.0.as_str()).to_string();
 
-        // Dereference Mut<ItemKind> wrapper and re-borrow to pattern match.
+        // Dereference Bevy's `Mut<ItemKind>` wrapper to pattern match.
+        // This borrows the inner value immutably first; if we need to mutate
+        // (e.g. increment loaded rounds), we call `get_mut` on a second query.
         match &*kind {
             ItemKind::Whiskey { heal } => {
                 let heal = *heal;
