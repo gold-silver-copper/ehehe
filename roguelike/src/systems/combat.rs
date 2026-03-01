@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::components::{CombatStats, ExpReward, Experience, Health, HellGate, Hostile, Level, LootTable, Stamina, Ammo, Name, Player, Position};
-use crate::events::{AttackIntent, DamageEvent, MeleeWideIntent, RangedAttackIntent};
+use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, RangedAttackIntent};
 use crate::noise::value_noise;
 use crate::resources::{CombatLog, GameState, KillCount, MapSeed, PendingExp};
 use crate::systems::inventory::spawn_loot;
@@ -146,8 +146,8 @@ pub fn level_up_system(
     }
 }
 
-/// Resolves targeted ranged attack intents.
-/// Fires a bullet toward the nearest visible hostile within range.
+/// Resolves targeted ranged attack intents using player-chosen trajectory.
+/// The bullet travels along the chosen direction (dx, dy) for up to `range` tiles.
 /// The bullet penetrates through multiple enemies: remaining penetration
 /// decreases by each target's defense value. Consumes 1 ammo per shot.
 /// Also spawns bullet travel particles for visual feedback.
@@ -173,82 +173,113 @@ pub fn ranged_attack_system(
         }
         ammo.current -= 1;
 
-        // Find the nearest hostile within range to determine bullet direction.
-        let mut best: Option<(Entity, i32, crate::grid_vec::GridVec)> = None;
-        for (target_entity, target_pos, _target_stats, _target_name) in &targets {
+        let dx = intent.dx;
+        let dy = intent.dy;
+
+        if dx == 0 && dy == 0 {
+            combat_log.push("Invalid aim direction!".into());
+            continue;
+        }
+
+        let damage = caster_stats.attack;
+        let mut penetration = damage;
+        let mut hit_count = 0;
+
+        // Spawn bullet travel particles along the path.
+        for step in 1..=intent.range {
+            let bullet_pos = origin + crate::grid_vec::GridVec::new(dx * step, dy * step);
+            spell_particles.particles.push((bullet_pos, 3, (step as u32).saturating_sub(1)));
+        }
+
+        // Collect targets along the bullet path sorted by distance.
+        let mut targets_in_line: Vec<(Entity, i32, i32, String)> = Vec::new();
+        for (target_entity, target_pos, target_stats, target_name) in &targets {
             let target_vec = target_pos.as_grid_vec();
+            let rel = target_vec - origin;
             let dist = origin.chebyshev_distance(target_vec);
             if dist > 0 && dist <= intent.range {
-                if best.as_ref().map_or(true, |(_, best_dist, _)| dist < *best_dist) {
-                    best = Some((target_entity, dist, target_vec));
+                // Check if the target is on the bullet's trajectory.
+                let on_line = (dx == 0 || rel.x.signum() == dx)
+                    && (dy == 0 || rel.y.signum() == dy)
+                    && (dx == 0 || dy == 0 || (rel.x.abs() - rel.y.abs()).abs() <= 1);
+                if on_line {
+                    let t_name = target_name.map_or("???".to_string(), |n| n.0.clone());
+                    targets_in_line.push((target_entity, dist, target_stats.defense, t_name));
                 }
             }
         }
+        targets_in_line.sort_by_key(|&(_, dist, _, _)| dist);
 
-        if let Some((_nearest_entity, _dist, nearest_pos)) = best {
-            let damage = caster_stats.attack;
-            // Compute bullet direction (normalized to -1/0/1 per axis).
-            let dx = (nearest_pos.x - origin.x).signum();
-            let dy = (nearest_pos.y - origin.y).signum();
-
-            // Bullet travels along this direction, penetrating through enemies.
-            // Penetration starts at damage value and decreases by each target's defense.
-            let mut penetration = damage;
-            let mut hit_count = 0;
-
-            // Spawn bullet travel particles along the path.
-            for step in 1..=intent.range {
-                let bullet_pos = origin + crate::grid_vec::GridVec::new(dx * step, dy * step);
-                // Add bullet particle (short lifetime, no delay — immediate travel visual).
-                spell_particles.particles.push((bullet_pos, 3, (step as u32).saturating_sub(1)));
+        for (target_entity, _dist, target_def, t_name) in &targets_in_line {
+            if penetration <= 0 {
+                break;
             }
-
-            // Collect targets along the bullet path sorted by distance.
-            let mut targets_in_line: Vec<(Entity, i32, i32, String)> = Vec::new();
-            for (target_entity, target_pos, target_stats, target_name) in &targets {
-                let target_vec = target_pos.as_grid_vec();
-                let rel = target_vec - origin;
-                let dist = origin.chebyshev_distance(target_vec);
-                if dist > 0 && dist <= intent.range {
-                    // Check if the target is on the bullet's trajectory:
-                    // 1. Target must be in the same direction as the bullet (matching signum)
-                    // 2. For diagonal shots, target must be roughly on the diagonal
-                    //    (x and y offsets differ by at most 1 tile, allowing slight spread)
-                    let on_line = (dx == 0 || rel.x.signum() == dx)
-                        && (dy == 0 || rel.y.signum() == dy)
-                        && (dx == 0 || dy == 0 || (rel.x.abs() - rel.y.abs()).abs() <= 1);
-                    if on_line {
-                        let t_name = target_name.map_or("???".to_string(), |n| n.0.clone());
-                        targets_in_line.push((target_entity, dist, target_stats.defense, t_name));
-                    }
-                }
+            let hit_damage = penetration;
+            if hit_damage > 0 {
+                damage_events.write(DamageEvent {
+                    target: *target_entity,
+                    amount: hit_damage,
+                });
+                combat_log.push(format!("{c_name} shoots {t_name} for {hit_damage} damage!"));
+                hit_count += 1;
             }
-            targets_in_line.sort_by_key(|&(_, dist, _, _)| dist);
+            penetration -= target_def;
+        }
 
-            for (target_entity, _dist, target_def, t_name) in &targets_in_line {
-                if penetration <= 0 {
-                    break;
-                }
-                let hit_damage = penetration;
-                if hit_damage > 0 {
-                    damage_events.write(DamageEvent {
-                        target: *target_entity,
-                        amount: hit_damage,
-                    });
-                    combat_log.push(format!("{c_name} shoots {t_name} for {hit_damage} damage!"));
-                    hit_count += 1;
-                }
-                // Reduce penetration by target's defense.
-                penetration -= target_def;
-            }
+        if hit_count == 0 {
+            combat_log.push(format!("{c_name} fires but the bullet misses!"));
+        } else if hit_count > 1 {
+            combat_log.push(format!("Bullet penetrated through {hit_count} targets!"));
+        }
+    }
+}
 
-            if hit_count == 0 {
-                combat_log.push(format!("{c_name} fires but the bullet misses!"));
-            } else if hit_count > 1 {
-                combat_log.push(format!("Bullet penetrated through {hit_count} targets!"));
-            }
-        } else {
-            combat_log.push(format!("{c_name} aims but finds no target in range!"));
+/// Resolves AI ranged attack intents (used by soldier enemies).
+/// Fires a bullet from the attacker toward the target entity.
+pub fn ai_ranged_attack_system(
+    mut intents: MessageReader<AiRangedAttackIntent>,
+    mut damage_events: MessageWriter<DamageEvent>,
+    attacker_query: Query<(&Position, &CombatStats, Option<&Name>)>,
+    target_query: Query<(&Position, Option<&Name>)>,
+    mut combat_log: ResMut<CombatLog>,
+    mut spell_particles: ResMut<crate::resources::SpellParticles>,
+) {
+    for intent in intents.read() {
+        let Ok((attacker_pos, attacker_stats, attacker_name)) = attacker_query.get(intent.attacker) else {
+            continue;
+        };
+        let Ok((target_pos, target_name)) = target_query.get(intent.target) else {
+            continue;
+        };
+
+        let origin = attacker_pos.as_grid_vec();
+        let target_vec = target_pos.as_grid_vec();
+        let a_name = attacker_name.map_or("???", |n| &n.0);
+        let t_name = target_name.map_or("???", |n| &n.0);
+
+        let dx = (target_vec.x - origin.x).signum();
+        let dy = (target_vec.y - origin.y).signum();
+
+        if dx == 0 && dy == 0 {
+            continue;
+        }
+
+        let damage = attacker_stats.attack;
+
+        // Spawn bullet travel particles.
+        let dist = origin.chebyshev_distance(target_vec);
+        let travel = dist.min(intent.range);
+        for step in 1..=travel {
+            let bullet_pos = origin + crate::grid_vec::GridVec::new(dx * step, dy * step);
+            spell_particles.particles.push((bullet_pos, 3, (step as u32).saturating_sub(1)));
+        }
+
+        if damage > 0 {
+            damage_events.write(DamageEvent {
+                target: intent.target,
+                amount: damage,
+            });
+            combat_log.push(format!("{a_name} shoots {t_name} for {damage} damage!"));
         }
     }
 }

@@ -1017,6 +1017,8 @@ fn ranged_attack_consumes_ammo() {
     app.world_mut().write_message(RangedAttackIntent {
         attacker: player,
         range: 8,
+        dx: 1,
+        dy: 0,
     });
     app.update();
 
@@ -1035,6 +1037,8 @@ fn ranged_attack_no_ammo_does_not_fire() {
     app.world_mut().write_message(RangedAttackIntent {
         attacker: player,
         range: 8,
+        dx: 1,
+        dy: 0,
     });
     app.update();
 
@@ -1069,6 +1073,8 @@ fn ranged_attack_damages_nearest_enemy() {
     app.world_mut().write_message(RangedAttackIntent {
         attacker: player,
         range: 8,
+        dx: 1,
+        dy: 0,
     });
     app.update();
 
@@ -1095,6 +1101,8 @@ fn ranged_attack_no_target_in_range() {
     app.world_mut().write_message(RangedAttackIntent {
         attacker: player,
         range: 8,
+        dx: 1,
+        dy: 0,
     });
     app.update();
 
@@ -1104,8 +1112,8 @@ fn ranged_attack_no_target_in_range() {
 
     let log = app.world().resource::<CombatLog>();
     assert!(
-        log.messages.iter().any(|m| m.contains("no target")),
-        "Combat log should note no target in range"
+        log.messages.iter().any(|m| m.contains("misses")),
+        "Combat log should note the bullet missed"
     );
 }
 
@@ -1147,6 +1155,8 @@ fn ranged_bullet_penetrates_multiple_enemies() {
     app.world_mut().write_message(RangedAttackIntent {
         attacker: player,
         range: 8,
+        dx: 1,
+        dy: 0,
     });
     app.update();
 
@@ -1196,6 +1206,8 @@ fn ranged_bullet_stops_when_penetration_exhausted() {
     app.world_mut().write_message(RangedAttackIntent {
         attacker: player,
         range: 8,
+        dx: 1,
+        dy: 0,
     });
     app.update();
 
@@ -1219,6 +1231,8 @@ fn ranged_attack_logs_shoot_message() {
     app.world_mut().write_message(RangedAttackIntent {
         attacker: player,
         range: 8,
+        dx: 1,
+        dy: 0,
     });
     app.update();
 

@@ -45,10 +45,28 @@ pub struct PickupItemIntent {
     pub picker: Entity,
 }
 
-/// Fired when the player uses a targeted ranged attack on the nearest visible enemy.
+/// Fired when the player uses a targeted ranged attack in a chosen direction.
+/// The bullet travels along (dx, dy) direction for up to `range` tiles.
 #[derive(Message, Debug, Clone)]
 pub struct RangedAttackIntent {
     pub attacker: Entity,
+    pub range: CoordinateUnit,
+    /// Trajectory direction (normalized to -1/0/1 per axis).
+    pub dx: CoordinateUnit,
+    pub dy: CoordinateUnit,
+}
+
+/// Fired when the player reloads their weapon from a magazine in inventory.
+#[derive(Message, Debug, Clone)]
+pub struct ReloadIntent {
+    pub entity: Entity,
+}
+
+/// Fired when an AI entity performs a ranged attack toward a target position.
+#[derive(Message, Debug, Clone)]
+pub struct AiRangedAttackIntent {
+    pub attacker: Entity,
+    pub target: Entity,
     pub range: CoordinateUnit,
 }
 

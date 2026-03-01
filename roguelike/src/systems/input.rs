@@ -12,8 +12,8 @@ const SPELL_RADIUS: i32 = 3;
 /// Stamina cost for throwing a grenade.
 const SPELL_STAMINA_COST: i32 = 10;
 
-/// Range for the targeted ranged attack.
-const RANGED_ATTACK_RANGE: i32 = 8;
+/// Range for the targeted ranged attack (bullet max travel distance).
+const RANGED_ATTACK_RANGE: i32 = 100;
 
 /// A single command binding entry: the key(s) that trigger it, a short name, and documentation.
 pub struct CommandBinding {
@@ -33,12 +33,13 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
     CommandBinding { key: "A / ←", name: "Move west", docs: "Move the player one tile west (left on the map)." },
     CommandBinding { key: "D / →", name: "Move east", docs: "Move the player one tile east (right on the map)." },
     CommandBinding { key: "F / Space", name: "Throw grenade", docs: "Throw a frag grenade dealing shrapnel damage around you (costs 10 stamina). Warning: can damage you too!" },
-    CommandBinding { key: "R", name: "Shoot (ranged)", docs: "Fire your weapon at the nearest visible enemy within 8 tiles. Bullets penetrate through multiple targets. Uses 1 ammo." },
+    CommandBinding { key: "R", name: "Aim (ranged)", docs: "Enter aiming mode. Use WASD/arrows to choose bullet trajectory, Esc to cancel. Bullet travels up to 100 tiles. Uses 1 ammo." },
+    CommandBinding { key: "T", name: "Reload", docs: "Reload weapon from a magazine in your inventory. Current partial magazine is saved to inventory." },
     CommandBinding { key: "E", name: "Roundhouse kick", docs: "Roundhouse kick hitting all adjacent enemies in melee range." },
     CommandBinding { key: "Shift+WASD", name: "Sprint", docs: "Hold Shift while moving to sprint (move 2 tiles per turn)." },
     CommandBinding { key: ". / 5", name: "Wait", docs: "Skip the current turn without acting." },
-    CommandBinding { key: "G", name: "Pick up item", docs: "Pick up an item on the ground at your position." },
-    CommandBinding { key: "I", name: "Open inventory", docs: "Open the inventory screen to view and use items." },
+    CommandBinding { key: "G", name: "Pick up item", docs: "Pick up an item on the ground at your position. Magazines and grenades are auto-picked up on contact." },
+    CommandBinding { key: "I", name: "Open inventory", docs: "Open the inventory screen to view and use items. Magazines can be used to reload." },
     CommandBinding { key: "1-9", name: "Use item", docs: "Quickly use an inventory item by slot number." },
     CommandBinding { key: "P", name: "Pause / Resume", docs: "Toggle pause state." },
     CommandBinding { key: "? / /", name: "Help", docs: "Toggle this help screen." },
@@ -99,6 +100,41 @@ pub fn input_system(
     let awaiting_input = turn_state
         .as_ref()
         .is_some_and(|s| *s.get() == TurnState::AwaitingInput);
+
+    // ── Aiming input mode ─────────────────────────────────────
+    if input_state.mode == InputMode::Aiming {
+        for message in messages.read() {
+            let (dx, dy) = match message.code {
+                KeyCode::Char('w') | KeyCode::Up => (0, 1),
+                KeyCode::Char('s') | KeyCode::Down => (0, -1),
+                KeyCode::Char('a') | KeyCode::Left => (-1, 0),
+                KeyCode::Char('d') | KeyCode::Right => (1, 0),
+                // Diagonals via numpad-style or shifted keys
+                KeyCode::Char('W') => (-1, 1),   // NW (Shift+W)
+                KeyCode::Char('A') => (-1, -1),  // SW (Shift+A)
+                KeyCode::Char('D') => (1, 1),    // NE (Shift+D)
+                KeyCode::Char('S') => (1, -1),   // SE (Shift+S)
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    input_state.mode = InputMode::Game;
+                    combat_log.push("Aiming cancelled.".into());
+                    continue;
+                }
+                _ => continue,
+            };
+            // Fire the ranged attack in the chosen direction.
+            ranged_intents.write(RangedAttackIntent {
+                attacker: player_entity,
+                range: RANGED_ATTACK_RANGE,
+                dx,
+                dy,
+            });
+            if let Some(next) = &mut next_turn_state {
+                next.set(TurnState::PlayerTurn);
+            }
+            input_state.mode = InputMode::Game;
+        }
+        return;
+    }
 
     // ── Inventory input mode ────────────────────────────────────
     if input_state.mode == InputMode::Inventory {
@@ -241,21 +277,23 @@ pub fn input_system(
                     combat_log.push("Not enough stamina!".into());
                 }
             }
-            // ── Targeted ranged attack ──────────────────────────
+            // ── Targeted ranged attack (enter aiming mode) ─────────
             KeyCode::Char('r') if awaiting_input => {
                 let has_ammo = player_ammo
                     .map(|a| a.current > 0)
                     .unwrap_or(false);
                 if has_ammo {
-                    ranged_intents.write(RangedAttackIntent {
-                        attacker: player_entity,
-                        range: RANGED_ATTACK_RANGE,
-                    });
-                    if let Some(next) = &mut next_turn_state {
-                        next.set(TurnState::PlayerTurn);
-                    }
+                    input_state.mode = InputMode::Aiming;
+                    combat_log.push("Aiming... Choose direction (WASD/arrows, Shift+WASD for diagonals, Esc to cancel)".into());
                 } else {
-                    combat_log.push("Out of ammo!".into());
+                    combat_log.push("Out of ammo! Reload with T.".into());
+                }
+            }
+            // ── Reload weapon from inventory magazine ───────────
+            KeyCode::Char('t') if awaiting_input => {
+                input_state.reload_pending = true;
+                if let Some(next) = &mut next_turn_state {
+                    next.set(TurnState::PlayerTurn);
                 }
             }
             // ── Melee wide (cleave) attack ──────────────────────

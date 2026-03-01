@@ -201,6 +201,7 @@ pub fn draw_system(
                                 ItemKind::Explosive { damage, radius } => format!("{damage} dmg r{radius}"),
                                 ItemKind::Armor { defense } => format!("+{defense} def"),
                                 ItemKind::Weapon { attack } => format!("+{attack} atk"),
+                                ItemKind::Magazine { ammo } => format!("{ammo} rounds"),
                             });
                         (name, desc)
                     })
@@ -321,6 +322,26 @@ pub fn draw_system(
         // Show inventory overlay when in Inventory input mode
         if input_state.mode == InputMode::Inventory {
             render_inventory_overlay(frame, game_area, &inv_item_info, input_state.inv_selection);
+        }
+
+        // Show aiming crosshair when in Aiming input mode
+        if input_state.mode == InputMode::Aiming {
+            let label = " AIMING — WASD/Arrows: direction, Shift+WASD: diagonal, Esc: cancel ";
+            let label_width = label.len() as u16;
+            if render_width >= label_width && render_height >= 1 {
+                let cx = game_area.x + (render_width - label_width) / 2;
+                let cy = game_area.y + 1;
+                let aim_area = Rect {
+                    x: cx,
+                    y: cy,
+                    width: label_width,
+                    height: 1,
+                };
+                frame.render_widget(
+                    Paragraph::new(Line::from(label).bold()).on_dark_gray(),
+                    aim_area,
+                );
+            }
         }
     })?;
 
@@ -576,9 +597,9 @@ fn render_help_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
 /// Renders the welcome screen shown at game start.
 fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
     let binding_count = KEYBINDINGS.len() as u16;
-    let w = 56u16.min(game_area.width.saturating_sub(4));
-    // title(1) + blank(1) + objective(2) + blank(1) + bindings + blank(1) + press-any(1) + border(2)
-    let h = (binding_count + 9).min(game_area.height.saturating_sub(4));
+    let w = 62u16.min(game_area.width.saturating_sub(4));
+    // title(1) + blank(1) + objective(4) + blank(1) + bindings + blank(1) + press-any(1) + border(2)
+    let h = (binding_count + 13).min(game_area.height.saturating_sub(4));
 
     if w < 20 || h < 10 {
         return;
@@ -601,6 +622,9 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
         Line::from(""),
         Line::from("  Destroy the Enemy Stronghold (Ω) to win!").white(),
         Line::from("  Enemies will keep spawning from it.").white(),
+        Line::from("  Enemies drop magazines (m) and grenades (*)").white(),
+        Line::from("  that are auto-picked up on contact.").white(),
+        Line::from("  Soldiers can shoot at you from range!").white(),
         Line::from(""),
     ];
     for binding in KEYBINDINGS {

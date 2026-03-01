@@ -3,10 +3,10 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 
 use crate::components::{
-    AiState, BlocksMovement, CameraFollow, CombatStats, Energy, Experience, ExpReward, Health, HellGate, Hostile,
+    AiState, BlocksMovement, CameraFollow, CombatStats, Energy, Experience, ExpReward, Faction, Health, HellGate, Hostile,
     Ammo, Inventory, Level, LootTable, Stamina, Name, Player, Position, Renderable, Speed, Viewshed, ACTION_COST,
 };
-use crate::events::{AttackIntent, DamageEvent, MeleeWideIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, UseItemIntent};
+use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, UseItemIntent};
 use crate::gamemap::GameMap;
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
@@ -68,6 +68,7 @@ impl Plugin for RoguelikePlugin {
             .add_message::<PickupItemIntent>()
             .add_message::<RangedAttackIntent>()
             .add_message::<MeleeWideIntent>()
+            .add_message::<AiRangedAttackIntent>()
             // ── Resources ──
             .insert_resource(MapSeed(seed))
             .insert_resource(GameMapResource(GameMap::new(120, 80, seed)))
@@ -109,7 +110,9 @@ impl Plugin for RoguelikePlugin {
                 (
                     movement::movement_system,
                     inventory::pickup_system,
+                    inventory::auto_pickup_system,
                     inventory::use_item_system,
+                    inventory::reload_system,
                     spell::spell_system,
                     combat::ranged_attack_system,
                     combat::melee_wide_system,
@@ -146,6 +149,7 @@ impl Plugin for RoguelikePlugin {
                 (
                     ai::energy_accumulate_system,
                     ai::ai_system,
+                    combat::ai_ranged_attack_system,
                     wave_spawn::wave_spawn_system,
                     corruption::corruption_system,
                 )
@@ -185,19 +189,22 @@ struct MonsterTemplate {
     speed: i32,
     sight_range: i32,
     exp_reward: i32,
+    faction: Faction,
+    /// Ammo supply for ranged attacks. 0 means melee only.
+    ammo: i32,
 }
 
 const MONSTER_TEMPLATES: &[MonsterTemplate] = &[
     // Tier 1: Wild Animals
-    MonsterTemplate { name: "Rat", symbol: "r", fg: RatColor::Rgb(139, 119, 101), health: 4, attack: 2, defense: 0, speed: 110, sight_range: 6, exp_reward: 3 },
-    MonsterTemplate { name: "Feral Dog", symbol: "d", fg: RatColor::Rgb(160, 82, 45), health: 8, attack: 3, defense: 1, speed: 120, sight_range: 8, exp_reward: 5 },
+    MonsterTemplate { name: "Rat", symbol: "r", fg: RatColor::Rgb(139, 119, 101), health: 4, attack: 2, defense: 0, speed: 110, sight_range: 6, exp_reward: 3, faction: Faction::Wildlife, ammo: 0 },
+    MonsterTemplate { name: "Feral Dog", symbol: "d", fg: RatColor::Rgb(160, 82, 45), health: 8, attack: 3, defense: 1, speed: 120, sight_range: 8, exp_reward: 5, faction: Faction::Wildlife, ammo: 0 },
     // Tier 2: Bandits
-    MonsterTemplate { name: "Bandit", symbol: "b", fg: RatColor::Rgb(180, 160, 100), health: 12, attack: 4, defense: 1, speed: 90, sight_range: 8, exp_reward: 8 },
+    MonsterTemplate { name: "Bandit", symbol: "b", fg: RatColor::Rgb(180, 160, 100), health: 12, attack: 4, defense: 1, speed: 90, sight_range: 8, exp_reward: 8, faction: Faction::Bandits, ammo: 0 },
     // Tier 3: Scavengers
-    MonsterTemplate { name: "Scavenger", symbol: "s", fg: RatColor::Rgb(100, 140, 100), health: 15, attack: 5, defense: 2, speed: 85, sight_range: 10, exp_reward: 12 },
-    // Tier 4: Military
-    MonsterTemplate { name: "Soldier", symbol: "S", fg: RatColor::Rgb(60, 120, 60), health: 20, attack: 6, defense: 3, speed: 80, sight_range: 12, exp_reward: 18 },
-    MonsterTemplate { name: "Spec Ops", symbol: "X", fg: RatColor::Rgb(40, 40, 40), health: 28, attack: 8, defense: 4, speed: 100, sight_range: 14, exp_reward: 30 },
+    MonsterTemplate { name: "Scavenger", symbol: "s", fg: RatColor::Rgb(100, 140, 100), health: 15, attack: 5, defense: 2, speed: 85, sight_range: 10, exp_reward: 12, faction: Faction::Scavengers, ammo: 0 },
+    // Tier 4: Military (has ranged attacks)
+    MonsterTemplate { name: "Soldier", symbol: "S", fg: RatColor::Rgb(60, 120, 60), health: 20, attack: 6, defense: 3, speed: 80, sight_range: 12, exp_reward: 18, faction: Faction::Military, ammo: 10 },
+    MonsterTemplate { name: "Spec Ops", symbol: "X", fg: RatColor::Rgb(40, 40, 40), health: 28, attack: 8, defense: 4, speed: 100, sight_range: 14, exp_reward: 30, faction: Faction::Military, ammo: 15 },
 ];
 
 /// Spawns monsters on passable tiles using deterministic noise placement.
@@ -257,7 +264,7 @@ fn do_spawn_player(commands: &mut Commands) {
             next_level: 20,
         },
         Viewshed {
-            range: 15,
+            range: 40,
             visible_tiles: HashSet::new(),
             revealed_tiles: HashSet::new(),
             dirty: true,
@@ -305,6 +312,7 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
                 },
                 BlocksMovement,
                 Hostile,
+                template.faction,
                 Health {
                     current: template.health,
                     max: template.health,
@@ -323,6 +331,10 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
                     visible_tiles: HashSet::new(),
                     revealed_tiles: HashSet::new(),
                     dirty: true,
+                },
+                Ammo {
+                    current: template.ammo,
+                    max: template.ammo,
                 },
             ));
         }
