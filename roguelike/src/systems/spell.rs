@@ -8,7 +8,7 @@ use crate::resources::{CombatLog, SpellParticles};
 const SPELL_MANA_COST: i32 = 10;
 
 /// Lifetime (in frames) for spell particle animations.
-const PARTICLE_LIFETIME: u32 = 6;
+const PARTICLE_LIFETIME: u32 = 8;
 
 /// Resolves area-of-effect spell casts.
 ///
