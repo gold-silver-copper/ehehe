@@ -100,13 +100,21 @@ pub struct SpellParticles {
     pub particles: Vec<(MyPoint, u32)>,
 }
 
+/// Maximum number of active spell particles to prevent unbounded growth.
+const MAX_PARTICLES: usize = 500;
+
 impl SpellParticles {
     /// Adds particles for an AoE spell centered on `origin` hitting `targets`.
     pub fn add_aoe(&mut self, origin: MyPoint, targets: &[MyPoint], lifetime: u32) {
         // Add a particle at the origin.
-        self.particles.push((origin, lifetime));
+        if self.particles.len() < MAX_PARTICLES {
+            self.particles.push((origin, lifetime));
+        }
         // Add particles at each target.
         for &t in targets {
+            if self.particles.len() >= MAX_PARTICLES {
+                break;
+            }
             self.particles.push((t, lifetime));
         }
     }

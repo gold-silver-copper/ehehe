@@ -72,12 +72,11 @@ pub fn use_item_system(
             continue;
         };
 
-        if intent.item_index >= inv.items.len() {
+        let Some(&item_entity) = inv.items.get(intent.item_index) else {
             combat_log.push("No item in that slot.".into());
             continue;
-        }
+        };
 
-        let item_entity = inv.items[intent.item_index];
         let Ok((kind, name)) = item_kind_query.get(item_entity) else {
             combat_log.push("Invalid item.".into());
             continue;
