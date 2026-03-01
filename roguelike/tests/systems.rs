@@ -955,3 +955,323 @@ fn two_blockers_cannot_overlap_on_simultaneous_move() {
         "Two blocking entities should not occupy the same tile after simultaneous moves"
     );
 }
+
+// ─── Ranged gun mechanics tests ──────────────────────────────────
+
+/// Creates a minimal App wired for ranged attack testing.
+fn test_app_with_ranged() -> App {
+    let mut app = App::new();
+    app.add_plugins(bevy::app::ScheduleRunnerPlugin::default());
+    app.add_plugins(bevy::state::app::StatesPlugin);
+    app.add_message::<MoveIntent>();
+    app.add_message::<AttackIntent>();
+    app.add_message::<DamageEvent>();
+    app.add_message::<RangedAttackIntent>();
+    app.add_message::<MeleeWideIntent>();
+    app.init_resource::<SpatialIndex>();
+    app.init_resource::<CombatLog>();
+    app.init_resource::<KillCount>();
+    app.init_resource::<PendingExp>();
+    app.init_resource::<SpellParticles>();
+    app.init_state::<GameState>();
+    app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
+    app.insert_resource(MapSeed(42));
+    app.add_systems(
+        Update,
+        (
+            spatial_index::spatial_index_system,
+            movement::movement_system,
+            combat::ranged_attack_system,
+            combat::melee_wide_system,
+            combat::combat_system,
+            combat::apply_damage_system,
+            combat::death_system,
+            combat::level_up_system,
+        )
+            .chain(),
+    );
+    app
+}
+
+/// Spawns a player with ammo at the given position.
+fn spawn_test_player_with_ammo(app: &mut App, x: i32, y: i32, ammo: i32) -> Entity {
+    app.world_mut().spawn((
+        Position { x, y },
+        Player,
+        BlocksMovement,
+        Name("Player".into()),
+        Health { current: 30, max: 30 },
+        CombatStats { attack: 5, defense: 2 },
+        Ammo { current: ammo, max: 30 },
+    )).id()
+}
+
+#[test]
+fn ranged_attack_consumes_ammo() {
+    let mut app = test_app_with_ranged();
+    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    let _monster = spawn_test_monster(&mut app, 64, 40, "Bandit");
+
+    app.update();
+
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 8,
+    });
+    app.update();
+
+    let ammo = app.world().get::<Ammo>(player).unwrap();
+    assert_eq!(ammo.current, 9, "Ranged attack should consume 1 ammo");
+}
+
+#[test]
+fn ranged_attack_no_ammo_does_not_fire() {
+    let mut app = test_app_with_ranged();
+    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 0);
+    let monster = spawn_test_monster(&mut app, 64, 40, "Bandit");
+
+    app.update();
+
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 8,
+    });
+    app.update();
+
+    // Monster should not be damaged.
+    let monster_hp = app.world().get::<Health>(monster).unwrap();
+    assert_eq!(monster_hp.current, 10, "Monster should not be damaged when player has no ammo");
+
+    // Combat log should contain ammo message.
+    let log = app.world().resource::<CombatLog>();
+    assert!(
+        log.messages.iter().any(|m| m.contains("ammo")),
+        "Combat log should mention ammo shortage"
+    );
+}
+
+#[test]
+fn ranged_attack_damages_nearest_enemy() {
+    let mut app = test_app_with_ranged();
+    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    // Monster at distance 4 (within range 8).
+    let monster = app.world_mut().spawn((
+        Position { x: 64, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("Bandit".into()),
+        Health { current: 20, max: 20 },
+        CombatStats { attack: 3, defense: 1 },
+    )).id();
+
+    app.update();
+
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 8,
+    });
+    app.update();
+
+    let monster_hp = app.world().get::<Health>(monster).unwrap();
+    assert!(monster_hp.current < 20, "Ranged attack should damage the target");
+}
+
+#[test]
+fn ranged_attack_no_target_in_range() {
+    let mut app = test_app_with_ranged();
+    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    // Monster far away (distance 20, beyond range 8).
+    let _monster = app.world_mut().spawn((
+        Position { x: 80, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("FarBandit".into()),
+        Health { current: 20, max: 20 },
+        CombatStats { attack: 3, defense: 1 },
+    )).id();
+
+    app.update();
+
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 8,
+    });
+    app.update();
+
+    // Ammo should still be consumed (shot fired but missed).
+    let ammo = app.world().get::<Ammo>(player).unwrap();
+    assert_eq!(ammo.current, 9, "Ammo should be consumed even if no target in range");
+
+    let log = app.world().resource::<CombatLog>();
+    assert!(
+        log.messages.iter().any(|m| m.contains("no target")),
+        "Combat log should note no target in range"
+    );
+}
+
+#[test]
+fn ranged_bullet_penetrates_multiple_enemies() {
+    let mut app = test_app_with_ranged();
+    // Player with attack=10 so bullet has high penetration.
+    let player = app.world_mut().spawn((
+        Position { x: 60, y: 40 },
+        Player,
+        BlocksMovement,
+        Name("Player".into()),
+        Health { current: 30, max: 30 },
+        CombatStats { attack: 10, defense: 2 },
+        Ammo { current: 10, max: 30 },
+    )).id();
+
+    // Two enemies in a line east of player with low defense.
+    let m1 = app.world_mut().spawn((
+        Position { x: 62, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("Bandit1".into()),
+        Health { current: 20, max: 20 },
+        CombatStats { attack: 3, defense: 2 },
+    )).id();
+
+    let m2 = app.world_mut().spawn((
+        Position { x: 64, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("Bandit2".into()),
+        Health { current: 20, max: 20 },
+        CombatStats { attack: 3, defense: 2 },
+    )).id();
+
+    app.update();
+
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 8,
+    });
+    app.update();
+
+    // Both monsters should be hit.
+    let m1_hp = app.world().get::<Health>(m1).unwrap();
+    let m2_hp = app.world().get::<Health>(m2).unwrap();
+    assert!(m1_hp.current < 20, "First enemy in line should be hit by bullet");
+    assert!(m2_hp.current < 20, "Second enemy in line should be hit by penetrating bullet");
+}
+
+#[test]
+fn ranged_bullet_stops_when_penetration_exhausted() {
+    let mut app = test_app_with_ranged();
+    // Player with attack=3, low penetration.
+    let player = app.world_mut().spawn((
+        Position { x: 60, y: 40 },
+        Player,
+        BlocksMovement,
+        Name("Player".into()),
+        Health { current: 30, max: 30 },
+        CombatStats { attack: 3, defense: 2 },
+        Ammo { current: 10, max: 30 },
+    )).id();
+
+    // First enemy with defense=5 (exceeds penetration after first hit).
+    let m1 = app.world_mut().spawn((
+        Position { x: 62, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("TankSoldier".into()),
+        Health { current: 20, max: 20 },
+        CombatStats { attack: 3, defense: 5 },
+    )).id();
+
+    // Second enemy behind the tank.
+    let m2 = app.world_mut().spawn((
+        Position { x: 64, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("Bandit".into()),
+        Health { current: 20, max: 20 },
+        CombatStats { attack: 3, defense: 1 },
+    )).id();
+
+    app.update();
+
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 8,
+    });
+    app.update();
+
+    // First enemy should be hit.
+    let m1_hp = app.world().get::<Health>(m1).unwrap();
+    assert!(m1_hp.current < 20, "First enemy should be hit");
+
+    // Second enemy should NOT be hit — bullet penetration exhausted after high defense target.
+    let m2_hp = app.world().get::<Health>(m2).unwrap();
+    assert_eq!(m2_hp.current, 20, "Second enemy should not be hit after penetration exhausted by high-defense target");
+}
+
+#[test]
+fn ranged_attack_logs_shoot_message() {
+    let mut app = test_app_with_ranged();
+    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    let _monster = spawn_test_monster(&mut app, 64, 40, "Bandit");
+
+    app.update();
+
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 8,
+    });
+    app.update();
+
+    let log = app.world().resource::<CombatLog>();
+    assert!(
+        log.messages.iter().any(|m| m.contains("shoots")),
+        "Combat log should contain a shoot message"
+    );
+}
+
+#[test]
+fn roundhouse_kick_hits_adjacent_enemies() {
+    let mut app = test_app_with_ranged();
+    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+
+    // Adjacent enemies (distance 1).
+    let m1 = spawn_test_monster(&mut app, 61, 40, "Bandit1");
+    let m2 = spawn_test_monster(&mut app, 60, 41, "Bandit2");
+
+    app.update();
+
+    app.world_mut().write_message(MeleeWideIntent {
+        attacker: player,
+    });
+    app.update();
+
+    let m1_hp = app.world().get::<Health>(m1).unwrap();
+    let m2_hp = app.world().get::<Health>(m2).unwrap();
+    assert!(m1_hp.current < 10, "Adjacent enemy 1 should be hit by roundhouse kick");
+    assert!(m2_hp.current < 10, "Adjacent enemy 2 should be hit by roundhouse kick");
+
+    let log = app.world().resource::<CombatLog>();
+    assert!(
+        log.messages.iter().any(|m| m.contains("roundhouse")),
+        "Combat log should contain roundhouse kick message"
+    );
+}
+
+#[test]
+fn roundhouse_kick_misses_distant_enemies() {
+    let mut app = test_app_with_ranged();
+    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+
+    // Enemy at distance 3 (not adjacent).
+    let monster = spawn_test_monster(&mut app, 63, 40, "FarBandit");
+
+    app.update();
+
+    app.world_mut().write_message(MeleeWideIntent {
+        attacker: player,
+    });
+    app.update();
+
+    let monster_hp = app.world().get::<Health>(monster).unwrap();
+    assert_eq!(monster_hp.current, 10, "Distant enemy should not be hit by roundhouse kick");
+}
