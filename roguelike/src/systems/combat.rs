@@ -27,13 +27,13 @@ pub fn combat_system(
         let t_name = target_name.map_or("???", |n| &n.0);
 
         if damage > 0 {
-            combat_log.messages.push(format!("{a_name} hits {t_name} for {damage} damage"));
+            combat_log.push(format!("{a_name} hits {t_name} for {damage} damage"));
             damage_events.write(DamageEvent {
                 target: intent.target,
                 amount: damage,
             });
         } else {
-            combat_log.messages.push(format!("{a_name} attacks {t_name} but deals no damage"));
+            combat_log.push(format!("{a_name} attacks {t_name} but deals no damage"));
         }
     }
 }
@@ -60,7 +60,7 @@ pub fn death_system(
     for (entity, health, name) in &query {
         if health.current <= 0 {
             let label = name.map_or("Something", |n| &n.0);
-            combat_log.messages.push(format!("{label} has been slain!"));
+            combat_log.push(format!("{label} has been slain!"));
             commands.entity(entity).despawn();
         }
     }

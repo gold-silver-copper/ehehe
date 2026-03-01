@@ -67,8 +67,27 @@ impl SpatialIndex {
 }
 
 /// Accumulator for combat log messages displayed in the status bar.
-/// Cleared each frame after rendering.
+/// Maintains a rolling history of recent messages.
 #[derive(Resource, Debug, Default)]
 pub struct CombatLog {
     pub messages: Vec<String>,
+}
+
+/// Maximum number of messages retained in the combat log.
+const MAX_COMBAT_LOG_MESSAGES: usize = 50;
+
+impl CombatLog {
+    /// Adds a message and trims old entries to keep the log bounded.
+    pub fn push(&mut self, message: String) {
+        self.messages.push(message);
+        if self.messages.len() > MAX_COMBAT_LOG_MESSAGES {
+            self.messages.remove(0);
+        }
+    }
+
+    /// Returns the most recent `n` messages.
+    pub fn recent(&self, n: usize) -> &[String] {
+        let start = self.messages.len().saturating_sub(n);
+        &self.messages[start..]
+    }
 }
