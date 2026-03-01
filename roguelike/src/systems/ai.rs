@@ -38,8 +38,13 @@ fn a_star_first_step(
     goal: GridVec,
     is_walkable: impl Fn(GridVec) -> bool,
 ) -> Option<GridVec> {
-    // Already adjacent — return the direct step.
-    if start.chebyshev_distance(goal) <= 1 {
+    // Already at the goal — no step needed.
+    if start == goal {
+        return None;
+    }
+
+    // Adjacent and walkable — return the direct step without full search.
+    if start.chebyshev_distance(goal) == 1 {
         return Some(goal - start);
     }
 
@@ -273,9 +278,9 @@ mod tests {
     }
 
     #[test]
-    fn a_star_zero_distance_returns_zero_step() {
+    fn a_star_zero_distance_returns_none() {
         let pos = GridVec::new(5, 5);
         let step = a_star_first_step(pos, pos, |_| true);
-        assert_eq!(step, Some(GridVec::ZERO));
+        assert_eq!(step, None, "No step needed when already at goal");
     }
 }
