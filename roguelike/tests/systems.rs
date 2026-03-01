@@ -1019,6 +1019,7 @@ fn ranged_attack_consumes_ammo() {
         range: 8,
         dx: 1,
         dy: 0,
+        gun_item: None,
     });
     app.update();
 
@@ -1039,6 +1040,7 @@ fn ranged_attack_no_ammo_does_not_fire() {
         range: 8,
         dx: 1,
         dy: 0,
+        gun_item: None,
     });
     app.update();
 
@@ -1075,6 +1077,7 @@ fn ranged_attack_damages_nearest_enemy() {
         range: 8,
         dx: 1,
         dy: 0,
+        gun_item: None,
     });
     app.update();
 
@@ -1103,6 +1106,7 @@ fn ranged_attack_no_target_in_range() {
         range: 8,
         dx: 1,
         dy: 0,
+        gun_item: None,
     });
     app.update();
 
@@ -1157,6 +1161,7 @@ fn ranged_bullet_penetrates_multiple_enemies() {
         range: 8,
         dx: 1,
         dy: 0,
+        gun_item: None,
     });
     app.update();
 
@@ -1208,6 +1213,7 @@ fn ranged_bullet_stops_when_penetration_exhausted() {
         range: 8,
         dx: 1,
         dy: 0,
+        gun_item: None,
     });
     app.update();
 
@@ -1233,6 +1239,7 @@ fn ranged_attack_logs_shoot_message() {
         range: 8,
         dx: 1,
         dy: 0,
+        gun_item: None,
     });
     app.update();
 

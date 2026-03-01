@@ -3,15 +3,15 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 
 use crate::components::{
-    AiState, BlocksMovement, CameraFollow, CombatStats, Energy, Experience, ExpReward, Faction, Health, HellGate, Hostile,
-    Ammo, Inventory, Level, LootTable, Stamina, Name, Player, Position, Renderable, Speed, Viewshed, ACTION_COST,
+    AiState, BlocksMovement, Caliber, CameraFollow, CombatStats, Energy, Experience, ExpReward, Faction, Health, HellGate, Hostile,
+    Ammo, Inventory, Item, ItemKind, Level, LootTable, Stamina, Name, Player, Position, Renderable, Speed, Viewshed, ACTION_COST,
 };
 use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, UseItemIntent};
 use crate::gamemap::GameMap;
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
 use crate::resources::{
-    CameraPosition, CombatLog, GameMapResource, GameState, InputState,
+    CameraPosition, Collectibles, CombatLog, CursorPosition, GameMapResource, GameState, InputState,
     KillCount, MapSeed, PendingExp, RestartRequested, SpatialIndex, SpellParticles, TurnCounter,
     TurnState,
 };
@@ -81,6 +81,8 @@ impl Plugin for RoguelikePlugin {
             .init_resource::<SpellParticles>()
             .init_resource::<InputState>()
             .init_resource::<RestartRequested>()
+            .init_resource::<CursorPosition>()
+            .init_resource::<Collectibles>()
             // ── States ──
             .init_state::<GameState>()
             .add_sub_state::<TurnState>()
@@ -224,6 +226,24 @@ fn spawn_hell_gate(mut commands: Commands) {
 
 /// Helper: spawns the player entity.
 fn do_spawn_player(commands: &mut Commands) {
+    // Spawn starting weapon: Colt Navy
+    let colt_navy = commands.spawn((
+        Item,
+        Name("Colt Navy".into()),
+        Renderable {
+            symbol: "P".into(),
+            fg: RatColor::Rgb(140, 140, 160),
+            bg: RatColor::Black,
+        },
+        ItemKind::Gun {
+            loaded: 6,
+            capacity: 6,
+            caliber: Caliber::Cal36,
+            attack: 5,
+            name: "Colt Navy".into(),
+        },
+    )).id();
+
     commands.spawn((
         Position {
             x: SPAWN_X,
@@ -257,7 +277,7 @@ fn do_spawn_player(commands: &mut Commands) {
         Speed(ACTION_COST),
         Energy(0),
     )).insert((
-        Inventory::default(),
+        Inventory { items: vec![colt_navy] },
         Level(1),
         Experience {
             current: 0,
@@ -383,6 +403,8 @@ fn restart_system(
     seed: Res<MapSeed>,
     mut game_map: ResMut<GameMapResource>,
     mut camera: ResMut<CameraPosition>,
+    mut cursor: ResMut<CursorPosition>,
+    mut collectibles: ResMut<Collectibles>,
 ) {
     if !restart.0 {
         return;
@@ -400,6 +422,8 @@ fn restart_system(
     spell_particles.particles.clear();
     *input_state = InputState::default();
     camera.0 = SPAWN_POINT;
+    *cursor = CursorPosition::default();
+    *collectibles = Collectibles::default();
     *game_map = GameMapResource(GameMap::new(120, 80, seed.0));
 
     next_game_state.set(GameState::Playing);

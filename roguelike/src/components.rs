@@ -259,6 +259,17 @@ pub struct Experience {
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Level(pub i32);
 
+/// Type of collectible supply drop.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub enum CollectibleKind {
+    Caps(i32),
+    Bullets36(i32),
+    Bullets44(i32),
+    Powder(i32),
+    Bandages(i32),
+    Dollars(i32),
+}
+
 /// How much EXP a hostile entity is worth when killed.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ExpReward(pub i32);

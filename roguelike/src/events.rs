@@ -54,6 +54,8 @@ pub struct RangedAttackIntent {
     /// Trajectory direction (normalized to -1/0/1 per axis).
     pub dx: CoordinateUnit,
     pub dy: CoordinateUnit,
+    /// Optional gun item entity. If present, decrements loaded rounds instead of Ammo.
+    pub gun_item: Option<Entity>,
 }
 
 /// Fired when the player reloads their weapon from a magazine in inventory.

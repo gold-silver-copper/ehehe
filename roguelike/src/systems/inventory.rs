@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    Health, Inventory, Item, ItemKind, Name, Player, Position, Renderable,
+    CollectibleKind, Health, Inventory, Item, ItemKind, Name, Player, Position, Renderable,
 };
 use crate::events::{PickupItemIntent, UseItemIntent};
-use crate::resources::{CombatLog, InputState, SpatialIndex};
+use crate::resources::{Collectibles, CombatLog, InputState, SpatialIndex};
 use crate::typedefs::RatColor;
 
 /// Processes pickup intents: player picks up an item on the ground at their position.
@@ -231,10 +231,11 @@ pub fn reload_system(
 pub fn auto_pickup_system(
     mut commands: Commands,
     player_query: Query<&Position, With<Player>>,
-    items_query: Query<(Entity, &Position, Option<&Name>), With<Item>>,
+    items_query: Query<(Entity, &Position, Option<&Name>, Option<&CollectibleKind>), With<Item>>,
     spatial: Res<SpatialIndex>,
     mut inventory_query: Query<&mut Inventory, With<Player>>,
     mut combat_log: ResMut<CombatLog>,
+    mut collectibles: ResMut<Collectibles>,
 ) {
     let Ok(player_pos) = player_query.single() else {
         return;
@@ -244,11 +245,27 @@ pub fn auto_pickup_system(
     let entities_here = spatial.entities_at(&player_vec);
 
     for &ent in entities_here {
-        let Ok((item_entity, _pos, item_name)) = items_query.get(ent) else {
+        let Ok((item_entity, _pos, item_name, coll_kind)) = items_query.get(ent) else {
             continue;
         };
 
         let name_str = item_name.map_or("item", |n| n.0.as_str()).to_string();
+
+        // Handle collectible items: add to Collectibles resource instead of inventory.
+        if let Some(kind) = coll_kind {
+            match *kind {
+                CollectibleKind::Caps(n) => collectibles.caps += n,
+                CollectibleKind::Bullets36(n) => collectibles.bullets_36 += n,
+                CollectibleKind::Bullets44(n) => collectibles.bullets_44 += n,
+                CollectibleKind::Powder(n) => collectibles.powder += n,
+                CollectibleKind::Bandages(n) => collectibles.bandages += n,
+                CollectibleKind::Dollars(n) => collectibles.dollars += n,
+            }
+            combat_log.push(format!("Picked up {name_str}"));
+            commands.entity(item_entity).despawn();
+            continue;
+        }
+
         if let Ok(mut inv) = inventory_query.single_mut() {
             if inv.items.len() < 9 {
                 commands.entity(item_entity).remove::<Position>();

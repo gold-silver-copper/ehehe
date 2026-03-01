@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Row, Table, Wrap
 use crate::components::{Ammo, Experience, Health, Inventory, ItemKind, Level, Stamina, Name, Player, Position, Renderable, Viewshed};
 use crate::grid_vec::GridVec;
 use crate::resources::{
-    CameraPosition, CombatLog, GameMapResource, GameState, InputMode,
+    CameraPosition, Collectibles, CombatLog, CursorPosition, GameMapResource, GameState, InputMode,
     InputState, KillCount, SpellParticles, TurnCounter,
 };
 use crate::systems::input::KEYBINDINGS;
@@ -54,6 +54,8 @@ pub fn draw_system(
     kill_count: Res<KillCount>,
     spell_particles: Res<SpellParticles>,
     input_state: Res<InputState>,
+    cursor: Res<CursorPosition>,
+    collectibles: Res<Collectibles>,
 ) -> Result {
     context.draw(|frame| {
         let area = frame.area();
@@ -164,6 +166,20 @@ pub fn draw_system(
             }
         }
 
+        // Overlay cursor position.
+        {
+            let cursor_screen = cursor.0 - bottom_left;
+            if cursor_screen.x >= 0
+                && cursor_screen.x < render_width as CoordinateUnit
+                && cursor_screen.y >= 0
+                && cursor_screen.y < render_height as CoordinateUnit
+            {
+                let bg = render_packet[cursor_screen.y as usize][cursor_screen.x as usize].2;
+                render_packet[cursor_screen.y as usize][cursor_screen.x as usize] =
+                    ("X".into(), RatColor::Rgb(255, 255, 0), bg);
+            }
+        }
+
         let mut render_lines = Vec::new();
 
         for y in 0..render_height as usize {
@@ -226,6 +242,7 @@ pub fn draw_system(
             player_exp,
             &turn_counter,
             &kill_count,
+            &collectibles,
         );
 
         // ── Overlays ────────────────────────────────────────────
@@ -365,6 +382,7 @@ fn render_bottom_panel(
     player_exp: Option<&Experience>,
     turn_counter: &TurnCounter,
     kill_count: &KillCount,
+    collectibles: &Collectibles,
 ) {
     // Split bottom panel into three horizontal columns: stats | log | info
     let horiz_chunks = Layout::default()
@@ -381,7 +399,7 @@ fn render_bottom_panel(
     let info_area = horiz_chunks[2];
 
     // ── Stats Column (left) ─────────────────────────────────────
-    render_stats_column(frame, stats_area, player_hp, player_stamina, player_ammo, player_level, player_exp);
+    render_stats_column(frame, stats_area, player_hp, player_stamina, player_ammo, player_level, player_exp, collectibles);
 
     // ── Central Log (middle) ────────────────────────────────────
     let log_height = log_area.height.saturating_sub(2) as usize; // subtract border
@@ -416,6 +434,7 @@ fn render_stats_column(
     player_ammo: Option<&Ammo>,
     player_level: Option<&Level>,
     player_exp: Option<&Experience>,
+    collectibles: &Collectibles,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -424,6 +443,7 @@ fn render_stats_column(
             Constraint::Length(1), // Stamina gauge
             Constraint::Length(1), // Ammo gauge
             Constraint::Length(1), // EXP gauge
+            Constraint::Length(1), // Collectibles line
             Constraint::Min(0),   // padding
         ])
         .split(Block::default().borders(Borders::ALL).title("Stats").inner(area));
@@ -472,6 +492,16 @@ fn render_stats_column(
             .label(Span::from(format!("Lv.{} {}/{}", level.0, exp.current, exp.next_level)).style(ratatui::style::Style::default().fg(ratatui::style::Color::White)));
         frame.render_widget(gauge, chunks[3]);
     }
+
+    // Collectibles
+    let coll_text = format!(
+        "Cap:{} Pdr:{} .36:{} .44:{}",
+        collectibles.caps, collectibles.powder, collectibles.bullets_36, collectibles.bullets_44
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(coll_text).dark_gray()),
+        chunks[4],
+    );
 }
 
 /// Maximum number of inventory items shown in the compact bottom panel.
@@ -507,7 +537,7 @@ fn render_info_column(
                 inv_lines.push(Line::from(format!(" {}: {name}", i + 1)));
             }
             if inv_item_names.len() > MAX_DISPLAYED_INVENTORY_ITEMS {
-                inv_lines.push(Line::from(format!(" +{} more [I]", inv_item_names.len() - MAX_DISPLAYED_INVENTORY_ITEMS)).dark_gray());
+                inv_lines.push(Line::from(format!(" +{} more [Tab]", inv_item_names.len() - MAX_DISPLAYED_INVENTORY_ITEMS)).dark_gray());
             }
         }
     } else {
@@ -515,7 +545,7 @@ fn render_info_column(
     }
     frame.render_widget(
         Paragraph::new(inv_lines)
-            .block(Block::default().borders(Borders::ALL).title("Bag [I]")),
+            .block(Block::default().borders(Borders::ALL).title("Bag [Tab]")),
         chunks[0],
     );
 
@@ -681,14 +711,14 @@ fn render_inventory_overlay(
             Line::from(""),
             Line::from("  Inventory is empty.").dark_gray(),
             Line::from(""),
-            Line::from("  Press I or Esc to close").dark_gray(),
+            Line::from("  Press Tab or Esc to close").dark_gray(),
         ];
         frame.render_widget(
             Paragraph::new(lines)
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Inventory [I] ")
+                        .title(" Inventory [Tab] ")
                         .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Cyan)),
                 )
                 .on_black(),
@@ -723,7 +753,7 @@ fn render_inventory_overlay(
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Inventory [I] — ↑↓ Navigate, Enter Use, Esc Close ")
+                .title(" Inventory [Tab] — ↑↓ Navigate, Enter Use, Esc Close ")
                 .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Cyan)),
         )
         .header(

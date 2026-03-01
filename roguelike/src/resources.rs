@@ -3,8 +3,9 @@ use std::collections::{HashMap, VecDeque};
 use bevy::prelude::*;
 
 use crate::gamemap::GameMap;
+use crate::grid_vec::GridVec;
 use crate::noise::NoiseSeed;
-use crate::typedefs::MyPoint;
+use crate::typedefs::{MyPoint, SPAWN_X, SPAWN_Y};
 
 /// Bevy resource wrapping the game map for ECS access.
 #[derive(Resource)]
@@ -287,6 +288,12 @@ impl Default for Collectibles {
 /// Always visible on the map.
 #[derive(Resource, Debug, Clone)]
 pub struct CursorPosition(pub MyPoint);
+
+impl Default for CursorPosition {
+    fn default() -> Self {
+        Self(GridVec::new(SPAWN_X, SPAWN_Y))
+    }
+}
 
 #[cfg(test)]
 mod tests {

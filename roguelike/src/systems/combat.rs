@@ -1,10 +1,11 @@
 use bevy::prelude::*;
 
-use crate::components::{CombatStats, ExpReward, Experience, Health, HellGate, Hostile, Level, LootTable, Stamina, Ammo, Name, Player, Position};
+use crate::components::{CollectibleKind, CombatStats, ExpReward, Experience, Health, HellGate, Hostile, Item, ItemKind, Level, LootTable, Stamina, Ammo, Name, Player, Position, Renderable};
 use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, RangedAttackIntent};
 use crate::noise::value_noise;
 use crate::resources::{CombatLog, GameMapResource, GameState, KillCount, MapSeed, PendingExp};
 use crate::systems::inventory::spawn_loot;
+use crate::typedefs::RatColor;
 
 /// Resolves attack intents into damage events.
 ///
@@ -99,6 +100,30 @@ pub fn death_system(
                     spawn_loot(&mut commands, p.x, p.y, item_roll);
                     combat_log.push(format!("{label} dropped an item!"));
                 }
+
+                // Also drop collectible supplies (caps + random ammo).
+                let coll_roll = value_noise(p.x.wrapping_add(kill_count.0 as i32 + 1), p.y, seed.0.wrapping_add(33333));
+                if coll_roll < 0.5 {
+                    let caps_amount = ((coll_roll * 20.0) as i32).max(1);
+                    commands.spawn((
+                        Position { x: p.x, y: p.y },
+                        Item,
+                        Name(format!("{caps_amount} Caps")),
+                        Renderable { symbol: "$".into(), fg: RatColor::Rgb(255, 215, 0), bg: RatColor::Black },
+                        CollectibleKind::Caps(caps_amount),
+                    ));
+                }
+                let ammo_roll = value_noise(p.y.wrapping_add(kill_count.0 as i32 + 1), p.x, seed.0.wrapping_add(44444));
+                if ammo_roll < 0.3 {
+                    let amount = ((ammo_roll * 15.0) as i32).max(1);
+                    commands.spawn((
+                        Position { x: p.x, y: p.y },
+                        Item,
+                        Name(format!("{amount}x .36 Bullets")),
+                        Renderable { symbol: "·".into(), fg: RatColor::Rgb(180, 180, 180), bg: RatColor::Black },
+                        CollectibleKind::Bullets36(amount),
+                    ));
+                }
             }
 
             commands.entity(entity).despawn();
@@ -165,6 +190,7 @@ pub fn ranged_attack_system(
     mut combat_log: ResMut<CombatLog>,
     mut spell_particles: ResMut<crate::resources::SpellParticles>,
     game_map: Res<GameMapResource>,
+    mut item_kind_query: Query<&mut ItemKind>,
 ) {
     for intent in intents.read() {
         let Ok((caster_pos, mut ammo, caster_stats, caster_name)) = caster_query.get_mut(intent.attacker) else {
@@ -173,12 +199,32 @@ pub fn ranged_attack_system(
         let origin = caster_pos.as_grid_vec();
         let c_name = caster_name.map_or("???", |n| &n.0);
 
-        // Consume ammo.
-        if ammo.current <= 0 {
-            combat_log.push("Out of ammo!".into());
-            continue;
+        // Determine damage and consume ammo from either a gun item or the global Ammo pool.
+        let damage;
+        if let Some(gun_entity) = intent.gun_item {
+            if let Ok(mut kind) = item_kind_query.get_mut(gun_entity) {
+                if let ItemKind::Gun { loaded, attack, .. } = kind.as_mut() {
+                    if *loaded <= 0 {
+                        combat_log.push("Gun is empty!".into());
+                        continue;
+                    }
+                    *loaded -= 1;
+                    damage = *attack;
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        } else {
+            // Legacy path: use global Ammo pool.
+            if ammo.current <= 0 {
+                combat_log.push("Out of ammo!".into());
+                continue;
+            }
+            ammo.current -= 1;
+            damage = caster_stats.attack;
         }
-        ammo.current -= 1;
 
         let dx = intent.dx;
         let dy = intent.dy;
@@ -188,7 +234,6 @@ pub fn ranged_attack_system(
             continue;
         }
 
-        let damage = caster_stats.attack;
         let mut penetration = damage;
         let mut hit_count = 0;
 

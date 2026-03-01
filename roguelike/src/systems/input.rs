@@ -1,10 +1,22 @@
-use bevy::{app::AppExit, prelude::*};
+use bevy::{app::AppExit, ecs::system::SystemParam, prelude::*};
 use bevy_ratatui::event::KeyMessage;
 use ratatui::crossterm::event::KeyCode;
 
-use crate::components::{Ammo, Inventory, Stamina, Player};
+use crate::components::{Ammo, Hostile, Inventory, ItemKind, Stamina, Player, Position};
 use crate::events::{MeleeWideIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, UseItemIntent};
-use crate::resources::{CombatLog, GameState, InputMode, InputState, RestartRequested, TurnState};
+use crate::resources::{CombatLog, CursorPosition, GameState, InputMode, InputState, RestartRequested, TurnState};
+
+/// Bundles all intent MessageWriters to stay under Bevy's 16-param system limit.
+#[derive(SystemParam)]
+pub struct IntentWriters<'w> {
+    exit: MessageWriter<'w, AppExit>,
+    move_intents: MessageWriter<'w, MoveIntent>,
+    spell_intents: MessageWriter<'w, SpellCastIntent>,
+    use_item_intents: MessageWriter<'w, UseItemIntent>,
+    pickup_intents: MessageWriter<'w, PickupItemIntent>,
+    ranged_intents: MessageWriter<'w, RangedAttackIntent>,
+    melee_wide_intents: MessageWriter<'w, MeleeWideIntent>,
+}
 
 /// Default radius for the player's grenade blast.
 const SPELL_RADIUS: i32 = 3;
@@ -32,6 +44,8 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
     CommandBinding { key: "S / ↓", name: "Move south", docs: "Move the player one tile south (down on the map)." },
     CommandBinding { key: "A / ←", name: "Move west", docs: "Move the player one tile west (left on the map)." },
     CommandBinding { key: "D / →", name: "Move east", docs: "Move the player one tile east (right on the map)." },
+    CommandBinding { key: "I/K/J/L", name: "Cursor ↑↓←→", docs: "Move the cursor one tile (used for aiming guns with 1-9)." },
+    CommandBinding { key: "N", name: "Auto-aim", docs: "Move cursor one step toward the nearest enemy." },
     CommandBinding { key: "F / Space", name: "Throw grenade", docs: "Throw a frag grenade dealing shrapnel damage around you (costs 10 stamina). Warning: can damage you too!" },
     CommandBinding { key: "R", name: "Aim (ranged)", docs: "Enter aiming mode. Use WASD/arrows to choose bullet trajectory, Esc to cancel. Bullet travels up to 100 tiles. Uses 1 ammo." },
     CommandBinding { key: "T", name: "Reload", docs: "Reload weapon from a magazine in your inventory. Current partial magazine is saved to inventory." },
@@ -39,8 +53,8 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
     CommandBinding { key: "Shift+WASD", name: "Sprint", docs: "Hold Shift while moving to sprint (move 2 tiles per turn)." },
     CommandBinding { key: ". / 5", name: "Wait", docs: "Skip the current turn without acting." },
     CommandBinding { key: "G", name: "Pick up item", docs: "Pick up an item on the ground at your position. Magazines and grenades are auto-picked up on contact." },
-    CommandBinding { key: "I", name: "Open inventory", docs: "Open the inventory screen to view and use items. Magazines can be used to reload." },
-    CommandBinding { key: "1-9", name: "Use item", docs: "Quickly use an inventory item by slot number." },
+    CommandBinding { key: "Tab", name: "Open inventory", docs: "Open the inventory screen to view and use items. Magazines can be used to reload." },
+    CommandBinding { key: "1-9", name: "Use/Fire item", docs: "Quickly use an inventory item by slot number. Guns fire toward the cursor." },
     CommandBinding { key: "P", name: "Pause / Resume", docs: "Toggle pause state." },
     CommandBinding { key: "? / /", name: "Help", docs: "Toggle this help screen." },
     CommandBinding { key: "Q / Esc", name: "Quit", docs: "Open the quit confirmation prompt." },
@@ -55,14 +69,10 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
 /// When `InputMode::Inventory` is active, keys navigate the inventory overlay.
 pub fn input_system(
     mut messages: MessageReader<KeyMessage>,
-    mut exit: MessageWriter<AppExit>,
-    mut move_intents: MessageWriter<MoveIntent>,
-    mut spell_intents: MessageWriter<SpellCastIntent>,
-    mut use_item_intents: MessageWriter<UseItemIntent>,
-    mut pickup_intents: MessageWriter<PickupItemIntent>,
-    mut ranged_intents: MessageWriter<RangedAttackIntent>,
-    mut melee_wide_intents: MessageWriter<MeleeWideIntent>,
-    player_query: Query<(Entity, Option<&Stamina>, Option<&Ammo>, Option<&Inventory>), With<Player>>,
+    mut intents: IntentWriters,
+    player_query: Query<(Entity, &Position, Option<&Stamina>, Option<&Ammo>, Option<&Inventory>), With<Player>>,
+    item_kind_query: Query<&ItemKind>,
+    hostiles_query: Query<&Position, With<Hostile>>,
     game_state: Res<State<GameState>>,
     mut next_game_state: ResMut<NextState<GameState>>,
     turn_state: Option<Res<State<TurnState>>>,
@@ -70,13 +80,14 @@ pub fn input_system(
     mut combat_log: ResMut<CombatLog>,
     mut input_state: ResMut<InputState>,
     mut restart_requested: ResMut<RestartRequested>,
+    mut cursor: ResMut<CursorPosition>,
 ) {
     // Handle Dead and Victory states: only Q/Esc to quit, R to restart.
     if *game_state.get() == GameState::Dead || *game_state.get() == GameState::Victory {
         for message in messages.read() {
             match message.code {
                 KeyCode::Char('q') | KeyCode::Esc => {
-                    exit.write_default();
+                    intents.exit.write_default();
                 }
                 KeyCode::Char('r') => {
                     restart_requested.0 = true;
@@ -87,11 +98,11 @@ pub fn input_system(
         return;
     }
 
-    let Ok((player_entity, player_stamina, player_ammo, player_inv)) = player_query.single() else {
+    let Ok((player_entity, player_pos, player_stamina, player_ammo, player_inv)) = player_query.single() else {
         // Player entity is gone (should only happen transiently).
         for message in messages.read() {
             if matches!(message.code, KeyCode::Char('q') | KeyCode::Esc) {
-                exit.write_default();
+                intents.exit.write_default();
             }
         }
         return;
@@ -122,11 +133,12 @@ pub fn input_system(
                 _ => continue,
             };
             // Fire the ranged attack in the chosen direction.
-            ranged_intents.write(RangedAttackIntent {
+            intents.ranged_intents.write(RangedAttackIntent {
                 attacker: player_entity,
                 range: RANGED_ATTACK_RANGE,
                 dx,
                 dy,
+                gun_item: None,
             });
             if let Some(next) = &mut next_turn_state {
                 next.set(TurnState::PlayerTurn);
@@ -141,7 +153,7 @@ pub fn input_system(
         let item_count = player_inv.map_or(0, |inv| inv.items.len());
         for message in messages.read() {
             match message.code {
-                KeyCode::Char('i') | KeyCode::Esc => {
+                KeyCode::Tab | KeyCode::Esc => {
                     input_state.mode = InputMode::Game;
                 }
                 KeyCode::Up | KeyCode::Char('w') => {
@@ -156,7 +168,7 @@ pub fn input_system(
                 }
                 KeyCode::Enter => {
                     if item_count > 0 && input_state.inv_selection < item_count {
-                        use_item_intents.write(UseItemIntent {
+                        intents.use_item_intents.write(UseItemIntent {
                             user: player_entity,
                             item_index: input_state.inv_selection,
                         });
@@ -193,7 +205,7 @@ pub fn input_system(
         if input_state.quit_confirm {
             match message.code {
                 KeyCode::Enter => {
-                    exit.write_default();
+                    intents.exit.write_default();
                 }
                 _ => {
                     input_state.quit_confirm = false;
@@ -220,37 +232,70 @@ pub fn input_system(
                 input_state.help_visible = !input_state.help_visible;
             }
             // ── Open inventory ───────────────────────────────────
-            KeyCode::Char('i') if awaiting_input => {
+            KeyCode::Tab if awaiting_input => {
                 input_state.mode = InputMode::Inventory;
                 input_state.inv_selection = 0;
+            }
+            // ── Cursor movement (IJKL) ──────────────────────────
+            KeyCode::Char('i') if awaiting_input => {
+                cursor.0.y += 1;
+            }
+            KeyCode::Char('k') if awaiting_input => {
+                cursor.0.y -= 1;
+            }
+            KeyCode::Char('j') if awaiting_input => {
+                cursor.0.x -= 1;
+            }
+            KeyCode::Char('l') if awaiting_input => {
+                cursor.0.x += 1;
+            }
+            // ── Auto-aim (N): move cursor one step toward nearest hostile ──
+            KeyCode::Char('n') if awaiting_input => {
+                let player_vec = player_pos.as_grid_vec();
+                let mut best_dist = i32::MAX;
+                let mut best_pos = None;
+                for hostile_pos in &hostiles_query {
+                    let hv = hostile_pos.as_grid_vec();
+                    let dist = player_vec.chebyshev_distance(hv);
+                    if dist < best_dist {
+                        best_dist = dist;
+                        best_pos = Some(hv);
+                    }
+                }
+                if let Some(target) = best_pos {
+                    let step = (target - cursor.0).king_step();
+                    cursor.0 = cursor.0 + step;
+                } else {
+                    combat_log.push("No enemies visible.".into());
+                }
             }
             // ── Movement keys (only while awaiting input) ───────
             // Shift+direction = sprint (move 2 tiles at once).
             // Crossterm sends uppercase chars when Shift is held.
             KeyCode::Char('W') if awaiting_input => {
-                emit_move(&mut move_intents, &mut next_turn_state, player_entity, 0, 2);
+                emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 0, 2);
             }
             KeyCode::Char('S') if awaiting_input => {
-                emit_move(&mut move_intents, &mut next_turn_state, player_entity, 0, -2);
+                emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 0, -2);
             }
             KeyCode::Char('A') if awaiting_input => {
-                emit_move(&mut move_intents, &mut next_turn_state, player_entity, -2, 0);
+                emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, -2, 0);
             }
             KeyCode::Char('D') if awaiting_input => {
-                emit_move(&mut move_intents, &mut next_turn_state, player_entity, 2, 0);
+                emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 2, 0);
             }
             // Normal movement
             KeyCode::Char('w') | KeyCode::Up if awaiting_input => {
-                emit_move(&mut move_intents, &mut next_turn_state, player_entity, 0, 1);
+                emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 0, 1);
             }
             KeyCode::Char('s') | KeyCode::Down if awaiting_input => {
-                emit_move(&mut move_intents, &mut next_turn_state, player_entity, 0, -1);
+                emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 0, -1);
             }
             KeyCode::Char('a') | KeyCode::Left if awaiting_input => {
-                emit_move(&mut move_intents, &mut next_turn_state, player_entity, -1, 0);
+                emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, -1, 0);
             }
             KeyCode::Char('d') | KeyCode::Right if awaiting_input => {
-                emit_move(&mut move_intents, &mut next_turn_state, player_entity, 1, 0);
+                emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 1, 0);
             }
             // ── Wait / skip turn ────────────────────────────────
             KeyCode::Char('.') | KeyCode::Char('5') if awaiting_input => {
@@ -266,7 +311,7 @@ pub fn input_system(
                     .map(|m| m.current >= SPELL_STAMINA_COST)
                     .unwrap_or(false);
                 if has_stamina {
-                    spell_intents.write(SpellCastIntent {
+                    intents.spell_intents.write(SpellCastIntent {
                         caster: player_entity,
                         radius: SPELL_RADIUS,
                     });
@@ -298,7 +343,7 @@ pub fn input_system(
             }
             // ── Melee wide (cleave) attack ──────────────────────
             KeyCode::Char('e') if awaiting_input => {
-                melee_wide_intents.write(MeleeWideIntent {
+                intents.melee_wide_intents.write(MeleeWideIntent {
                     attacker: player_entity,
                 });
                 if let Some(next) = &mut next_turn_state {
@@ -307,22 +352,57 @@ pub fn input_system(
             }
             // ── Pickup item on ground ───────────────────────────
             KeyCode::Char('g') if awaiting_input => {
-                pickup_intents.write(PickupItemIntent {
+                intents.pickup_intents.write(PickupItemIntent {
                     picker: player_entity,
                 });
                 if let Some(next) = &mut next_turn_state {
                     next.set(TurnState::PlayerTurn);
                 }
             }
-            // ── Use inventory item by slot (1-9) ────────────────
+            // ── Use inventory item by slot (1-9) / Fire gun toward cursor ──
             KeyCode::Char(c @ '1'..='9') if awaiting_input => {
                 let idx = (c as usize) - ('1' as usize);
-                use_item_intents.write(UseItemIntent {
-                    user: player_entity,
-                    item_index: idx,
-                });
-                if let Some(next) = &mut next_turn_state {
-                    next.set(TurnState::PlayerTurn);
+                // Check if item at this slot is a gun.
+                let mut fired_gun = false;
+                if let Some(inv) = player_inv {
+                    if let Some(&item_entity) = inv.items.get(idx) {
+                        if let Ok(kind) = item_kind_query.get(item_entity) {
+                            if let ItemKind::Gun { loaded, .. } = kind {
+                                if *loaded > 0 {
+                                    let dir = (cursor.0 - player_pos.as_grid_vec()).king_step();
+                                    if dir != crate::grid_vec::GridVec::ZERO {
+                                        intents.ranged_intents.write(RangedAttackIntent {
+                                            attacker: player_entity,
+                                            range: RANGED_ATTACK_RANGE,
+                                            dx: dir.x,
+                                            dy: dir.y,
+                                            gun_item: Some(item_entity),
+                                        });
+                                        if let Some(next) = &mut next_turn_state {
+                                            next.set(TurnState::PlayerTurn);
+                                        }
+                                        fired_gun = true;
+                                    } else {
+                                        combat_log.push("Cursor is on your position!".into());
+                                        fired_gun = true;
+                                    }
+                                } else {
+                                    combat_log.push("Gun is empty! Reload in inventory mode.".into());
+                                    fired_gun = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if !fired_gun {
+                    // Non-gun items: use normally.
+                    intents.use_item_intents.write(UseItemIntent {
+                        user: player_entity,
+                        item_index: idx,
+                    });
+                    if let Some(next) = &mut next_turn_state {
+                        next.set(TurnState::PlayerTurn);
+                    }
                 }
             }
             _ => {}
