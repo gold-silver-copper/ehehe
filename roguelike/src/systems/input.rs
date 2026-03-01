@@ -6,7 +6,7 @@ use crate::components::{Ammo, Inventory, Stamina, Player};
 use crate::events::{MeleeWideIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, UseItemIntent};
 use crate::resources::{CombatLog, GameState, InputMode, InputState, RestartRequested, TurnState};
 
-/// Default radius for the player's area-of-effect spell.
+/// Default radius for the player's grenade blast.
 const SPELL_RADIUS: i32 = 3;
 
 /// Stamina cost for throwing a grenade.
@@ -222,9 +222,9 @@ pub fn input_system(
                     next.set(TurnState::PlayerTurn);
                 }
             }
-            // ── Spell cast: area-of-effect attack around the player ──
+            // ── Grenade throw: area-of-effect attack around the player ──
             KeyCode::Char('f') | KeyCode::Char(' ') if awaiting_input => {
-                // Check mana before casting.
+                // Check stamina before throwing grenade.
                 let has_stamina = player_stamina
                     .map(|m| m.current >= SPELL_STAMINA_COST)
                     .unwrap_or(false);

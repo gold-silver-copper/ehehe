@@ -94,8 +94,8 @@ pub fn use_item_system(
                 inv.items.remove(intent.item_index);
                 commands.entity(item_entity).despawn();
             }
-            ItemKind::Scroll { damage: _, radius: _ } => {
-                // Scrolls trigger a spell effect — for now just log and consume.
+            ItemKind::Explosive { damage: _, radius: _ } => {
+                // Explosives trigger a blast effect — for now just log and consume.
                 combat_log.push(format!("Used {item_name}!"));
                 inv.items.remove(intent.item_index);
                 commands.entity(item_entity).despawn();
@@ -132,7 +132,7 @@ const LOOT_TABLE: &[LootEntry] = &[
         name: "Frag Grenade",
         symbol: "*",
         fg: RatColor::Rgb(255, 165, 0),
-        kind: ItemKind::Scroll { damage: 8, radius: 2 },
+        kind: ItemKind::Explosive { damage: 8, radius: 2 },
         weight: 0.20,
     },
     LootEntry {

@@ -188,8 +188,8 @@ pub struct InBackpack {
 pub enum ItemKind {
     /// Restores `amount` health when used.
     HealingPotion { amount: CoordinateUnit },
-    /// A spell scroll: deals `damage` in a radius when used.
-    Scroll { damage: CoordinateUnit, radius: CoordinateUnit },
+    /// An explosive charge: deals `damage` in a radius when used.
+    Explosive { damage: CoordinateUnit, radius: CoordinateUnit },
     /// Armor: provides `defense` bonus when equipped.
     Armor { defense: CoordinateUnit },
     /// Weapon: provides `attack` bonus when equipped.
@@ -222,7 +222,7 @@ pub struct Experience {
 }
 
 /// Player level. Increases when enough EXP is accumulated.
-/// Each level grants stat bonuses (attack, defense, max HP, max mana).
+/// Each level grants stat bonuses (attack, defense, max HP, max stamina).
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Level(pub i32);
 

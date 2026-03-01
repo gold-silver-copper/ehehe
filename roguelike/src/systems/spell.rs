@@ -8,7 +8,7 @@ use crate::typeenums::Furniture;
 /// Stamina cost for casting the AoE grenade.
 const SPELL_STAMINA_COST: i32 = 10;
 
-/// Lifetime (in frames) for spell particle animations.
+/// Lifetime (in frames) for shrapnel particle animations.
 const PARTICLE_LIFETIME: u32 = 8;
 
 /// Resolves grenade throw intents.

@@ -16,12 +16,12 @@ use crate::resources::{
 use crate::systems::input::KEYBINDINGS;
 use crate::typedefs::{CoordinateUnit, MyPoint, RatColor};
 
-/// Lifetime (in frames) for spell particle animations.
+/// Lifetime (in frames) for combat particle animations.
 /// Must match the lifetime used in spell.rs when creating particles.
 const PARTICLE_LIFETIME: f32 = 8.0;
 
 
-/// Ticks and renders spell particles each frame.
+/// Ticks and renders combat particles each frame.
 pub fn particle_tick_system(mut particles: ResMut<SpellParticles>) {
     particles.tick();
 }
@@ -198,7 +198,7 @@ pub fn draw_system(
                             .and_then(|(_, k)| k)
                             .map_or("".to_string(), |k| match k {
                                 ItemKind::HealingPotion { amount } => format!("Heal {amount} HP"),
-                                ItemKind::Scroll { damage, radius } => format!("{damage} dmg r{radius}"),
+                                ItemKind::Explosive { damage, radius } => format!("{damage} dmg r{radius}"),
                                 ItemKind::Armor { defense } => format!("+{defense} def"),
                                 ItemKind::Weapon { attack } => format!("+{attack} atk"),
                             });

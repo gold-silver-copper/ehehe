@@ -20,7 +20,7 @@ pub fn end_player_turn(mut next_state: ResMut<NextState<TurnState>>) {
 
 /// Advances the turn state from `WorldTurn` → `AwaitingInput`.
 /// Increments the turn counter each world turn, which drives wave spawning.
-/// Also regenerates player mana and health each turn.
+/// Also regenerates player stamina and health each turn.
 /// Runs only during `TurnState::WorldTurn` after all world-phase systems.
 pub fn end_world_turn(
     mut next_state: ResMut<NextState<TurnState>>,
@@ -33,7 +33,7 @@ pub fn end_world_turn(
         // Regenerate player stamina.
         stamina.current = (stamina.current + STAMINA_REGEN_PER_TURN).min(stamina.max);
 
-        // Regenerate player health (slower than mana — every N turns).
+        // Regenerate player health (slower than stamina — every N turns).
         if turn_counter.0 % HEALTH_REGEN_INTERVAL == 0 {
             health.current = (health.current + HEALTH_REGEN_PER_TURN).min(health.max);
         }

@@ -141,7 +141,7 @@ impl Default for WelcomeVisible {
     }
 }
 
-/// Active spell particles for rendering AoE animations.
+/// Active combat particles for rendering grenade/bullet animations.
 /// Each entry is (position, remaining_lifetime_frames, delay_before_visible).
 /// Particles with delay > 0 are not yet visible; they count down each tick.
 #[derive(Resource, Debug, Default)]
@@ -149,13 +149,13 @@ pub struct SpellParticles {
     pub particles: Vec<(MyPoint, u32, u32)>,
 }
 
-/// Maximum number of active spell particles to prevent unbounded growth.
+/// Maximum number of active combat particles to prevent unbounded growth.
 const MAX_PARTICLES: usize = 800;
 
 impl SpellParticles {
-    /// Adds an expanding ring of particles for an AoE spell.
+    /// Adds an expanding ring of particles for a grenade blast.
     /// Particles at greater distances from the origin appear later, creating
-    /// an outward-traveling wave effect.
+    /// an outward-traveling shrapnel wave effect.
     pub fn add_aoe(&mut self, origin: MyPoint, lifetime: u32) {
         let radius = 3i32; // visual radius of the particle ring
         let frames_per_ring = 2u32; // ticks of delay per distance unit
