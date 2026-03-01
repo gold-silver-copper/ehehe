@@ -87,6 +87,7 @@ pub fn use_item_system(
 
         let item_name = name.map_or("item", |n| n.0.as_str()).to_string();
 
+        // Dereference Mut<ItemKind> wrapper and re-borrow to pattern match.
         match &*kind {
             ItemKind::Whiskey { heal } => {
                 let heal = *heal;
