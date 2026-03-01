@@ -262,7 +262,7 @@ pub fn draw_system(
 
         // Show "VICTORY" overlay centered on game area when the gate is destroyed
         if *state.get() == GameState::Victory {
-            let label = " VICTORY! The Enemy Stronghold has been destroyed! Press Q to quit. ";
+            let label = " VICTORY! The Enemy Stronghold has been destroyed! Press Q to quit, R to restart. ";
             let label_width = label.len() as u16;
             if render_width >= label_width && render_height >= 1 {
                 let cx = game_area.x + (render_width - label_width) / 2;

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 
 use crate::components::{
-    AiState, BlocksMovement, CombatStats, Energy, ExpReward, Health, HellGate, Hostile, LootTable, Name,
+    AiState, BlocksMovement, CombatStats, Energy, ExpReward, Faction, Health, HellGate, Hostile, LootTable, Name,
     Position, Renderable, Speed, Viewshed,
 };
 use crate::grid_vec::GridVec;
@@ -22,19 +22,20 @@ struct WaveMonsterTemplate {
     speed: i32,
     sight_range: i32,
     exp_reward: i32,
+    faction: Faction,
 }
 
 const WAVE_TEMPLATES: &[WaveMonsterTemplate] = &[
     // Tier 1: Wild Animals
-    WaveMonsterTemplate { name: "Rat", symbol: "r", fg: RatColor::Rgb(139, 119, 101), health: 4, attack: 2, defense: 0, speed: 110, sight_range: 6, exp_reward: 3 },
-    WaveMonsterTemplate { name: "Feral Dog", symbol: "d", fg: RatColor::Rgb(160, 82, 45), health: 8, attack: 3, defense: 1, speed: 120, sight_range: 8, exp_reward: 5 },
+    WaveMonsterTemplate { name: "Rat", symbol: "r", fg: RatColor::Rgb(139, 119, 101), health: 4, attack: 2, defense: 0, speed: 110, sight_range: 6, exp_reward: 3, faction: Faction::Wildlife },
+    WaveMonsterTemplate { name: "Feral Dog", symbol: "d", fg: RatColor::Rgb(160, 82, 45), health: 8, attack: 3, defense: 1, speed: 120, sight_range: 8, exp_reward: 5, faction: Faction::Wildlife },
     // Tier 2: Bandits
-    WaveMonsterTemplate { name: "Bandit", symbol: "b", fg: RatColor::Rgb(180, 160, 100), health: 12, attack: 4, defense: 1, speed: 90, sight_range: 8, exp_reward: 8 },
+    WaveMonsterTemplate { name: "Bandit", symbol: "b", fg: RatColor::Rgb(180, 160, 100), health: 12, attack: 4, defense: 1, speed: 90, sight_range: 8, exp_reward: 8, faction: Faction::Bandits },
     // Tier 3: Scavengers
-    WaveMonsterTemplate { name: "Scavenger", symbol: "s", fg: RatColor::Rgb(100, 140, 100), health: 15, attack: 5, defense: 2, speed: 85, sight_range: 10, exp_reward: 12 },
+    WaveMonsterTemplate { name: "Scavenger", symbol: "s", fg: RatColor::Rgb(100, 140, 100), health: 15, attack: 5, defense: 2, speed: 85, sight_range: 10, exp_reward: 12, faction: Faction::Scavengers },
     // Tier 4: Military
-    WaveMonsterTemplate { name: "Soldier", symbol: "S", fg: RatColor::Rgb(60, 120, 60), health: 20, attack: 6, defense: 3, speed: 80, sight_range: 12, exp_reward: 18 },
-    WaveMonsterTemplate { name: "Spec Ops", symbol: "X", fg: RatColor::Rgb(40, 40, 40), health: 28, attack: 8, defense: 4, speed: 100, sight_range: 14, exp_reward: 30 },
+    WaveMonsterTemplate { name: "Soldier", symbol: "S", fg: RatColor::Rgb(60, 120, 60), health: 20, attack: 6, defense: 3, speed: 80, sight_range: 12, exp_reward: 18, faction: Faction::Military },
+    WaveMonsterTemplate { name: "Spec Ops", symbol: "X", fg: RatColor::Rgb(40, 40, 40), health: 28, attack: 8, defense: 4, speed: 100, sight_range: 14, exp_reward: 30, faction: Faction::Military },
 ];
 
 /// Determines which faction tier to spawn based on wave number.
@@ -174,6 +175,7 @@ pub fn wave_spawn_system(
             },
             BlocksMovement,
             Hostile,
+            template.faction,
             Health {
                 current: scaled_health,
                 max: scaled_health,
