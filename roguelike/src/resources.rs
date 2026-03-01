@@ -118,7 +118,7 @@ impl SpellParticles {
     /// Adds an expanding ring of particles for an AoE spell.
     /// Particles at greater distances from the origin appear later, creating
     /// an outward-traveling wave effect.
-    pub fn add_aoe(&mut self, origin: MyPoint, _targets: &[MyPoint], lifetime: u32) {
+    pub fn add_aoe(&mut self, origin: MyPoint, lifetime: u32) {
         let radius = 3i32; // visual radius of the particle ring
         let frames_per_ring = 2u32; // ticks of delay per distance unit
 
