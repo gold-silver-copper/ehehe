@@ -452,6 +452,9 @@ fn render_stats_column(
     }
 }
 
+/// Maximum number of inventory items shown in the compact bottom panel.
+const MAX_DISPLAYED_INVENTORY_ITEMS: usize = 4;
+
 /// Renders the info column (Inventory + Visible entities stacked vertically).
 fn render_info_column(
     frame: &mut ratatui::Frame,
@@ -461,7 +464,7 @@ fn render_info_column(
     visible_entities: &[(String, RatColor, RatColor, String)],
 ) {
     let inv_item_count = player_inv.map_or(0, |inv| inv.items.len());
-    let inv_display_count = inv_item_count.max(1).min(4); // show at most 4 items
+    let inv_display_count = inv_item_count.max(1).min(MAX_DISPLAYED_INVENTORY_ITEMS);
     let inv_height = (inv_display_count as u16) + 2; // +2 for borders
 
     let chunks = Layout::default()
@@ -478,11 +481,11 @@ fn render_info_column(
         if inv.items.is_empty() {
             inv_lines.push(Line::from(" (empty)".dark_gray()));
         } else {
-            for (i, name) in inv_item_names.iter().enumerate().take(4) {
+            for (i, name) in inv_item_names.iter().enumerate().take(MAX_DISPLAYED_INVENTORY_ITEMS) {
                 inv_lines.push(Line::from(format!(" {}: {name}", i + 1)));
             }
-            if inv_item_names.len() > 4 {
-                inv_lines.push(Line::from(format!(" +{} more [I]", inv_item_names.len() - 4)).dark_gray());
+            if inv_item_names.len() > MAX_DISPLAYED_INVENTORY_ITEMS {
+                inv_lines.push(Line::from(format!(" +{} more [I]", inv_item_names.len() - MAX_DISPLAYED_INVENTORY_ITEMS)).dark_gray());
             }
         }
     } else {

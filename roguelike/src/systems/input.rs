@@ -1,6 +1,6 @@
 use bevy::{app::AppExit, prelude::*};
 use bevy_ratatui::event::KeyMessage;
-use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::crossterm::event::KeyCode;
 
 use crate::components::{Ammo, Inventory, Stamina, Player};
 use crate::events::{MeleeWideIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, UseItemIntent};
@@ -189,17 +189,18 @@ pub fn input_system(
                 input_state.inv_selection = 0;
             }
             // ── Movement keys (only while awaiting input) ───────
-            // Shift+direction = sprint (move 2 tiles at once)
-            KeyCode::Char('W') if awaiting_input && message.modifiers.contains(KeyModifiers::SHIFT) => {
+            // Shift+direction = sprint (move 2 tiles at once).
+            // Crossterm sends uppercase chars when Shift is held.
+            KeyCode::Char('W') if awaiting_input => {
                 emit_move(&mut move_intents, &mut next_turn_state, player_entity, 0, 2);
             }
-            KeyCode::Char('S') if awaiting_input && message.modifiers.contains(KeyModifiers::SHIFT) => {
+            KeyCode::Char('S') if awaiting_input => {
                 emit_move(&mut move_intents, &mut next_turn_state, player_entity, 0, -2);
             }
-            KeyCode::Char('A') if awaiting_input && message.modifiers.contains(KeyModifiers::SHIFT) => {
+            KeyCode::Char('A') if awaiting_input => {
                 emit_move(&mut move_intents, &mut next_turn_state, player_entity, -2, 0);
             }
-            KeyCode::Char('D') if awaiting_input && message.modifiers.contains(KeyModifiers::SHIFT) => {
+            KeyCode::Char('D') if awaiting_input => {
                 emit_move(&mut move_intents, &mut next_turn_state, player_entity, 2, 0);
             }
             // Normal movement

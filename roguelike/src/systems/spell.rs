@@ -68,9 +68,7 @@ pub fn spell_system(
             }
         }
 
-        // Grenade can also damage the player (self-damage if too close).
-        // Check if the player is within the blast radius (always true for radius > 0).
-        // Apply reduced self-damage (half).
+        // Grenade self-damage: shrapnel always hits the thrower.
         if let Ok((player_entity, _player_pos)) = player_entities.single() {
             if player_entity == intent.caster {
                 let self_damage = (caster_stats.attack / 2).max(1);

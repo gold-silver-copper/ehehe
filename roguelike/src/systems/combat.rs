@@ -210,7 +210,10 @@ pub fn ranged_attack_system(
                 let rel = target_vec - origin;
                 let dist = origin.chebyshev_distance(target_vec);
                 if dist > 0 && dist <= intent.range {
-                    // Check if the target is roughly along the bullet's line of travel.
+                    // Check if the target is on the bullet's trajectory:
+                    // 1. Target must be in the same direction as the bullet (matching signum)
+                    // 2. For diagonal shots, target must be roughly on the diagonal
+                    //    (x and y offsets differ by at most 1 tile, allowing slight spread)
                     let on_line = (dx == 0 || rel.x.signum() == dx)
                         && (dy == 0 || rel.y.signum() == dy)
                         && (dx == 0 || dy == 0 || (rel.x.abs() - rel.y.abs()).abs() <= 1);
