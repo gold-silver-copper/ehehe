@@ -31,3 +31,16 @@ pub struct SpellCastIntent {
     pub caster: Entity,
     pub radius: CoordinateUnit,
 }
+
+/// Fired when an entity wants to use an inventory item.
+#[derive(Message, Debug, Clone)]
+pub struct UseItemIntent {
+    pub user: Entity,
+    pub item_index: usize,
+}
+
+/// Fired when an entity wants to pick up an item on the ground.
+#[derive(Message, Debug, Clone)]
+pub struct PickupItemIntent {
+    pub picker: Entity,
+}

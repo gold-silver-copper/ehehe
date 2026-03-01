@@ -29,6 +29,7 @@ fn test_app() -> App {
     app.init_resource::<KillCount>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
+    app.insert_resource(MapSeed(42));
     app.add_systems(
         Update,
         (
@@ -555,8 +556,10 @@ fn test_app_with_spells() -> App {
     app.init_resource::<SpatialIndex>();
     app.init_resource::<CombatLog>();
     app.init_resource::<KillCount>();
+    app.init_resource::<SpellParticles>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
+    app.insert_resource(MapSeed(42));
     app.add_systems(
         Update,
         (

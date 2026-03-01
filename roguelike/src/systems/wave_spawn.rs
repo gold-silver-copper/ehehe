@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 
 use crate::components::{
-    AiState, BlocksMovement, CombatStats, Energy, Health, HellGate, Hostile, Name, Position,
-    Renderable, Speed, Viewshed,
+    AiState, BlocksMovement, CombatStats, Energy, Health, HellGate, Hostile, LootTable, Name,
+    Position, Renderable, Speed, Viewshed,
 };
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
@@ -190,6 +190,7 @@ pub fn wave_spawn_system(
             Speed(template.speed),
             Energy(0),
             AiState::Idle,
+            LootTable { drop_chance: 0.30 },
             Viewshed {
                 range: template.sight_range,
                 visible_tiles: HashSet::new(),

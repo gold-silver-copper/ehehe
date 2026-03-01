@@ -3,6 +3,7 @@ pub mod camera;
 pub mod combat;
 pub mod corruption;
 pub mod input;
+pub mod inventory;
 pub mod movement;
 pub mod render;
 pub mod spatial_index;

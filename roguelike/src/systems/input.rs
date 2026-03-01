@@ -2,14 +2,32 @@ use bevy::{app::AppExit, prelude::*};
 use bevy_ratatui::event::KeyMessage;
 use ratatui::crossterm::event::KeyCode;
 
-use crate::components::Player;
-use crate::events::{MoveIntent, SpellCastIntent};
-use crate::resources::{GameState, TurnState};
+use crate::components::{Mana, Player};
+use crate::events::{MoveIntent, PickupItemIntent, SpellCastIntent, UseItemIntent};
+use crate::resources::{CombatLog, GameState, HelpVisible, TurnState};
 
 /// Default radius for the player's area-of-effect spell.
 const SPELL_RADIUS: i32 = 3;
 
-/// Reads keyboard input. Global keys (quit, pause) are always handled.
+/// Mana cost for casting the AoE spell.
+const SPELL_MANA_COST: i32 = 10;
+
+/// All keybindings, generated from the exhaustive match arms below.
+/// Used by the `?` help overlay to display available commands.
+pub const KEYBINDINGS: &[(&str, &str)] = &[
+    ("W / ↑", "Move north"),
+    ("S / ↓", "Move south"),
+    ("A / ←", "Move west"),
+    ("D / →", "Move east"),
+    ("F / Space", "Cast AoE spell (costs 10 mana)"),
+    ("G", "Pick up item on ground"),
+    ("1-9", "Use inventory item by slot"),
+    ("P", "Pause / Resume"),
+    ("?", "Toggle this help screen"),
+    ("Q / Esc", "Quit game"),
+];
+
+/// Reads keyboard input. Global keys (quit, pause, help) are always handled.
 /// Movement keys are only processed while `TurnState::AwaitingInput`,
 /// which transitions the game into `PlayerTurn` so that the action is
 /// resolved before the next input is accepted.
@@ -18,13 +36,17 @@ pub fn input_system(
     mut exit: MessageWriter<AppExit>,
     mut move_intents: MessageWriter<MoveIntent>,
     mut spell_intents: MessageWriter<SpellCastIntent>,
-    player_query: Query<Entity, With<Player>>,
+    mut use_item_intents: MessageWriter<UseItemIntent>,
+    mut pickup_intents: MessageWriter<PickupItemIntent>,
+    player_query: Query<(Entity, Option<&Mana>), With<Player>>,
     game_state: Res<State<GameState>>,
     mut next_game_state: ResMut<NextState<GameState>>,
     turn_state: Option<Res<State<TurnState>>>,
     mut next_turn_state: Option<ResMut<NextState<TurnState>>>,
+    mut help_visible: ResMut<HelpVisible>,
+    mut combat_log: ResMut<CombatLog>,
 ) {
-    let Ok(player_entity) = player_query.single() else {
+    let Ok((player_entity, player_mana)) = player_query.single() else {
         return;
     };
 
@@ -33,7 +55,9 @@ pub fn input_system(
         .is_some_and(|s| *s.get() == TurnState::AwaitingInput);
 
     for message in messages.read() {
+        // Exhaustive input handling — every arm here corresponds to a KEYBINDINGS entry.
         match message.code {
+            // ── Global keys (always active) ─────────────────────
             KeyCode::Char('q') | KeyCode::Esc => {
                 exit.write_default();
             }
@@ -45,7 +69,10 @@ pub fn input_system(
                 };
                 next_game_state.set(new);
             }
-            // Movement keys only processed while awaiting input
+            KeyCode::Char('?') => {
+                help_visible.0 = !help_visible.0;
+            }
+            // ── Movement keys (only while awaiting input) ───────
             KeyCode::Char('w') | KeyCode::Up if awaiting_input => {
                 emit_move(&mut move_intents, &mut next_turn_state, player_entity, 0, 1);
             }
@@ -58,11 +85,39 @@ pub fn input_system(
             KeyCode::Char('d') | KeyCode::Right if awaiting_input => {
                 emit_move(&mut move_intents, &mut next_turn_state, player_entity, 1, 0);
             }
-            // Spell cast: area-of-effect attack around the player
+            // ── Spell cast: area-of-effect attack around the player ──
             KeyCode::Char('f') | KeyCode::Char(' ') if awaiting_input => {
-                spell_intents.write(SpellCastIntent {
-                    caster: player_entity,
-                    radius: SPELL_RADIUS,
+                // Check mana before casting.
+                let has_mana = player_mana
+                    .map(|m| m.current >= SPELL_MANA_COST)
+                    .unwrap_or(false);
+                if has_mana {
+                    spell_intents.write(SpellCastIntent {
+                        caster: player_entity,
+                        radius: SPELL_RADIUS,
+                    });
+                    if let Some(next) = &mut next_turn_state {
+                        next.set(TurnState::PlayerTurn);
+                    }
+                } else {
+                    combat_log.push("Not enough mana to cast spell!".into());
+                }
+            }
+            // ── Pickup item on ground ───────────────────────────
+            KeyCode::Char('g') if awaiting_input => {
+                pickup_intents.write(PickupItemIntent {
+                    picker: player_entity,
+                });
+                if let Some(next) = &mut next_turn_state {
+                    next.set(TurnState::PlayerTurn);
+                }
+            }
+            // ── Use inventory item by slot (1-9) ────────────────
+            KeyCode::Char(c @ '1'..='9') if awaiting_input => {
+                let idx = (c as usize) - ('1' as usize);
+                use_item_intents.write(UseItemIntent {
+                    user: player_entity,
+                    item_index: idx,
                 });
                 if let Some(next) = &mut next_turn_state {
                     next.set(TurnState::PlayerTurn);
