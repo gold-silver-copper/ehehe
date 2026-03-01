@@ -16,6 +16,13 @@ use crate::resources::{
 use crate::systems::input::KEYBINDINGS;
 use crate::typedefs::{CoordinateUnit, MyPoint, RatColor};
 
+/// Lifetime (in frames) for spell particle animations.
+/// Must match the lifetime used in spell.rs when creating particles.
+const PARTICLE_LIFETIME: f32 = 6.0;
+
+/// Number of recent combat log messages shown in the status bar.
+const STATUS_BAR_MESSAGE_COUNT: usize = 2;
+
 /// Ticks and renders spell particles each frame.
 pub fn particle_tick_system(mut particles: ResMut<SpellParticles>) {
     particles.tick();
@@ -154,7 +161,7 @@ pub fn draw_system(
                     .unwrap_or(true);
                 if visible {
                     // Particle symbol and color fade with lifetime.
-                    let intensity = (*lifetime as f32 / 6.0).min(1.0);
+                    let intensity = (*lifetime as f32 / PARTICLE_LIFETIME).min(1.0);
                     let r = (255.0 * intensity) as u8;
                     let g = (165.0 * intensity) as u8;
                     let symbol = if *lifetime > 3 { "*" } else { "·" };
@@ -246,7 +253,7 @@ pub fn draw_system(
             .map(|(p, _, _, _, _)| format!("({}, {})", p.x, p.y))
             .unwrap_or_default();
 
-        let recent_msgs = combat_log.recent(2);
+        let recent_msgs = combat_log.recent(STATUS_BAR_MESSAGE_COUNT);
         let last_msg = recent_msgs.join(" | ");
 
         let status = Line::from(format!(
