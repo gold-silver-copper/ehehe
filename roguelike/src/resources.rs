@@ -46,6 +46,8 @@ pub struct InputState {
     pub help_visible: bool,
     pub welcome_visible: bool,
     pub quit_confirm: bool,
+    /// Set to true when the player requests a reload (T key).
+    pub reload_pending: bool,
 }
 
 impl Default for InputState {
@@ -56,6 +58,7 @@ impl Default for InputState {
             help_visible: false,
             welcome_visible: true, // shown on first launch
             quit_confirm: false,
+            reload_pending: false,
         }
     }
 }
@@ -65,6 +68,8 @@ pub enum InputMode {
     #[default]
     Game,
     Inventory,
+    /// Player is choosing a trajectory direction for a ranged attack.
+    Aiming,
 }
 
 /// Turn-phase sub-state that controls the flow within `GameState::Playing`.

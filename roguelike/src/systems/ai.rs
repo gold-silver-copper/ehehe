@@ -3,8 +3,8 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use bevy::prelude::*;
 
-use crate::components::{AiState, BlocksMovement, Energy, Player, Position, Speed, Viewshed, ACTION_COST};
-use crate::events::MoveIntent;
+use crate::components::{AiState, Ammo, BlocksMovement, Energy, Faction, Player, Position, Speed, Viewshed, ACTION_COST};
+use crate::events::{AiRangedAttackIntent, MoveIntent};
 use crate::grid_vec::GridVec;
 use crate::resources::{GameMapResource, SpatialIndex};
 
@@ -110,6 +110,9 @@ fn a_star_first_step(
 
 // ───────────────────────── AI System ───────────────────────────────
 
+/// AI range for soldier ranged attacks.
+const AI_RANGED_ATTACK_RANGE: i32 = 15;
+
 /// AI system: runs during `WorldTurn` for every entity with an `AiState`.
 ///
 /// **Behaviour**:
@@ -118,6 +121,8 @@ fn a_star_first_step(
 ///   optimal route to the player, navigating around walls and other blocking
 ///   entities. Falls back to greedy best-first (king-step toward player) when
 ///   A* cannot find a path within its exploration budget.
+///   Military faction entities with ammo will attempt ranged attacks when they
+///   can see the player but are not adjacent.
 ///
 /// Emits `MoveIntent` just like the player's input system, so the same
 /// movement/collision/bump-to-attack pipeline resolves NPC actions. This is
@@ -125,21 +130,22 @@ fn a_star_first_step(
 /// intent→action→consequence data flow.
 pub fn ai_system(
     mut ai_query: Query<
-        (Entity, &Position, &mut AiState, Option<&Viewshed>, &mut Energy),
+        (Entity, &Position, &mut AiState, Option<&Viewshed>, &mut Energy, Option<&Faction>, Option<&mut Ammo>),
         Without<Player>,
     >,
-    player_query: Query<&Position, With<Player>>,
+    player_query: Query<(Entity, &Position), With<Player>>,
     game_map: Res<GameMapResource>,
     spatial: Res<SpatialIndex>,
     blockers: Query<(), With<BlocksMovement>>,
     mut move_intents: MessageWriter<MoveIntent>,
+    mut ranged_intents: MessageWriter<AiRangedAttackIntent>,
 ) {
-    let Ok(player_pos) = player_query.single() else {
+    let Ok((player_entity, player_pos)) = player_query.single() else {
         return;
     };
     let player_vec = player_pos.as_grid_vec();
 
-    for (entity, pos, mut ai, viewshed, mut energy) in &mut ai_query {
+    for (entity, pos, mut ai, viewshed, mut energy, faction, ammo) in &mut ai_query {
         // Only act if enough energy has accumulated.
         if energy.0 < ACTION_COST {
             continue;
@@ -157,6 +163,32 @@ pub fn ai_system(
                 }
             }
             AiState::Chasing => {
+                let dist = my_pos.chebyshev_distance(player_vec);
+
+                // Military faction entities attempt ranged attacks when they can see
+                // the player, have ammo, and are not adjacent.
+                let is_military = faction.map_or(false, |f| *f == Faction::Military);
+                let can_shoot = is_military
+                    && ammo.is_some()
+                    && dist > 1
+                    && dist <= AI_RANGED_ATTACK_RANGE
+                    && viewshed.as_ref().map_or(false, |vs| vs.visible_tiles.contains(&player_vec));
+
+                if can_shoot {
+                    if let Some(mut ammo) = ammo {
+                        if ammo.current > 0 {
+                            ammo.current -= 1;
+                            ranged_intents.write(AiRangedAttackIntent {
+                                attacker: entity,
+                                target: player_entity,
+                                range: AI_RANGED_ATTACK_RANGE,
+                            });
+                            energy.0 -= ACTION_COST;
+                            continue;
+                        }
+                    }
+                }
+
                 // A* pathfinding: find optimal route around obstacles.
                 // Falls back to greedy king-step if no path is found.
                 let step = a_star_first_step(my_pos, player_vec, |pos| {

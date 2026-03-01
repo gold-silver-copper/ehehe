@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    Health, Inventory, Item, ItemKind, Name, Player, Position, Renderable,
+    Ammo, Health, Inventory, Item, ItemKind, Name, Player, Position, Renderable,
 };
 use crate::events::{PickupItemIntent, UseItemIntent};
-use crate::resources::{CombatLog, SpatialIndex};
+use crate::resources::{CombatLog, InputState, SpatialIndex};
 use crate::typedefs::RatColor;
 
 /// Processes pickup intents: player picks up an item on the ground at their position.
@@ -64,6 +64,7 @@ pub fn use_item_system(
     mut commands: Commands,
     mut inventory_query: Query<&mut Inventory, With<Player>>,
     mut health_query: Query<&mut Health, With<Player>>,
+    mut ammo_query: Query<&mut Ammo, With<Player>>,
     item_kind_query: Query<(&ItemKind, Option<&Name>)>,
     mut combat_log: ResMut<CombatLog>,
 ) {
@@ -107,6 +108,33 @@ pub fn use_item_system(
             ItemKind::Weapon { attack } => {
                 combat_log.push(format!("Equipped {item_name} (+{attack} atk)"));
             }
+            ItemKind::Magazine { ammo: mag_ammo } => {
+                // Reload from this magazine: set player ammo to magazine's ammo count.
+                if let Ok(mut player_ammo) = ammo_query.single_mut() {
+                    let loaded = (*mag_ammo).min(player_ammo.max);
+                    // Save current partial magazine to inventory if it has ammo.
+                    if player_ammo.current > 0 {
+                        let partial_mag = commands.spawn((
+                            Item,
+                            Name(format!("Magazine ({})", player_ammo.current)),
+                            Renderable {
+                                symbol: "m".into(),
+                                fg: RatColor::Rgb(180, 180, 60),
+                                bg: RatColor::Black,
+                            },
+                            ItemKind::Magazine { ammo: player_ammo.current },
+                        )).id();
+                        // Add partial magazine to inventory if space.
+                        if inv.items.len() < 9 {
+                            inv.items.push(partial_mag);
+                        }
+                    }
+                    player_ammo.current = loaded;
+                    combat_log.push(format!("Loaded {item_name} ({loaded} rounds)"));
+                }
+                inv.items.remove(intent.item_index);
+                commands.entity(item_entity).despawn();
+            }
         }
     }
 }
@@ -126,14 +154,21 @@ const LOOT_TABLE: &[LootEntry] = &[
         symbol: "+",
         fg: RatColor::Rgb(255, 50, 50),
         kind: ItemKind::HealingPotion { amount: 10 },
-        weight: 0.45,
+        weight: 0.25,
     },
     LootEntry {
         name: "Frag Grenade",
         symbol: "*",
         fg: RatColor::Rgb(255, 165, 0),
         kind: ItemKind::Explosive { damage: 8, radius: 2 },
-        weight: 0.20,
+        weight: 0.15,
+    },
+    LootEntry {
+        name: "Magazine (30)",
+        symbol: "m",
+        fg: RatColor::Rgb(180, 180, 60),
+        kind: ItemKind::Magazine { ammo: 30 },
+        weight: 0.25,
     },
     LootEntry {
         name: "Body Armor",
@@ -185,4 +220,135 @@ pub fn spawn_loot(commands: &mut Commands, x: i32, y: i32, roll: f64) {
         },
         ItemKind::HealingPotion { amount: 10 },
     ));
+}
+
+/// Processes reload: swaps the current magazine with one from inventory.
+/// Triggered by the reload_pending flag in InputState.
+/// The current partial magazine (if it has ammo) is saved back to inventory.
+pub fn reload_system(
+    mut commands: Commands,
+    mut player_query: Query<(&mut Ammo, &mut Inventory), With<Player>>,
+    item_kind_query: Query<(&ItemKind, Option<&Name>)>,
+    mut combat_log: ResMut<CombatLog>,
+    mut input_state: ResMut<InputState>,
+) {
+    if !input_state.reload_pending {
+        return;
+    }
+    input_state.reload_pending = false;
+
+    let Ok((mut ammo, mut inv)) = player_query.single_mut() else {
+        return;
+    };
+
+    // Find the first Magazine in inventory.
+    let mag_index = inv.items.iter().position(|&ent| {
+        item_kind_query
+            .get(ent)
+            .ok()
+            .map_or(false, |(k, _)| matches!(k, ItemKind::Magazine { .. }))
+    });
+
+    let Some(idx) = mag_index else {
+        combat_log.push("No magazines in inventory!".into());
+        return;
+    };
+
+    let mag_entity = inv.items[idx];
+    let Ok((kind, _name)) = item_kind_query.get(mag_entity) else {
+        return;
+    };
+
+    let mag_ammo = match kind {
+        ItemKind::Magazine { ammo: a } => *a,
+        _ => return,
+    };
+
+    // Save current partial magazine to inventory if it has ammo.
+    if ammo.current > 0 {
+        let partial_mag = commands.spawn((
+            Item,
+            Name(format!("Magazine ({})", ammo.current)),
+            Renderable {
+                symbol: "m".into(),
+                fg: RatColor::Rgb(180, 180, 60),
+                bg: RatColor::Black,
+            },
+            ItemKind::Magazine { ammo: ammo.current },
+        )).id();
+        // Replace the used magazine slot with the partial one.
+        inv.items[idx] = partial_mag;
+    } else {
+        inv.items.remove(idx);
+    }
+
+    // Load the new magazine.
+    let loaded = mag_ammo.min(ammo.max);
+    ammo.current = loaded;
+    combat_log.push(format!("Reloaded! ({loaded} rounds)"));
+
+    // Despawn the consumed magazine entity.
+    commands.entity(mag_entity).despawn();
+}
+
+/// Auto-pickup system: automatically picks up magazines and grenades when the
+/// player walks over them. Runs after movement.
+pub fn auto_pickup_system(
+    mut commands: Commands,
+    player_query: Query<&Position, With<Player>>,
+    items_query: Query<(Entity, &Position, &ItemKind, Option<&Name>), With<Item>>,
+    spatial: Res<SpatialIndex>,
+    mut inventory_query: Query<&mut Inventory, With<Player>>,
+    mut ammo_query: Query<&mut Ammo, With<Player>>,
+    mut combat_log: ResMut<CombatLog>,
+) {
+    let Ok(player_pos) = player_query.single() else {
+        return;
+    };
+    let player_vec = player_pos.as_grid_vec();
+
+    let entities_here = spatial.entities_at(&player_vec);
+
+    for &ent in entities_here {
+        let Ok((item_entity, _pos, item_kind, item_name)) = items_query.get(ent) else {
+            continue;
+        };
+
+        match item_kind {
+            ItemKind::Magazine { ammo: mag_ammo } => {
+                // Auto-pickup: add ammo directly or store in inventory.
+                let name_str = item_name.map_or("Magazine", |n| n.0.as_str()).to_string();
+                if let Ok(mut player_ammo) = ammo_query.single_mut() {
+                    if player_ammo.current < player_ammo.max {
+                        // Add directly to active ammo.
+                        let added = (*mag_ammo).min(player_ammo.max - player_ammo.current);
+                        player_ammo.current += added;
+                        combat_log.push(format!("Picked up {name_str} (+{added} ammo)"));
+                        commands.entity(item_entity).despawn();
+                        continue;
+                    }
+                }
+                // Ammo full — store in inventory.
+                if let Ok(mut inv) = inventory_query.single_mut() {
+                    if inv.items.len() < 9 {
+                        commands.entity(item_entity).remove::<Position>();
+                        inv.items.push(item_entity);
+                        combat_log.push(format!("Picked up {name_str}"));
+                    }
+                }
+            }
+            ItemKind::Explosive { .. } => {
+                // Auto-pickup grenades into inventory.
+                let name_str = item_name.map_or("Grenade", |n| n.0.as_str()).to_string();
+                if let Ok(mut inv) = inventory_query.single_mut() {
+                    if inv.items.len() < 9 {
+                        commands.entity(item_entity).remove::<Position>();
+                        inv.items.push(item_entity);
+                        combat_log.push(format!("Picked up {name_str}"));
+                    }
+                }
+            }
+            _ => {} // Other items require manual pickup with 'G'.
+        }
+    }
 }

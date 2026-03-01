@@ -194,6 +194,9 @@ pub enum ItemKind {
     Armor { defense: CoordinateUnit },
     /// Weapon: provides `attack` bonus when equipped.
     Weapon { attack: CoordinateUnit },
+    /// A gun magazine containing `ammo` rounds. Auto-picked up on contact.
+    /// When used from inventory, reloads the player's active weapon.
+    Magazine { ammo: CoordinateUnit },
 }
 
 /// Marker component indicating the item is currently equipped.
