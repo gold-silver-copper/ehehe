@@ -175,9 +175,9 @@ pub fn ai_system(
                     && viewshed.as_ref().map_or(false, |vs| vs.visible_tiles.contains(&player_vec));
 
                 if can_shoot {
-                    if let Some(mut ammo) = ammo {
-                        if ammo.current > 0 {
-                            ammo.current -= 1;
+                    if let Some(mut ammo_pool) = ammo {
+                        if ammo_pool.current > 0 {
+                            ammo_pool.current -= 1;
                             ranged_intents.write(AiRangedAttackIntent {
                                 attacker: entity,
                                 target: player_entity,

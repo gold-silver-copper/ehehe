@@ -112,6 +112,7 @@ pub fn use_item_system(
                 // Reload from this magazine: set player ammo to magazine's ammo count.
                 if let Ok(mut player_ammo) = ammo_query.single_mut() {
                     let loaded = (*mag_ammo).min(player_ammo.max);
+                    let leftover = *mag_ammo - loaded;
                     // Save current partial magazine to inventory if it has ammo.
                     if player_ammo.current > 0 {
                         let partial_mag = commands.spawn((
@@ -128,6 +129,20 @@ pub fn use_item_system(
                         if inv.items.len() < 9 {
                             inv.items.push(partial_mag);
                         }
+                    }
+                    // If the magazine had more ammo than max capacity, save leftover.
+                    if leftover > 0 && inv.items.len() < 9 {
+                        let leftover_mag = commands.spawn((
+                            Item,
+                            Name(format!("Magazine ({})", leftover)),
+                            Renderable {
+                                symbol: "m".into(),
+                                fg: RatColor::Rgb(180, 180, 60),
+                                bg: RatColor::Black,
+                            },
+                            ItemKind::Magazine { ammo: leftover },
+                        )).id();
+                        inv.items.push(leftover_mag);
                     }
                     player_ammo.current = loaded;
                     combat_log.push(format!("Loaded {item_name} ({loaded} rounds)"));
@@ -282,9 +297,25 @@ pub fn reload_system(
         inv.items.remove(idx);
     }
 
-    // Load the new magazine.
+    // Load the new magazine, preserving any leftover ammo.
     let loaded = mag_ammo.min(ammo.max);
+    let leftover = mag_ammo - loaded;
     ammo.current = loaded;
+
+    if leftover > 0 && inv.items.len() < 9 {
+        let leftover_mag = commands.spawn((
+            Item,
+            Name(format!("Magazine ({})", leftover)),
+            Renderable {
+                symbol: "m".into(),
+                fg: RatColor::Rgb(180, 180, 60),
+                bg: RatColor::Black,
+            },
+            ItemKind::Magazine { ammo: leftover },
+        )).id();
+        inv.items.push(leftover_mag);
+    }
+
     combat_log.push(format!("Reloaded! ({loaded} rounds)"));
 
     // Despawn the consumed magazine entity.
