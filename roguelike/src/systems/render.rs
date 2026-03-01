@@ -124,11 +124,8 @@ pub fn draw_system(
             })
             .unwrap_or_default();
 
-        let last_msg = combat_log
-            .messages
-            .last()
-            .cloned()
-            .unwrap_or_default();
+        let recent_msgs = combat_log.recent(3);
+        let last_msg = recent_msgs.join(" | ");
 
         let status_area = ratatui::layout::Rect {
             x: area.x,

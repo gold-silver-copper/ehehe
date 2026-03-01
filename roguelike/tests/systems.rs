@@ -1,0 +1,539 @@
+/// Integration tests for roguelike ECS systems.
+///
+/// These tests create a minimal Bevy `App`, spawn entities with the required
+/// components, fire messages, and run individual systems to verify behaviour.
+/// This approach tests the actual system functions with real ECS plumbing,
+/// ensuring the bug fixes work end-to-end.
+use bevy::prelude::*;
+
+use roguelike::components::*;
+use roguelike::events::*;
+use roguelike::gamemap::GameMap;
+use roguelike::grid_vec::GridVec;
+use roguelike::resources::*;
+use roguelike::systems::{combat, movement, spatial_index};
+
+// ─── Helper ──────────────────────────────────────────────────────
+
+/// Creates a minimal App wired for movement/combat testing.
+/// The map is 120×80 with seed 42 (matching the game defaults).
+fn test_app() -> App {
+    let mut app = App::new();
+    app.add_plugins(bevy::app::ScheduleRunnerPlugin::default());
+    app.add_message::<MoveIntent>();
+    app.add_message::<AttackIntent>();
+    app.add_message::<DamageEvent>();
+    app.init_resource::<SpatialIndex>();
+    app.init_resource::<CombatLog>();
+    app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
+    app.add_systems(
+        Update,
+        (
+            spatial_index::spatial_index_system,
+            movement::movement_system,
+            combat::combat_system,
+            combat::apply_damage_system,
+            combat::death_system,
+        )
+            .chain(),
+    );
+    app
+}
+
+/// Spawns a player entity at the given position with standard stats.
+fn spawn_test_player(app: &mut App, x: i32, y: i32) -> Entity {
+    app.world_mut().spawn((
+        Position { x, y },
+        Player,
+        BlocksMovement,
+        Name("Player".into()),
+        Health { current: 30, max: 30 },
+        CombatStats { attack: 5, defense: 2 },
+    )).id()
+}
+
+/// Spawns a hostile monster at the given position with standard stats.
+fn spawn_test_monster(app: &mut App, x: i32, y: i32, name: &str) -> Entity {
+    app.world_mut().spawn((
+        Position { x, y },
+        Hostile,
+        BlocksMovement,
+        Name(name.into()),
+        Health { current: 10, max: 10 },
+        CombatStats { attack: 3, defense: 1 },
+    )).id()
+}
+
+// ─── Movement tests ──────────────────────────────────────────────
+
+#[test]
+fn player_moves_to_passable_tile() {
+    let mut app = test_app();
+    // Spawn player at spawn area center (guaranteed clear)
+    let player = spawn_test_player(&mut app, 60, 40);
+
+    // Run once to build spatial index
+    app.update();
+
+    // Emit move intent: east (+1, 0)
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let pos = app.world().get::<Position>(player).unwrap();
+    assert_eq!(pos.x, 61, "Player should have moved east");
+    assert_eq!(pos.y, 40);
+}
+
+#[test]
+fn player_blocked_by_wall() {
+    let mut app = test_app();
+    // Place player next to a wall (border at x=0)
+    let player = spawn_test_player(&mut app, 1, 1);
+
+    app.update();
+
+    // Try to move west into the wall at x=0
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: -1,
+        dy: 0,
+    });
+    app.update();
+
+    let pos = app.world().get::<Position>(player).unwrap();
+    assert_eq!(pos.x, 1, "Player should be blocked by wall");
+    assert_eq!(pos.y, 1);
+}
+
+#[test]
+fn player_blocked_by_monster() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+    let _monster = spawn_test_monster(&mut app, 61, 40, "Goblin");
+
+    app.update();
+
+    // Player tries to move into monster's tile — should attack, not move
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let pos = app.world().get::<Position>(player).unwrap();
+    assert_eq!(pos.x, 60, "Player should not have moved into monster tile");
+    assert_eq!(pos.y, 40);
+}
+
+#[test]
+fn monster_blocked_by_player() {
+    let mut app = test_app();
+    let _player = spawn_test_player(&mut app, 60, 40);
+    let monster = spawn_test_monster(&mut app, 61, 40, "Goblin");
+
+    app.update();
+
+    // Monster tries to move into player's tile — should attack, not move
+    app.world_mut().write_message(MoveIntent {
+        entity: monster,
+        dx: -1,
+        dy: 0,
+    });
+    app.update();
+
+    let pos = app.world().get::<Position>(monster).unwrap();
+    assert_eq!(pos.x, 61, "Monster should not have moved into player tile");
+    assert_eq!(pos.y, 40);
+}
+
+#[test]
+fn monster_cannot_overlap_another_monster() {
+    let mut app = test_app();
+    let _player = spawn_test_player(&mut app, 60, 40);
+    let monster1 = spawn_test_monster(&mut app, 62, 40, "Goblin");
+    let _monster2 = spawn_test_monster(&mut app, 63, 40, "Orc");
+
+    app.update();
+
+    // Monster1 tries to move east into Monster2's tile
+    app.world_mut().write_message(MoveIntent {
+        entity: monster1,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let pos = app.world().get::<Position>(monster1).unwrap();
+    assert_eq!(pos.x, 62, "Monster should be blocked by another monster");
+}
+
+// ─── Bump-to-attack tests ────────────────────────────────────────
+
+#[test]
+fn player_bump_attack_damages_monster() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+    let monster = spawn_test_monster(&mut app, 61, 40, "Goblin");
+
+    app.update();
+
+    // Player bumps into monster → should trigger attack
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    // Player attack=5, Monster defense=1 → damage=4
+    let monster_health = app.world().get::<Health>(monster).unwrap();
+    assert_eq!(monster_health.current, 6, "Monster should have taken 4 damage (5 atk - 1 def)");
+}
+
+#[test]
+fn monster_bump_attack_damages_player() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+    let monster = spawn_test_monster(&mut app, 61, 40, "Goblin");
+
+    app.update();
+
+    // Monster bumps into player → should trigger attack
+    app.world_mut().write_message(MoveIntent {
+        entity: monster,
+        dx: -1,
+        dy: 0,
+    });
+    app.update();
+
+    // Monster attack=3, Player defense=2 → damage=1
+    let player_health = app.world().get::<Health>(player).unwrap();
+    assert_eq!(player_health.current, 29, "Player should have taken 1 damage (3 atk - 2 def)");
+}
+
+#[test]
+fn no_damage_when_defense_exceeds_attack() {
+    let mut app = test_app();
+    // Spawn player with very high defense
+    let player = app.world_mut().spawn((
+        Position { x: 60, y: 40 },
+        Player,
+        BlocksMovement,
+        Name("Player".into()),
+        Health { current: 30, max: 30 },
+        CombatStats { attack: 5, defense: 10 },
+    )).id();
+
+    // Spawn weak monster
+    let monster = app.world_mut().spawn((
+        Position { x: 61, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("Rat".into()),
+        Health { current: 5, max: 5 },
+        CombatStats { attack: 2, defense: 0 },
+    )).id();
+
+    app.update();
+
+    // Monster attacks player: attack=2, defense=10 → damage=0
+    app.world_mut().write_message(MoveIntent {
+        entity: monster,
+        dx: -1,
+        dy: 0,
+    });
+    app.update();
+
+    let player_health = app.world().get::<Health>(player).unwrap();
+    assert_eq!(player_health.current, 30, "Player should take no damage from weak monster");
+}
+
+// ─── Death system tests ──────────────────────────────────────────
+
+#[test]
+fn monster_dies_at_zero_health() {
+    let mut app = test_app();
+    // Spawn a monster with 1 HP and 0 defense
+    let player = spawn_test_player(&mut app, 60, 40);
+    let monster = app.world_mut().spawn((
+        Position { x: 61, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("Weakling".into()),
+        Health { current: 1, max: 1 },
+        CombatStats { attack: 1, defense: 0 },
+    )).id();
+
+    app.update();
+
+    // Player attacks monster: attack=5, defense=0 → damage=5, kills the 1HP monster
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    // Monster should be despawned
+    assert!(
+        app.world().get::<Health>(monster).is_none(),
+        "Monster should be despawned after reaching 0 HP"
+    );
+}
+
+#[test]
+fn entity_with_positive_health_survives() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+    let monster = spawn_test_monster(&mut app, 61, 40, "Tough");
+
+    app.update();
+
+    // Player attacks: 5 - 1 = 4 damage, monster has 10HP → 6HP remains
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let monster_health = app.world().get::<Health>(monster).unwrap();
+    assert!(monster_health.current > 0, "Monster should survive with positive health");
+}
+
+// ─── Combat log tests ────────────────────────────────────────────
+
+#[test]
+fn combat_log_records_hit_message() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+    let _monster = spawn_test_monster(&mut app, 61, 40, "Goblin");
+
+    app.update();
+
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let log = app.world().resource::<CombatLog>();
+    assert!(!log.messages.is_empty(), "Combat log should have messages after attack");
+    assert!(
+        log.messages.iter().any(|m| m.contains("hits") && m.contains("damage")),
+        "Combat log should contain a hit message"
+    );
+}
+
+#[test]
+fn combat_log_records_death_message() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+    let _monster = app.world_mut().spawn((
+        Position { x: 61, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("Weakling".into()),
+        Health { current: 1, max: 1 },
+        CombatStats { attack: 1, defense: 0 },
+    )).id();
+
+    app.update();
+
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let log = app.world().resource::<CombatLog>();
+    assert!(
+        log.messages.iter().any(|m| m.contains("slain")),
+        "Combat log should contain a death message"
+    );
+}
+
+#[test]
+fn combat_log_persists_across_turns() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+    let _monster = spawn_test_monster(&mut app, 61, 40, "Goblin");
+
+    app.update();
+
+    // First attack
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let msg_count_after_first = app.world().resource::<CombatLog>().messages.len();
+    assert!(msg_count_after_first > 0);
+
+    // Run another update without any intents (simulates next turn)
+    app.update();
+
+    // Messages should still be there (not cleared)
+    let msg_count_after_second = app.world().resource::<CombatLog>().messages.len();
+    assert_eq!(
+        msg_count_after_first, msg_count_after_second,
+        "Combat log messages should persist across turns"
+    );
+}
+
+#[test]
+fn combat_log_no_damage_message() {
+    let mut app = test_app();
+    // Player with 0 attack
+    let player = app.world_mut().spawn((
+        Position { x: 60, y: 40 },
+        Player,
+        BlocksMovement,
+        Name("Player".into()),
+        Health { current: 30, max: 30 },
+        CombatStats { attack: 1, defense: 0 },
+    )).id();
+
+    // Monster with defense >= player attack
+    let _monster = app.world_mut().spawn((
+        Position { x: 61, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("IronGolem".into()),
+        Health { current: 50, max: 50 },
+        CombatStats { attack: 1, defense: 10 },
+    )).id();
+
+    app.update();
+
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let log = app.world().resource::<CombatLog>();
+    assert!(
+        log.messages.iter().any(|m| m.contains("no damage")),
+        "Combat log should record 'no damage' message when attack <= defense"
+    );
+}
+
+// ─── Spatial index tests ─────────────────────────────────────────
+
+#[test]
+fn spatial_index_tracks_entity_positions() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+    let monster = spawn_test_monster(&mut app, 65, 45, "Goblin");
+
+    app.update();
+
+    let spatial = app.world().resource::<SpatialIndex>();
+    let at_player = spatial.entities_at(&GridVec::new(60, 40));
+    assert!(at_player.contains(&player), "Spatial index should track player");
+
+    let at_monster = spatial.entities_at(&GridVec::new(65, 45));
+    assert!(at_monster.contains(&monster), "Spatial index should track monster");
+}
+
+#[test]
+fn spatial_index_updates_after_movement() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+
+    app.update();
+
+    // Move player east
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    // Spatial index is rebuilt at the start of each tick, so we need
+    // one more update for the index to reflect the moved position.
+    app.update();
+
+    let spatial = app.world().resource::<SpatialIndex>();
+    let at_old = spatial.entities_at(&GridVec::new(60, 40));
+    assert!(!at_old.contains(&player), "Player should no longer be at old position");
+
+    let at_new = spatial.entities_at(&GridVec::new(61, 40));
+    assert!(at_new.contains(&player), "Player should be at new position");
+}
+
+// ─── Multiple attack rounds ──────────────────────────────────────
+
+#[test]
+fn multiple_attacks_accumulate_damage() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+    let monster = spawn_test_monster(&mut app, 61, 40, "Goblin");
+
+    app.update();
+
+    // First attack: 5 - 1 = 4 damage → 10 - 4 = 6 HP
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let hp1 = app.world().get::<Health>(monster).unwrap().current;
+    assert_eq!(hp1, 6);
+
+    // Second attack
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let hp2 = app.world().get::<Health>(monster).unwrap().current;
+    assert_eq!(hp2, 2, "Second attack should further reduce HP");
+}
+
+#[test]
+fn bidirectional_combat_both_take_damage() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+    let monster = spawn_test_monster(&mut app, 61, 40, "Goblin");
+
+    app.update();
+
+    // Player attacks monster
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let monster_hp = app.world().get::<Health>(monster).unwrap().current;
+    assert!(monster_hp < 10, "Monster should have taken damage from player");
+
+    // Monster attacks player
+    app.world_mut().write_message(MoveIntent {
+        entity: monster,
+        dx: -1,
+        dy: 0,
+    });
+    app.update();
+
+    let player_hp = app.world().get::<Health>(player).unwrap().current;
+    assert!(player_hp < 30, "Player should have taken damage from monster");
+}

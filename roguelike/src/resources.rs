@@ -67,8 +67,147 @@ impl SpatialIndex {
 }
 
 /// Accumulator for combat log messages displayed in the status bar.
-/// Cleared each frame after rendering.
+/// Maintains a rolling history of recent messages.
 #[derive(Resource, Debug, Default)]
 pub struct CombatLog {
     pub messages: Vec<String>,
+}
+
+/// Maximum number of messages retained in the combat log.
+const MAX_COMBAT_LOG_MESSAGES: usize = 50;
+
+impl CombatLog {
+    /// Adds a message and trims old entries to keep the log bounded.
+    pub fn push(&mut self, message: String) {
+        self.messages.push(message);
+        if self.messages.len() > MAX_COMBAT_LOG_MESSAGES {
+            self.messages.remove(0);
+        }
+    }
+
+    /// Returns the most recent `n` messages.
+    pub fn recent(&self, n: usize) -> &[String] {
+        let start = self.messages.len().saturating_sub(n);
+        &self.messages[start..]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grid_vec::GridVec;
+
+    // ─── CombatLog tests ─────────────────────────────────────────
+
+    #[test]
+    fn combat_log_default_is_empty() {
+        let log = CombatLog::default();
+        assert!(log.messages.is_empty());
+    }
+
+    #[test]
+    fn combat_log_push_adds_message() {
+        let mut log = CombatLog::default();
+        log.push("Hello".into());
+        assert_eq!(log.messages.len(), 1);
+        assert_eq!(log.messages[0], "Hello");
+    }
+
+    #[test]
+    fn combat_log_push_multiple_preserves_order() {
+        let mut log = CombatLog::default();
+        log.push("First".into());
+        log.push("Second".into());
+        log.push("Third".into());
+        assert_eq!(log.messages, vec!["First", "Second", "Third"]);
+    }
+
+    #[test]
+    fn combat_log_rolling_window_trims_oldest() {
+        let mut log = CombatLog::default();
+        for i in 0..60 {
+            log.push(format!("msg-{i}"));
+        }
+        assert_eq!(log.messages.len(), MAX_COMBAT_LOG_MESSAGES);
+        // Oldest messages (0..9) were trimmed; first remaining is msg-10.
+        assert_eq!(log.messages[0], "msg-10");
+        assert_eq!(
+            log.messages[MAX_COMBAT_LOG_MESSAGES - 1],
+            "msg-59"
+        );
+    }
+
+    #[test]
+    fn combat_log_recent_returns_last_n() {
+        let mut log = CombatLog::default();
+        log.push("A".into());
+        log.push("B".into());
+        log.push("C".into());
+        log.push("D".into());
+        let recent = log.recent(2);
+        assert_eq!(recent, &["C", "D"]);
+    }
+
+    #[test]
+    fn combat_log_recent_more_than_available() {
+        let mut log = CombatLog::default();
+        log.push("Only".into());
+        let recent = log.recent(10);
+        assert_eq!(recent, &["Only"]);
+    }
+
+    #[test]
+    fn combat_log_recent_zero() {
+        let mut log = CombatLog::default();
+        log.push("Something".into());
+        let recent = log.recent(0);
+        assert!(recent.is_empty());
+    }
+
+    #[test]
+    fn combat_log_recent_on_empty() {
+        let log = CombatLog::default();
+        let recent = log.recent(5);
+        assert!(recent.is_empty());
+    }
+
+    // ─── SpatialIndex tests ──────────────────────────────────────
+
+    #[test]
+    fn spatial_index_default_empty() {
+        let index = SpatialIndex::default();
+        assert!(index.map.is_empty());
+    }
+
+    #[test]
+    fn spatial_index_entities_at_empty_tile() {
+        let index = SpatialIndex::default();
+        let point = GridVec::new(5, 5);
+        assert!(index.entities_at(&point).is_empty());
+    }
+
+    #[test]
+    fn spatial_index_entities_at_populated_tile() {
+        let mut index = SpatialIndex::default();
+        let point = GridVec::new(3, 7);
+        let entity = Entity::from_bits(42);
+        index.map.entry(point).or_default().push(entity);
+        let result = index.entities_at(&point);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], entity);
+    }
+
+    #[test]
+    fn spatial_index_multiple_entities_at_same_tile() {
+        let mut index = SpatialIndex::default();
+        let point = GridVec::new(0, 0);
+        let e1 = Entity::from_bits(1);
+        let e2 = Entity::from_bits(2);
+        index.map.entry(point).or_default().push(e1);
+        index.map.entry(point).or_default().push(e2);
+        let result = index.entities_at(&point);
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&e1));
+        assert!(result.contains(&e2));
+    }
 }

@@ -161,6 +161,7 @@ fn spawn_player(mut commands: Commands) {
             bg: RatColor::Black,
         },
         CameraFollow,
+        BlocksMovement,
         Health {
             current: 30,
             max: 30,

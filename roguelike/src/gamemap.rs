@@ -274,3 +274,157 @@ impl Default for GameMap {
         GameMap::new(80, 50, 42)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn game_map_dimensions() {
+        let map = GameMap::new(40, 30, 0);
+        assert_eq!(map.width, 40);
+        assert_eq!(map.height, 30);
+        assert_eq!(map.voxels.len(), 30);
+        assert_eq!(map.voxels[0].len(), 40);
+    }
+
+    #[test]
+    fn game_map_border_is_walls() {
+        let map = GameMap::new(20, 15, 42);
+        // Top and bottom rows
+        for x in 0..20 {
+            assert!(
+                map.voxels[0][x as usize].furniture.is_some(),
+                "Bottom border at x={x} should have wall"
+            );
+            assert!(
+                map.voxels[14][x as usize].furniture.is_some(),
+                "Top border at x={x} should have wall"
+            );
+        }
+        // Left and right columns
+        for y in 0..15 {
+            assert!(
+                map.voxels[y as usize][0].furniture.is_some(),
+                "Left border at y={y} should have wall"
+            );
+            assert!(
+                map.voxels[y as usize][19].furniture.is_some(),
+                "Right border at y={y} should have wall"
+            );
+        }
+    }
+
+    #[test]
+    fn game_map_border_not_passable() {
+        let map = GameMap::new(20, 15, 42);
+        // Borders should be impassable
+        assert!(!map.is_passable(&GridVec::new(0, 0)));
+        assert!(!map.is_passable(&GridVec::new(19, 0)));
+        assert!(!map.is_passable(&GridVec::new(0, 14)));
+        assert!(!map.is_passable(&GridVec::new(19, 14)));
+    }
+
+    #[test]
+    fn game_map_out_of_bounds_not_passable() {
+        let map = GameMap::new(10, 10, 0);
+        assert!(!map.is_passable(&GridVec::new(-1, 5)));
+        assert!(!map.is_passable(&GridVec::new(5, -1)));
+        assert!(!map.is_passable(&GridVec::new(10, 5)));
+        assert!(!map.is_passable(&GridVec::new(5, 10)));
+    }
+
+    #[test]
+    fn game_map_get_voxel_at_valid() {
+        let map = GameMap::new(10, 10, 0);
+        assert!(map.get_voxel_at(&GridVec::new(5, 5)).is_some());
+    }
+
+    #[test]
+    fn game_map_get_voxel_at_out_of_bounds() {
+        let map = GameMap::new(10, 10, 0);
+        assert!(map.get_voxel_at(&GridVec::new(-1, 0)).is_none());
+        assert!(map.get_voxel_at(&GridVec::new(0, -1)).is_none());
+        assert!(map.get_voxel_at(&GridVec::new(10, 0)).is_none());
+        assert!(map.get_voxel_at(&GridVec::new(0, 10)).is_none());
+    }
+
+    #[test]
+    fn game_map_spawn_area_is_clear() {
+        let map = GameMap::new(120, 80, 42);
+        // The spawn point area (within radius 6 of SPAWN_POINT) should be clear
+        for dy in -5..=5 {
+            for dx in -5..=5 {
+                let pos = SPAWN_POINT + GridVec::new(dx, dy);
+                let dist_sq = pos.distance_squared(SPAWN_POINT) as f64;
+                if dist_sq < 36.0 {
+                    assert!(
+                        map.is_passable(&pos),
+                        "Spawn area tile ({}, {}) should be passable",
+                        pos.x,
+                        pos.y
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn game_map_deterministic_with_same_seed() {
+        let map1 = GameMap::new(30, 20, 42);
+        let map2 = GameMap::new(30, 20, 42);
+        for y in 0..20 {
+            for x in 0..30 {
+                assert_eq!(
+                    map1.voxels[y][x].floor, map2.voxels[y][x].floor,
+                    "Floor mismatch at ({x}, {y})"
+                );
+                assert_eq!(
+                    map1.voxels[y][x].furniture, map2.voxels[y][x].furniture,
+                    "Furniture mismatch at ({x}, {y})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn game_map_different_seeds_differ() {
+        let map1 = GameMap::new(30, 20, 42);
+        let map2 = GameMap::new(30, 20, 99);
+        let mut any_different = false;
+        for y in 1..19 {
+            for x in 1..29 {
+                if map1.voxels[y][x].furniture != map2.voxels[y][x].furniture {
+                    any_different = true;
+                    break;
+                }
+            }
+            if any_different {
+                break;
+            }
+        }
+        assert!(any_different, "Different seeds should produce different maps");
+    }
+
+    #[test]
+    fn game_map_all_voxels_have_floor() {
+        let map = GameMap::new(20, 15, 42);
+        for y in 0..15 {
+            for x in 0..20 {
+                assert!(
+                    map.voxels[y][x].floor.is_some(),
+                    "Voxel at ({x}, {y}) should have a floor"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn game_map_render_packet_dimensions() {
+        let map = GameMap::new(80, 50, 42);
+        let center = GridVec::new(40, 25);
+        let packet = map.create_render_packet(&center, 20, 10);
+        assert_eq!(packet.len(), 10);
+        assert_eq!(packet[0].len(), 20);
+    }
+}
