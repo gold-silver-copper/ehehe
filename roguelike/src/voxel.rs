@@ -46,3 +46,78 @@ pub fn dim(color: RatColor, factor: f32) -> RatColor {
         _ => RatColor::Gray,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grid_vec::GridVec;
+    use crate::typeenums::{Floor, Furniture};
+
+    #[test]
+    fn dim_rgb_reduces_values() {
+        let color = RatColor::Rgb(200, 100, 50);
+        let dimmed = dim(color, 0.5);
+        assert_eq!(dimmed, RatColor::Rgb(100, 50, 25));
+    }
+
+    #[test]
+    fn dim_rgb_clamps_to_127() {
+        let color = RatColor::Rgb(255, 255, 255);
+        let dimmed = dim(color, 1.0);
+        assert_eq!(dimmed, RatColor::Rgb(127, 127, 127));
+    }
+
+    #[test]
+    fn dim_non_rgb_returns_gray() {
+        let dimmed = dim(RatColor::White, 0.5);
+        assert_eq!(dimmed, RatColor::Gray);
+    }
+
+    #[test]
+    fn voxel_to_graphic_visible_no_furniture() {
+        let voxel = Voxel {
+            floor: Some(Floor::Grass),
+            furniture: None,
+            voxel_pos: GridVec::new(5, 5),
+        };
+        let graphic = voxel.to_graphic(true);
+        // Should have the floor's symbol
+        assert_eq!(graphic.0, "\"");
+    }
+
+    #[test]
+    fn voxel_to_graphic_visible_with_furniture() {
+        let voxel = Voxel {
+            floor: Some(Floor::Grass),
+            furniture: Some(Furniture::Tree),
+            voxel_pos: GridVec::new(5, 5),
+        };
+        let graphic = voxel.to_graphic(true);
+        // Furniture symbol overrides floor symbol
+        assert_eq!(graphic.0, "T");
+    }
+
+    #[test]
+    fn voxel_to_graphic_not_visible_is_dimmed() {
+        let voxel = Voxel {
+            floor: Some(Floor::Grass),
+            furniture: None,
+            voxel_pos: GridVec::new(5, 5),
+        };
+        let visible = voxel.to_graphic(true);
+        let dimmed = voxel.to_graphic(false);
+        // Dimmed version should have different (darker) colors
+        assert_ne!(visible.1, dimmed.1);
+    }
+
+    #[test]
+    fn voxel_no_floor_shows_space() {
+        let voxel = Voxel {
+            floor: None,
+            furniture: None,
+            voxel_pos: GridVec::new(0, 0),
+        };
+        let graphic = voxel.to_graphic(true);
+        assert_eq!(graphic.0, " ");
+    }
+}

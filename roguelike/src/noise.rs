@@ -97,3 +97,65 @@ pub fn fbm(x: f64, y: f64, octaves: u32, frequency: f64, persistence: f64, seed:
     // Normalize to [0, 1].
     value / max_amplitude
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn value_noise_deterministic() {
+        let a = value_noise(10, 20, 42);
+        let b = value_noise(10, 20, 42);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn value_noise_in_range() {
+        for x in -10..10 {
+            for y in -10..10 {
+                let v = value_noise(x, y, 42);
+                assert!(v >= 0.0 && v < 1.0, "value_noise({x},{y}) = {v} out of range");
+            }
+        }
+    }
+
+    #[test]
+    fn value_noise_different_positions_vary() {
+        let a = value_noise(0, 0, 42);
+        let b = value_noise(100, 100, 42);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn value_noise_different_seeds_vary() {
+        let a = value_noise(5, 5, 0);
+        let b = value_noise(5, 5, 1);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn smooth_noise_in_range() {
+        for i in 0..20 {
+            let v = smooth_noise(i as f64 * 0.5, i as f64 * 0.3, 42);
+            assert!(
+                v >= 0.0 && v <= 1.0,
+                "smooth_noise out of range: {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn fbm_in_range() {
+        for i in 0..20 {
+            let v = fbm(i as f64, i as f64, 4, 0.1, 0.5, 42);
+            assert!(v >= 0.0 && v <= 1.0, "fbm out of range: {v}");
+        }
+    }
+
+    #[test]
+    fn fbm_deterministic() {
+        let a = fbm(5.5, 3.3, 4, 0.1, 0.5, 42);
+        let b = fbm(5.5, 3.3, 4, 0.1, 0.5, 42);
+        assert_eq!(a, b);
+    }
+}

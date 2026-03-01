@@ -133,3 +133,229 @@ pub enum AiState {
 /// Used by bump-to-attack: moving into a hostile entity's tile triggers combat.
 #[derive(Component, Debug)]
 pub struct Hostile;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── Position / GridVec conversion tests ─────────────────────
+
+    #[test]
+    fn position_as_grid_vec() {
+        let pos = Position { x: 10, y: 20 };
+        let gv = pos.as_grid_vec();
+        assert_eq!(gv, GridVec::new(10, 20));
+    }
+
+    #[test]
+    fn position_from_grid_vec() {
+        let gv = GridVec::new(5, -3);
+        let pos = Position::from(gv);
+        assert_eq!(pos.x, 5);
+        assert_eq!(pos.y, -3);
+    }
+
+    #[test]
+    fn grid_vec_from_position() {
+        let pos = Position { x: 7, y: 13 };
+        let gv: GridVec = pos.into();
+        assert_eq!(gv, GridVec::new(7, 13));
+    }
+
+    #[test]
+    fn position_round_trip() {
+        let original = Position { x: -42, y: 99 };
+        let gv = original.as_grid_vec();
+        let back = Position::from(gv);
+        assert_eq!(original, back);
+    }
+
+    // ─── Health tests ────────────────────────────────────────────
+
+    #[test]
+    fn health_full() {
+        let h = Health {
+            current: 30,
+            max: 30,
+        };
+        assert_eq!(h.current, h.max);
+    }
+
+    #[test]
+    fn health_damage_reduces_current() {
+        let mut h = Health {
+            current: 30,
+            max: 30,
+        };
+        h.current = (h.current - 5).max(0);
+        assert_eq!(h.current, 25);
+        assert_eq!(h.max, 30);
+    }
+
+    #[test]
+    fn health_damage_clamps_to_zero() {
+        let mut h = Health {
+            current: 3,
+            max: 30,
+        };
+        h.current = (h.current - 10).max(0);
+        assert_eq!(h.current, 0);
+    }
+
+    // ─── CombatStats damage formula tests ────────────────────────
+
+    #[test]
+    fn damage_formula_positive() {
+        let attacker = CombatStats {
+            attack: 5,
+            defense: 0,
+        };
+        let defender = CombatStats {
+            attack: 0,
+            defense: 2,
+        };
+        let damage = (attacker.attack - defender.defense).max(0);
+        assert_eq!(damage, 3);
+    }
+
+    #[test]
+    fn damage_formula_zero_when_defense_equals_attack() {
+        let attacker = CombatStats {
+            attack: 3,
+            defense: 0,
+        };
+        let defender = CombatStats {
+            attack: 0,
+            defense: 3,
+        };
+        let damage = (attacker.attack - defender.defense).max(0);
+        assert_eq!(damage, 0);
+    }
+
+    #[test]
+    fn damage_formula_zero_when_defense_exceeds_attack() {
+        let attacker = CombatStats {
+            attack: 2,
+            defense: 0,
+        };
+        let defender = CombatStats {
+            attack: 0,
+            defense: 10,
+        };
+        let damage = (attacker.attack - defender.defense).max(0);
+        assert_eq!(damage, 0);
+    }
+
+    // ─── Energy / Speed tests ────────────────────────────────────
+
+    #[test]
+    fn action_cost_is_100() {
+        assert_eq!(ACTION_COST, 100);
+    }
+
+    #[test]
+    fn energy_accumulation_normal_speed() {
+        let speed = Speed(100);
+        let mut energy = Energy(0);
+        energy.0 += speed.0;
+        assert_eq!(energy.0, 100);
+        assert!(energy.0 >= ACTION_COST);
+    }
+
+    #[test]
+    fn energy_accumulation_slow_speed() {
+        let speed = Speed(50);
+        let mut energy = Energy(0);
+        // After 1 tick: not enough to act
+        energy.0 += speed.0;
+        assert_eq!(energy.0, 50);
+        assert!(energy.0 < ACTION_COST);
+        // After 2 ticks: enough to act
+        energy.0 += speed.0;
+        assert_eq!(energy.0, 100);
+        assert!(energy.0 >= ACTION_COST);
+    }
+
+    #[test]
+    fn energy_accumulation_fast_speed() {
+        let speed = Speed(200);
+        let mut energy = Energy(0);
+        energy.0 += speed.0;
+        assert_eq!(energy.0, 200);
+        // Fast entity can act twice
+        assert!(energy.0 >= ACTION_COST);
+        energy.0 -= ACTION_COST;
+        assert!(energy.0 >= ACTION_COST);
+    }
+
+    #[test]
+    fn energy_deduction_leaves_excess() {
+        let speed = Speed(120);
+        let mut energy = Energy(0);
+        energy.0 += speed.0;
+        energy.0 -= ACTION_COST;
+        assert_eq!(energy.0, 20); // Excess carries over
+    }
+
+    // ─── AiState tests ──────────────────────────────────────────
+
+    #[test]
+    fn ai_state_idle_default() {
+        let state = AiState::Idle;
+        assert_eq!(state, AiState::Idle);
+    }
+
+    #[test]
+    fn ai_state_transitions() {
+        let state = AiState::Idle;
+        assert_eq!(state, AiState::Idle);
+        let state = AiState::Chasing;
+        assert_eq!(state, AiState::Chasing);
+    }
+
+    // ─── Viewshed tests ─────────────────────────────────────────
+
+    #[test]
+    fn viewshed_dirty_flag() {
+        let mut vs = Viewshed {
+            range: 10,
+            visible_tiles: HashSet::new(),
+            revealed_tiles: HashSet::new(),
+            dirty: true,
+        };
+        assert!(vs.dirty);
+        vs.dirty = false;
+        assert!(!vs.dirty);
+    }
+
+    #[test]
+    fn viewshed_visible_tiles_insert() {
+        let mut vs = Viewshed {
+            range: 10,
+            visible_tiles: HashSet::new(),
+            revealed_tiles: HashSet::new(),
+            dirty: true,
+        };
+        let point = GridVec::new(5, 5);
+        vs.visible_tiles.insert(point);
+        assert!(vs.visible_tiles.contains(&point));
+    }
+
+    #[test]
+    fn viewshed_revealed_accumulates() {
+        let mut vs = Viewshed {
+            range: 10,
+            visible_tiles: HashSet::new(),
+            revealed_tiles: HashSet::new(),
+            dirty: true,
+        };
+        let p1 = GridVec::new(1, 1);
+        let p2 = GridVec::new(2, 2);
+        vs.revealed_tiles.insert(p1);
+        vs.revealed_tiles.insert(p2);
+        // Clearing visible doesn't affect revealed
+        vs.visible_tiles.clear();
+        assert!(vs.revealed_tiles.contains(&p1));
+        assert!(vs.revealed_tiles.contains(&p2));
+    }
+}
