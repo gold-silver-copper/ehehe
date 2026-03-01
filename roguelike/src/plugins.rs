@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use crate::components::{
     AiState, BlocksMovement, CameraFollow, CombatStats, Energy, Experience, ExpReward, Health, HellGate, Hostile,
-    Inventory, Level, LootTable, Mana, Name, Player, Position, Renderable, Speed, Viewshed, ACTION_COST,
+    Ammo, Inventory, Level, LootTable, Stamina, Name, Player, Position, Renderable, Speed, Viewshed, ACTION_COST,
 };
 use crate::events::{AttackIntent, DamageEvent, MeleeWideIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, UseItemIntent};
 use crate::gamemap::GameMap;
@@ -235,9 +235,13 @@ fn do_spawn_player(commands: &mut Commands) {
             current: 30,
             max: 30,
         },
-        Mana {
+        Stamina {
             current: 50,
             max: 50,
+        },
+        Ammo {
+            current: 30,
+            max: 30,
         },
         CombatStats {
             attack: 5,
@@ -245,6 +249,7 @@ fn do_spawn_player(commands: &mut Commands) {
         },
         Speed(ACTION_COST),
         Energy(0),
+    )).insert((
         Inventory::default(),
         Level(1),
         Experience {

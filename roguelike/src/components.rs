@@ -148,15 +148,23 @@ pub enum Faction {
     Military,
 }
 
-/// Mana pool for entities that can cast spells.
-/// Spells consume mana; mana regenerates slowly each turn.
+/// Stamina pool for entities that can perform special actions.
+/// Special actions consume stamina; stamina regenerates slowly each turn.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Mana {
+pub struct Stamina {
     pub current: CoordinateUnit,
     pub max: CoordinateUnit,
 }
 
-/// A visual particle used for spell animations.
+/// Ammo supply for ranged weapon attacks.
+/// Ranged attacks consume ammo; ammo can be found as loot.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Ammo {
+    pub current: CoordinateUnit,
+    pub max: CoordinateUnit,
+}
+
+/// A visual particle used for combat animations (grenade shrapnel, bullet trails).
 /// The particle has a limited lifetime (in frames) before despawning.
 #[derive(Component, Debug)]
 pub struct Particle {

@@ -1,8 +1,8 @@
 use bevy::{app::AppExit, prelude::*};
 use bevy_ratatui::event::KeyMessage;
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
-use crate::components::{Inventory, Mana, Player};
+use crate::components::{Ammo, Inventory, Stamina, Player};
 use crate::events::{MeleeWideIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, UseItemIntent};
 use crate::resources::{CombatLog, GameState, InputMode, InputState, RestartRequested, TurnState};
 
@@ -10,7 +10,7 @@ use crate::resources::{CombatLog, GameState, InputMode, InputState, RestartReque
 const SPELL_RADIUS: i32 = 3;
 
 /// Stamina cost for throwing a grenade.
-const SPELL_MANA_COST: i32 = 10;
+const SPELL_STAMINA_COST: i32 = 10;
 
 /// Range for the targeted ranged attack.
 const RANGED_ATTACK_RANGE: i32 = 8;
@@ -32,9 +32,10 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
     CommandBinding { key: "S / ↓", name: "Move south", docs: "Move the player one tile south (down on the map)." },
     CommandBinding { key: "A / ←", name: "Move west", docs: "Move the player one tile west (left on the map)." },
     CommandBinding { key: "D / →", name: "Move east", docs: "Move the player one tile east (right on the map)." },
-    CommandBinding { key: "F / Space", name: "Throw grenade", docs: "Throw a frag grenade dealing area damage around the player (costs 10 stamina)." },
-    CommandBinding { key: "R", name: "Shoot (ranged)", docs: "Fire your weapon at the nearest visible enemy within 8 tiles." },
-    CommandBinding { key: "E", name: "Melee sweep", docs: "Swing your melee weapon hitting all adjacent enemies." },
+    CommandBinding { key: "F / Space", name: "Throw grenade", docs: "Throw a frag grenade dealing shrapnel damage around you (costs 10 stamina). Warning: can damage you too!" },
+    CommandBinding { key: "R", name: "Shoot (ranged)", docs: "Fire your weapon at the nearest visible enemy within 8 tiles. Bullets penetrate through multiple targets. Uses 1 ammo." },
+    CommandBinding { key: "E", name: "Roundhouse kick", docs: "Roundhouse kick hitting all adjacent enemies in melee range." },
+    CommandBinding { key: "Shift+WASD", name: "Sprint", docs: "Hold Shift while moving to sprint (move 2 tiles per turn)." },
     CommandBinding { key: ". / 5", name: "Wait", docs: "Skip the current turn without acting." },
     CommandBinding { key: "G", name: "Pick up item", docs: "Pick up an item on the ground at your position." },
     CommandBinding { key: "I", name: "Open inventory", docs: "Open the inventory screen to view and use items." },
@@ -60,7 +61,7 @@ pub fn input_system(
     mut pickup_intents: MessageWriter<PickupItemIntent>,
     mut ranged_intents: MessageWriter<RangedAttackIntent>,
     mut melee_wide_intents: MessageWriter<MeleeWideIntent>,
-    player_query: Query<(Entity, Option<&Mana>, Option<&Inventory>), With<Player>>,
+    player_query: Query<(Entity, Option<&Stamina>, Option<&Ammo>, Option<&Inventory>), With<Player>>,
     game_state: Res<State<GameState>>,
     mut next_game_state: ResMut<NextState<GameState>>,
     turn_state: Option<Res<State<TurnState>>>,
@@ -85,7 +86,7 @@ pub fn input_system(
         return;
     }
 
-    let Ok((player_entity, player_mana, player_inv)) = player_query.single() else {
+    let Ok((player_entity, player_stamina, player_ammo, player_inv)) = player_query.single() else {
         // Player entity is gone (should only happen transiently).
         for message in messages.read() {
             if matches!(message.code, KeyCode::Char('q') | KeyCode::Esc) {
@@ -188,6 +189,20 @@ pub fn input_system(
                 input_state.inv_selection = 0;
             }
             // ── Movement keys (only while awaiting input) ───────
+            // Shift+direction = sprint (move 2 tiles at once)
+            KeyCode::Char('W') if awaiting_input && message.modifiers.contains(KeyModifiers::SHIFT) => {
+                emit_move(&mut move_intents, &mut next_turn_state, player_entity, 0, 2);
+            }
+            KeyCode::Char('S') if awaiting_input && message.modifiers.contains(KeyModifiers::SHIFT) => {
+                emit_move(&mut move_intents, &mut next_turn_state, player_entity, 0, -2);
+            }
+            KeyCode::Char('A') if awaiting_input && message.modifiers.contains(KeyModifiers::SHIFT) => {
+                emit_move(&mut move_intents, &mut next_turn_state, player_entity, -2, 0);
+            }
+            KeyCode::Char('D') if awaiting_input && message.modifiers.contains(KeyModifiers::SHIFT) => {
+                emit_move(&mut move_intents, &mut next_turn_state, player_entity, 2, 0);
+            }
+            // Normal movement
             KeyCode::Char('w') | KeyCode::Up if awaiting_input => {
                 emit_move(&mut move_intents, &mut next_turn_state, player_entity, 0, 1);
             }
@@ -210,10 +225,10 @@ pub fn input_system(
             // ── Spell cast: area-of-effect attack around the player ──
             KeyCode::Char('f') | KeyCode::Char(' ') if awaiting_input => {
                 // Check mana before casting.
-                let has_mana = player_mana
-                    .map(|m| m.current >= SPELL_MANA_COST)
+                let has_stamina = player_stamina
+                    .map(|m| m.current >= SPELL_STAMINA_COST)
                     .unwrap_or(false);
-                if has_mana {
+                if has_stamina {
                     spell_intents.write(SpellCastIntent {
                         caster: player_entity,
                         radius: SPELL_RADIUS,
@@ -227,12 +242,19 @@ pub fn input_system(
             }
             // ── Targeted ranged attack ──────────────────────────
             KeyCode::Char('r') if awaiting_input => {
-                ranged_intents.write(RangedAttackIntent {
-                    attacker: player_entity,
-                    range: RANGED_ATTACK_RANGE,
-                });
-                if let Some(next) = &mut next_turn_state {
-                    next.set(TurnState::PlayerTurn);
+                let has_ammo = player_ammo
+                    .map(|a| a.current > 0)
+                    .unwrap_or(false);
+                if has_ammo {
+                    ranged_intents.write(RangedAttackIntent {
+                        attacker: player_entity,
+                        range: RANGED_ATTACK_RANGE,
+                    });
+                    if let Some(next) = &mut next_turn_state {
+                        next.set(TurnState::PlayerTurn);
+                    }
+                } else {
+                    combat_log.push("Out of ammo!".into());
                 }
             }
             // ── Melee wide (cleave) attack ──────────────────────

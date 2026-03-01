@@ -7,7 +7,7 @@ use ratatui::style::Stylize;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Row, Table, Wrap};
 
-use crate::components::{Experience, Health, Inventory, ItemKind, Level, Mana, Name, Player, Position, Renderable, Viewshed};
+use crate::components::{Ammo, Experience, Health, Inventory, ItemKind, Level, Stamina, Name, Player, Position, Renderable, Viewshed};
 use crate::grid_vec::GridVec;
 use crate::resources::{
     CameraPosition, CombatLog, GameMapResource, GameState, InputMode,
@@ -35,7 +35,7 @@ pub fn particle_tick_system(mut particles: ResMut<SpellParticles>) {
 /// Layout:
 /// ┌─────────────────────────────┬──────────────┐
 /// │         Game Area           │  Side Panel   │
-/// │                             │  (HP/Mana     │
+/// │                             │  (HP/Stamina  │
 /// │                             │   Inventory   │
 /// │                             │   Visible)    │
 /// ├─────────────────────────────┴──────────────┤
@@ -47,7 +47,7 @@ pub fn draw_system(
     camera: Res<CameraPosition>,
     renderables: Query<(&Position, &Renderable, Option<&Name>)>,
     player_query: Query<
-        (&Position, Option<&Viewshed>, Option<&Health>, Option<&Mana>, Option<&Inventory>, Option<&Level>, Option<&Experience>),
+        (&Position, Option<&Viewshed>, Option<&Health>, Option<&Stamina>, Option<&Ammo>, Option<&Inventory>, Option<&Level>, Option<&Experience>),
         With<Player>,
     >,
     item_query: Query<(Option<&Name>, Option<&ItemKind>), With<crate::components::Item>>,
@@ -87,24 +87,25 @@ pub fn draw_system(
         let render_height = game_area.height;
 
         // Collect the player's visible and revealed tiles.
-        let (visible_tiles, revealed_tiles, player_hp, player_mana, player_inv, player_level, player_exp): (
+        let (visible_tiles, revealed_tiles, player_hp, player_stamina, player_ammo, player_inv, player_level, player_exp): (
             Option<&HashSet<MyPoint>>,
             Option<&HashSet<MyPoint>>,
             Option<&Health>,
-            Option<&Mana>,
+            Option<&Stamina>,
+            Option<&Ammo>,
             Option<&Inventory>,
             Option<&Level>,
             Option<&Experience>,
         ) = player_query
             .single()
             .ok()
-            .map(|(_, vs, hp, mp, inv, lvl, exp)| {
+            .map(|(_, vs, hp, sta, ammo, inv, lvl, exp)| {
                 let (vis, rev) = vs
                     .map(|vs| (Some(&vs.visible_tiles), Some(&vs.revealed_tiles)))
                     .unwrap_or((None, None));
-                (vis, rev, hp, mp, inv, lvl, exp)
+                (vis, rev, hp, sta, ammo, inv, lvl, exp)
             })
-            .unwrap_or((None, None, None, None, None, None, None));
+            .unwrap_or((None, None, None, None, None, None, None, None));
 
         let mut render_packet = game_map.0.create_render_packet_with_fog(
             &camera.0,
@@ -229,7 +230,8 @@ pub fn draw_system(
             frame,
             side_area,
             player_hp,
-            player_mana,
+            player_stamina,
+            player_ammo,
             player_inv,
             &inv_item_names,
             &visible_entity_infos,
@@ -338,7 +340,7 @@ pub fn draw_system(
         // ── Status bar ──────────────────────────────────────────
         let player_info = player_query
             .single()
-            .map(|(p, _, _, _, _, _, _)| format!("({}, {})", p.x, p.y))
+            .map(|(p, _, _, _, _, _, _, _)| format!("({}, {})", p.x, p.y))
             .unwrap_or_default();
 
         let level_info = player_level.map_or(String::new(), |l| format!(" Lv:{}", l.0));
@@ -356,12 +358,13 @@ pub fn draw_system(
     Ok(())
 }
 
-/// Renders the side panel with HP gauge, Mana gauge, Level/EXP, inventory, visible entities, and combat log.
+/// Renders the side panel with HP gauge, Stamina gauge, Ammo, Level/EXP, inventory, visible entities, and combat log.
 fn render_side_panel(
     frame: &mut ratatui::Frame,
     area: Rect,
     player_hp: Option<&Health>,
-    player_mana: Option<&Mana>,
+    player_stamina: Option<&Stamina>,
+    player_ammo: Option<&Ammo>,
     player_inv: Option<&Inventory>,
     inv_item_names: &[String],
     visible_entities: &[(String, RatColor, RatColor, String)],
@@ -378,7 +381,8 @@ fn render_side_panel(
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),          // HP gauge
-            Constraint::Length(3),          // Mana gauge
+            Constraint::Length(3),          // Stamina gauge
+            Constraint::Length(3),          // Ammo gauge
             Constraint::Length(3),          // EXP gauge
             Constraint::Length(inv_height), // Inventory (dynamic)
             Constraint::Length(5),          // Combat log
@@ -410,10 +414,10 @@ fn render_side_panel(
         );
     }
 
-    // ── Mana Gauge ──────────────────────────────────────────────
-    if let Some(mana) = player_mana {
-        let ratio = if mana.max > 0 {
-            (mana.current as f64 / mana.max as f64).clamp(0.0, 1.0)
+    // ── Stamina Gauge ───────────────────────────────────────────
+    if let Some(stamina) = player_stamina {
+        let ratio = if stamina.max > 0 {
+            (stamina.current as f64 / stamina.max as f64).clamp(0.0, 1.0)
         } else {
             0.0
         };
@@ -425,12 +429,36 @@ fn render_side_panel(
                     .bg(ratatui::style::Color::DarkGray),
             )
             .ratio(ratio)
-            .label(Span::from(format!("{}/{}", mana.current, mana.max)).style(ratatui::style::Style::default().fg(ratatui::style::Color::White)));
+            .label(Span::from(format!("{}/{}", stamina.current, stamina.max)).style(ratatui::style::Style::default().fg(ratatui::style::Color::White)));
         frame.render_widget(gauge, chunks[1]);
     } else {
         frame.render_widget(
             Block::default().borders(Borders::ALL).title("Stamina"),
             chunks[1],
+        );
+    }
+
+    // ── Ammo Gauge ──────────────────────────────────────────────
+    if let Some(ammo) = player_ammo {
+        let ratio = if ammo.max > 0 {
+            (ammo.current as f64 / ammo.max as f64).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let gauge = Gauge::default()
+            .block(Block::default().borders(Borders::ALL).title("Ammo"))
+            .gauge_style(
+                ratatui::style::Style::default()
+                    .fg(ratatui::style::Color::Yellow)
+                    .bg(ratatui::style::Color::DarkGray),
+            )
+            .ratio(ratio)
+            .label(Span::from(format!("{}/{}", ammo.current, ammo.max)).style(ratatui::style::Style::default().fg(ratatui::style::Color::White)));
+        frame.render_widget(gauge, chunks[2]);
+    } else {
+        frame.render_widget(
+            Block::default().borders(Borders::ALL).title("Ammo"),
+            chunks[2],
         );
     }
 
@@ -450,11 +478,11 @@ fn render_side_panel(
             )
             .ratio(ratio)
             .label(Span::from(format!("{}/{}", exp.current, exp.next_level)).style(ratatui::style::Style::default().fg(ratatui::style::Color::White)));
-        frame.render_widget(gauge, chunks[2]);
+        frame.render_widget(gauge, chunks[3]);
     } else {
         frame.render_widget(
             Block::default().borders(Borders::ALL).title("EXP"),
-            chunks[2],
+            chunks[3],
         );
     }
 
@@ -474,7 +502,7 @@ fn render_side_panel(
     frame.render_widget(
         Paragraph::new(inv_lines)
             .block(Block::default().borders(Borders::ALL).title("Bag [I]")),
-        chunks[3],
+        chunks[4],
     );
 
     // ── Combat Log ──────────────────────────────────────────────
@@ -491,11 +519,11 @@ fn render_side_panel(
         })
         .block(Block::default().borders(Borders::ALL).title("Log"))
         .wrap(Wrap { trim: true }),
-        chunks[4],
+        chunks[5],
     );
 
     // ── Visible Entities ────────────────────────────────────────
-    let max_visible = (chunks[5].height.saturating_sub(2)) as usize;
+    let max_visible = (chunks[6].height.saturating_sub(2)) as usize;
     let mut vis_lines: Vec<Line> = Vec::new();
     // Deduplicate: show each unique name only once.
     let mut seen_names: HashSet<String> = HashSet::new();
@@ -517,7 +545,7 @@ fn render_side_panel(
     frame.render_widget(
         Paragraph::new(vis_lines)
             .block(Block::default().borders(Borders::ALL).title("Visible")),
-        chunks[5],
+        chunks[6],
     );
 }
 
