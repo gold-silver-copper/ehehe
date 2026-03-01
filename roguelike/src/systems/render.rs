@@ -197,11 +197,12 @@ pub fn draw_system(
                             .ok()
                             .and_then(|(_, k)| k)
                             .map_or("".to_string(), |k| match k {
-                                ItemKind::HealingPotion { amount } => format!("Heal {amount} HP"),
-                                ItemKind::Explosive { damage, radius } => format!("{damage} dmg r{radius}"),
-                                ItemKind::Armor { defense } => format!("+{defense} def"),
-                                ItemKind::Weapon { attack } => format!("+{attack} atk"),
-                                ItemKind::Magazine { ammo } => format!("{ammo} rounds"),
+                                ItemKind::Gun { loaded, capacity, caliber, .. } => format!("{loaded}/{capacity} {caliber}"),
+                                ItemKind::Knife { attack } => format!("+{attack} atk"),
+                                ItemKind::Tomahawk { attack } => format!("+{attack} atk"),
+                                ItemKind::Grenade { damage, radius } => format!("{damage} dmg r{radius}"),
+                                ItemKind::Whiskey { heal } => format!("Heal {heal} HP"),
+                                ItemKind::Hat { defense } => format!("+{defense} def"),
                             });
                         (name, desc)
                     })
@@ -251,7 +252,7 @@ pub fn draw_system(
 
         // Show "VICTORY" overlay centered on game area when the gate is destroyed
         if *state.get() == GameState::Victory {
-            let label = " VICTORY! The Enemy Stronghold has been destroyed! Press Q to quit, R to restart. ";
+            let label = " VICTORY! The Outlaw Hideout has been destroyed! Press Q to quit, R to restart. ";
             let label_width = label.len() as u16;
             if render_width >= label_width && render_height >= 1 {
                 let cx = game_area.x + (render_width - label_width) / 2;
@@ -618,13 +619,13 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
 
     let mut lines = vec![
         Line::from(""),
-        Line::from("  ☠  DEAD ZONE  ☠").bold().yellow(),
+        Line::from("  🤠  DEAD MAN'S HAND  🤠").bold().yellow(),
         Line::from(""),
-        Line::from("  Destroy the Enemy Stronghold (Ω) to win!").white(),
+        Line::from("  Destroy the Outlaw Hideout (Ω) to win!").white(),
         Line::from("  Enemies will keep spawning from it.").white(),
-        Line::from("  Enemies drop magazines (m) and grenades (*)").white(),
-        Line::from("  that are auto-picked up on contact.").white(),
-        Line::from("  Soldiers can shoot at you from range!").white(),
+        Line::from("  Enemies drop items that are").white(),
+        Line::from("  auto-picked up on contact.").white(),
+        Line::from("  Cowboys can shoot at you from range!").white(),
         Line::from(""),
     ];
     for binding in KEYBINDINGS {

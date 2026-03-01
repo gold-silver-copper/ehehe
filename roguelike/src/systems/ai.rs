@@ -175,7 +175,7 @@ pub fn ai_system(
 
                 // Military faction entities attempt ranged attacks when they can see
                 // the player, have ammo, and are not adjacent.
-                let is_military = faction.map_or(false, |f| *f == Faction::Military);
+                let is_military = faction.map_or(false, |f| *f == Faction::Cowboys);
                 let can_shoot = is_military
                     && ammo.is_some()
                     && dist > 1
