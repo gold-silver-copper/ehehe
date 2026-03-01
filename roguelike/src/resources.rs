@@ -89,6 +89,45 @@ pub struct CombatLog {
 /// Maximum number of messages retained in the combat log.
 const MAX_COMBAT_LOG_MESSAGES: usize = 50;
 
+/// Whether the help overlay is currently shown (toggled by `?`).
+#[derive(Resource, Debug, Default)]
+pub struct HelpVisible(pub bool);
+
+/// Active spell particles for rendering AoE animations.
+/// Each entry is (position, remaining_lifetime_frames).
+#[derive(Resource, Debug, Default)]
+pub struct SpellParticles {
+    pub particles: Vec<(MyPoint, u32)>,
+}
+
+/// Maximum number of active spell particles to prevent unbounded growth.
+const MAX_PARTICLES: usize = 500;
+
+impl SpellParticles {
+    /// Adds particles for an AoE spell centered on `origin` hitting `targets`.
+    pub fn add_aoe(&mut self, origin: MyPoint, targets: &[MyPoint], lifetime: u32) {
+        // Add a particle at the origin.
+        if self.particles.len() < MAX_PARTICLES {
+            self.particles.push((origin, lifetime));
+        }
+        // Add particles at each target.
+        for &t in targets {
+            if self.particles.len() >= MAX_PARTICLES {
+                break;
+            }
+            self.particles.push((t, lifetime));
+        }
+    }
+
+    /// Ticks all particles, removing expired ones.
+    pub fn tick(&mut self) {
+        self.particles.retain_mut(|(_, life)| {
+            *life = life.saturating_sub(1);
+            *life > 0
+        });
+    }
+}
+
 impl CombatLog {
     /// Adds a message and trims the oldest entry to keep the log bounded.
     /// O(1) amortised via `VecDeque::pop_front` (no element shifting).

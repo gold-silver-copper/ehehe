@@ -3,18 +3,18 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 
 use crate::components::{
-    AiState, BlocksMovement, CameraFollow, CombatStats, Energy, Health, HellGate, Hostile, Name,
-    Player, Position, Renderable, Speed, Viewshed, ACTION_COST,
+    AiState, BlocksMovement, CameraFollow, CombatStats, Energy, Health, HellGate, Hostile,
+    Inventory, LootTable, Mana, Name, Player, Position, Renderable, Speed, Viewshed, ACTION_COST,
 };
-use crate::events::{AttackIntent, DamageEvent, MoveIntent, SpellCastIntent};
+use crate::events::{AttackIntent, DamageEvent, MoveIntent, PickupItemIntent, SpellCastIntent, UseItemIntent};
 use crate::gamemap::GameMap;
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
 use crate::resources::{
-    CameraPosition, CombatLog, GameMapResource, GameState, KillCount, MapSeed, SpatialIndex,
-    TurnCounter, TurnState,
+    CameraPosition, CombatLog, GameMapResource, GameState, HelpVisible, KillCount, MapSeed,
+    SpatialIndex, SpellParticles, TurnCounter, TurnState,
 };
-use crate::systems::{ai, camera, combat, corruption, input, movement, render, spatial_index, spell, turn, visibility, wave_spawn};
+use crate::systems::{ai, camera, combat, corruption, input, inventory, movement, render, spatial_index, spell, turn, visibility, wave_spawn};
 use crate::typedefs::{RatColor, SPAWN_POINT, SPAWN_X, SPAWN_Y, GATE_POINT, GATE_X, GATE_Y};
 
 // ─────────────────────────── System Sets ───────────────────────────
@@ -63,6 +63,8 @@ impl Plugin for RoguelikePlugin {
             .add_message::<AttackIntent>()
             .add_message::<DamageEvent>()
             .add_message::<SpellCastIntent>()
+            .add_message::<UseItemIntent>()
+            .add_message::<PickupItemIntent>()
             // ── Resources ──
             .insert_resource(MapSeed(seed))
             .insert_resource(GameMapResource(GameMap::new(120, 80, seed)))
@@ -71,6 +73,8 @@ impl Plugin for RoguelikePlugin {
             .init_resource::<CombatLog>()
             .init_resource::<TurnCounter>()
             .init_resource::<KillCount>()
+            .init_resource::<HelpVisible>()
+            .init_resource::<SpellParticles>()
             // ── States ──
             .init_state::<GameState>()
             .add_sub_state::<TurnState>()
@@ -99,6 +103,8 @@ impl Plugin for RoguelikePlugin {
                 Update,
                 (
                     movement::movement_system,
+                    inventory::pickup_system,
+                    inventory::use_item_system,
                     spell::spell_system,
                     combat::combat_system,
                     combat::apply_damage_system,
@@ -148,7 +154,9 @@ impl Plugin for RoguelikePlugin {
             // ── Render (always runs — shows PAUSED overlay when paused) ──
             .add_systems(
                 Update,
-                render::draw_system.in_set(RoguelikeSet::Render),
+                (render::particle_tick_system, render::draw_system)
+                    .chain()
+                    .in_set(RoguelikeSet::Render),
             );
     }
 }
@@ -173,12 +181,17 @@ fn spawn_player(mut commands: Commands) {
             current: 30,
             max: 30,
         },
+        Mana {
+            current: 50,
+            max: 50,
+        },
         CombatStats {
             attack: 5,
             defense: 2,
         },
         Speed(ACTION_COST), // normal speed: one action per tick
         Energy(0),
+        Inventory::default(),
         Viewshed {
             range: 15,
             visible_tiles: HashSet::new(),
@@ -294,6 +307,7 @@ fn spawn_monsters(mut commands: Commands, map: Res<GameMapResource>, seed: Res<M
                 Speed(template.speed),
                 Energy(0),
                 AiState::Idle,
+                LootTable { drop_chance: 0.25 },
                 Viewshed {
                     range: template.sight_range,
                     visible_tiles: HashSet::new(),

@@ -139,6 +139,63 @@ pub struct Hostile;
 #[derive(Component, Debug)]
 pub struct HellGate;
 
+/// Mana pool for entities that can cast spells.
+/// Spells consume mana; mana regenerates slowly each turn.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Mana {
+    pub current: CoordinateUnit,
+    pub max: CoordinateUnit,
+}
+
+/// A visual particle used for spell animations.
+/// The particle has a limited lifetime (in frames) before despawning.
+#[derive(Component, Debug)]
+pub struct Particle {
+    pub lifetime: u32,
+}
+
+// ─── Inventory & Item system ─────────────────────────────────────
+
+/// Marker component: tags an entity as an item that can be picked up.
+#[derive(Component, Debug)]
+pub struct Item;
+
+/// Links an item entity to the entity carrying it.
+#[derive(Component, Debug)]
+pub struct InBackpack {
+    pub owner: Entity,
+}
+
+/// The kind of item and its associated effect.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub enum ItemKind {
+    /// Restores `amount` health when used.
+    HealingPotion { amount: CoordinateUnit },
+    /// A spell scroll: deals `damage` in a radius when used.
+    Scroll { damage: CoordinateUnit, radius: CoordinateUnit },
+    /// Armor: provides `defense` bonus when equipped.
+    Armor { defense: CoordinateUnit },
+    /// Weapon: provides `attack` bonus when equipped.
+    Weapon { attack: CoordinateUnit },
+}
+
+/// Marker component indicating the item is currently equipped.
+#[derive(Component, Debug)]
+pub struct Equipped;
+
+/// Inventory component: holds item entities belonging to an entity.
+#[derive(Component, Debug, Default)]
+pub struct Inventory {
+    pub items: Vec<Entity>,
+}
+
+/// Loot table component: when this entity dies, it may drop items.
+#[derive(Component, Debug)]
+pub struct LootTable {
+    /// Probability (0.0–1.0) that this entity drops an item on death.
+    pub drop_chance: f64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

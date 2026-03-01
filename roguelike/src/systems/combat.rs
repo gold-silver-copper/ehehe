@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 
-use crate::components::{CombatStats, Health, HellGate, Hostile, Name};
+use crate::components::{CombatStats, Health, HellGate, Hostile, LootTable, Name, Position};
 use crate::events::{AttackIntent, DamageEvent};
-use crate::resources::{CombatLog, GameState, KillCount};
+use crate::noise::value_noise;
+use crate::resources::{CombatLog, GameState, KillCount, MapSeed};
+use crate::systems::inventory::spawn_loot;
 
 /// Resolves attack intents into damage events.
 ///
@@ -52,16 +54,17 @@ pub fn apply_damage_system(
 
 /// Despawns entities whose health has reached zero.
 /// Logs a death message, increments the kill counter for hostile entities,
-/// and removes the entity from the world. If the Hell Gate is destroyed,
-/// transitions to the Victory state.
+/// spawns loot from entities with a LootTable, and removes the entity
+/// from the world. If the Hell Gate is destroyed, transitions to the Victory state.
 pub fn death_system(
     mut commands: Commands,
-    query: Query<(Entity, &Health, Option<&Name>, Option<&Hostile>, Option<&HellGate>)>,
+    query: Query<(Entity, &Health, Option<&Name>, Option<&Hostile>, Option<&HellGate>, Option<&Position>, Option<&LootTable>)>,
     mut combat_log: ResMut<CombatLog>,
     mut kill_count: ResMut<KillCount>,
     mut next_game_state: ResMut<NextState<GameState>>,
+    seed: Res<MapSeed>,
 ) {
-    for (entity, health, name, hostile, hell_gate) in &query {
+    for (entity, health, name, hostile, hell_gate, pos, loot_table) in &query {
         if health.current <= 0 {
             let label = name.map_or("Something", |n| &n.0);
             combat_log.push(format!("{label} has been slain!"));
@@ -72,6 +75,17 @@ pub fn death_system(
                 combat_log.push("The Gate of Hell crumbles! You are victorious!".into());
                 next_game_state.set(GameState::Victory);
             }
+
+            // Loot drop: if the entity has a LootTable, roll for item drop.
+            if let (Some(lt), Some(p)) = (loot_table, pos) {
+                let drop_roll = value_noise(p.x.wrapping_add(kill_count.0 as i32), p.y, seed.0.wrapping_add(55555));
+                if drop_roll < lt.drop_chance {
+                    let item_roll = value_noise(p.y, p.x.wrapping_add(kill_count.0 as i32), seed.0.wrapping_add(77777));
+                    spawn_loot(&mut commands, p.x, p.y, item_roll);
+                    combat_log.push(format!("{label} dropped an item!"));
+                }
+            }
+
             commands.entity(entity).despawn();
         }
     }
