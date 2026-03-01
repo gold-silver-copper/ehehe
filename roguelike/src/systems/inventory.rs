@@ -168,35 +168,35 @@ const LOOT_TABLE: &[LootEntry] = &[
         symbol: "w",
         fg: RatColor::Rgb(180, 120, 60),
         kind: ItemKind::Whiskey { heal: 10 },
-        weight: 0.25,
+        weight: 0.15,
     },
     LootEntry {
         name: "Dynamite Stick",
         symbol: "*",
         fg: RatColor::Rgb(255, 165, 0),
         kind: ItemKind::Grenade { damage: 8, radius: 2 },
-        weight: 0.15,
+        weight: 0.12,
     },
     LootEntry {
         name: "Bowie Knife",
         symbol: "/",
         fg: RatColor::Rgb(192, 192, 210),
         kind: ItemKind::Knife { attack: 4 },
-        weight: 0.20,
+        weight: 0.13,
     },
     LootEntry {
         name: "Tomahawk",
         symbol: "t",
         fg: RatColor::Rgb(160, 120, 80),
         kind: ItemKind::Tomahawk { attack: 5 },
-        weight: 0.20,
+        weight: 0.12,
     },
     LootEntry {
         name: "Cowboy Hat",
         symbol: "^",
         fg: RatColor::Rgb(210, 180, 140),
         kind: ItemKind::Hat { defense: 1 },
-        weight: 0.20,
+        weight: 0.13,
     },
 ];
 
@@ -222,6 +222,48 @@ pub fn spawn_loot(commands: &mut Commands, x: i32, y: i32, roll: f64) {
             return;
         }
     }
+
+    // Gun drops (remaining ~35% probability, requires String allocation)
+    struct GunTemplate {
+        name: &'static str,
+        fg: RatColor,
+        loaded: i32,
+        capacity: i32,
+        caliber: Caliber,
+        attack: i32,
+        weight: f64,
+    }
+    let gun_templates = [
+        GunTemplate { name: "Colt Army", fg: RatColor::Rgb(140, 140, 160), loaded: 6, capacity: 6, caliber: Caliber::Cal44, attack: 6, weight: 0.10 },
+        GunTemplate { name: "Colt Pocket", fg: RatColor::Rgb(160, 150, 140), loaded: 5, capacity: 5, caliber: Caliber::Cal36, attack: 3, weight: 0.10 },
+        GunTemplate { name: "Remington New Model Army", fg: RatColor::Rgb(120, 120, 130), loaded: 6, capacity: 6, caliber: Caliber::Cal44, attack: 7, weight: 0.08 },
+        GunTemplate { name: "Colt Sheriff", fg: RatColor::Rgb(170, 160, 150), loaded: 5, capacity: 5, caliber: Caliber::Cal36, attack: 4, weight: 0.07 },
+    ];
+
+    for gt in &gun_templates {
+        cumulative += gt.weight;
+        if roll < cumulative {
+            commands.spawn((
+                Position { x, y },
+                Item,
+                Name(gt.name.into()),
+                Renderable {
+                    symbol: "P".into(),
+                    fg: gt.fg,
+                    bg: RatColor::Black,
+                },
+                ItemKind::Gun {
+                    loaded: gt.loaded,
+                    capacity: gt.capacity,
+                    caliber: gt.caliber,
+                    attack: gt.attack,
+                    name: gt.name.into(),
+                },
+            ));
+            return;
+        }
+    }
+
     // Fallback: spawn a whiskey bottle.
     commands.spawn((
         Position { x, y },

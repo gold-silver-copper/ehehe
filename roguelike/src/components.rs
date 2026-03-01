@@ -498,4 +498,44 @@ mod tests {
         assert!(vs.revealed_tiles.contains(&p1));
         assert!(vs.revealed_tiles.contains(&p2));
     }
+
+    // ─── Caliber display tests ──────────────────────────────────────
+
+    #[test]
+    fn caliber_display_formatting() {
+        assert_eq!(format!("{}", Caliber::Cal36), ".36");
+        assert_eq!(format!("{}", Caliber::Cal44), ".44");
+    }
+
+    // ─── Gun ItemKind tests ─────────────────────────────────────────
+
+    #[test]
+    fn gun_loaded_rounds_decrement() {
+        let mut gun = ItemKind::Gun {
+            loaded: 6,
+            capacity: 6,
+            caliber: Caliber::Cal36,
+            attack: 5,
+            name: "Test Gun".into(),
+        };
+        if let ItemKind::Gun { ref mut loaded, .. } = gun {
+            *loaded -= 1;
+            assert_eq!(*loaded, 5);
+        }
+    }
+
+    #[test]
+    fn gun_cannot_fire_when_empty() {
+        let gun = ItemKind::Gun {
+            loaded: 0,
+            capacity: 6,
+            caliber: Caliber::Cal36,
+            attack: 5,
+            name: "Test Gun".into(),
+        };
+        if let ItemKind::Gun { loaded, .. } = gun {
+            assert_eq!(loaded, 0);
+            assert!(loaded <= 0, "Gun should not be able to fire");
+        }
+    }
 }

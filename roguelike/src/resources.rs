@@ -466,4 +466,26 @@ mod tests {
         assert_eq!(index.entities_at(&new).len(), 1);
         assert_eq!(index.entities_at(&new)[0], entity);
     }
+
+    // ─── Collectibles default tests ─────────────────────────────────
+
+    #[test]
+    fn collectibles_default_has_starting_supplies() {
+        let c = Collectibles::default();
+        assert_eq!(c.caps, 30);
+        assert_eq!(c.bullets_36, 20);
+        assert_eq!(c.bullets_44, 20);
+        assert_eq!(c.powder, 30);
+        assert_eq!(c.bandages, 5);
+        assert_eq!(c.dollars, 0);
+    }
+
+    // ─── CursorPosition default tests ───────────────────────────────
+
+    #[test]
+    fn cursor_default_at_spawn() {
+        let cursor = CursorPosition::default();
+        assert_eq!(cursor.0.x, SPAWN_X);
+        assert_eq!(cursor.0.y, SPAWN_Y);
+    }
 }
