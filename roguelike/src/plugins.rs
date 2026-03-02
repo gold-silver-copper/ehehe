@@ -100,6 +100,7 @@ impl Plugin for RoguelikePlugin {
             .init_resource::<BloodMap>()
             .init_resource::<SpectatingAfterDeath>()
             .init_resource::<DynamicRng>()
+            .init_resource::<crate::resources::GodMode>()
             // ── States ──
             .init_state::<GameState>()
             .add_sub_state::<TurnState>()
@@ -408,7 +409,7 @@ fn restart_system(
     mut camera: ResMut<CameraPosition>,
     mut cursor: ResMut<CursorPosition>,
     mut collectibles: ResMut<Collectibles>,
-    (mut extra_ticks, mut blood_map, mut spectating, mut dynamic_rng): (ResMut<ExtraWorldTicks>, ResMut<BloodMap>, ResMut<SpectatingAfterDeath>, ResMut<DynamicRng>),
+    (mut extra_ticks, mut blood_map, mut spectating, mut dynamic_rng, mut god_mode): (ResMut<ExtraWorldTicks>, ResMut<BloodMap>, ResMut<SpectatingAfterDeath>, ResMut<DynamicRng>, ResMut<crate::resources::GodMode>),
 ) {
     if !restart.0 {
         return;
@@ -431,6 +432,7 @@ fn restart_system(
     extra_ticks.0 = 0;
     blood_map.stains.clear();
     spectating.0 = false;
+    god_mode.0 = false;
     dynamic_rng.reset();
     *game_map = GameMapResource(GameMap::new(400, 280, seed.0));
 

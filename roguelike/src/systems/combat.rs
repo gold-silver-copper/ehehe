@@ -63,12 +63,20 @@ pub fn combat_system(
 
 /// Applies damage events to entity health pools using `Health::apply_damage`.
 /// Also records the damage source on the target for kill attribution.
+/// When god mode is active, damage to the player is ignored.
 pub fn apply_damage_system(
     mut commands: Commands,
     mut events: MessageReader<DamageEvent>,
     mut health_query: Query<&mut Health>,
+    player_query: Query<Entity, With<Player>>,
+    god_mode: Res<crate::resources::GodMode>,
 ) {
+    let player_entity = player_query.single().ok();
     for event in events.read() {
+        // God mode: skip damage to the player.
+        if god_mode.0 && player_entity == Some(event.target) {
+            continue;
+        }
         if let Ok(mut health) = health_query.get_mut(event.target) {
             health.apply_damage(event.amount);
             if let Some(source) = event.source {
@@ -114,7 +122,7 @@ pub fn death_system(
 
         // If the player died, transition to Dead state (don't despawn so UI can read stats).
         if is_player.is_some() {
-            combat_log.push("You have fallen... Press . to continue watching, Esc to quit, or R to restart.".into());
+            combat_log.push("You have fallen... Press T to continue watching, Q to quit, or R to restart.".into());
             next_game_state.set(GameState::Dead);
             continue; // don't despawn the player
         }

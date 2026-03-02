@@ -396,6 +396,7 @@ pub fn draw_system(
             &turn_counter,
             &kill_count,
             &collectibles,
+            visible_tiles,
         );
 
         // ── Inventory Bar (wide, horizontal) ────────────────────
@@ -477,6 +478,7 @@ fn render_bottom_panel(
     turn_counter: &TurnCounter,
     kill_count: &KillCount,
     collectibles: &Collectibles,
+    visible_tiles: Option<&HashSet<MyPoint>>,
 ) {
     // Split bottom panel into four horizontal columns: stats | log | furniture | visible
     let horiz_chunks = Layout::default()
@@ -498,10 +500,13 @@ fn render_bottom_panel(
     render_stats_column(frame, stats_area, player_hp, player_stamina, player_level, player_exp, collectibles);
 
     // ── Central Log (middle) ────────────────────────────────────
-    // Show all recent messages without visibility filtering to prevent
-    // the bug where logs flash and disappear when the FOV cone moves.
+    // Only show messages the player can witness within their line of sight.
     let log_height = log_area.height.saturating_sub(2) as usize; // subtract border
-    let log_lines: Vec<Line> = combat_log.recent(log_height.max(1))
+    let log_lines: Vec<Line> = if let Some(vt) = visible_tiles {
+        combat_log.recent_visible(log_height.max(1), vt)
+    } else {
+        combat_log.recent(log_height.max(1))
+    }
     .into_iter()
     .map(|s| Line::from(format!(" {s}")).dark_gray())
     .collect();
