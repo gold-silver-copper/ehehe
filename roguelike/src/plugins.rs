@@ -258,7 +258,7 @@ fn do_spawn_player(commands: &mut Commands, seed: u64) {
         Item,
         Name("Colt Pocket".into()),
         Renderable {
-            symbol: "P".into(),
+            symbol: "p".into(),
             fg: RatColor::Rgb(160, 150, 140),
             bg: RatColor::Black,
         },

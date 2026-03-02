@@ -172,6 +172,8 @@ pub fn projectile_system(
 
             // NPC bullet hitting the player: check if the projectile source
             // is NOT the player and it landed on the player's tile.
+            // Always stop the bullet after hitting the player to prevent
+            // any possibility of double damage.
             if let Some((player_entity, player_pos, player_stats, player_name)) = &player_info
                 && proj.source != *player_entity
                 && tile == player_pos.as_grid_vec()
@@ -187,10 +189,8 @@ pub fn projectile_system(
                 combat_log.push(format!("{source_name}'s bullet hits {p_name} for {hit_damage} damage!"));
                 sound_events.add(tile);
                 proj.penetration -= player_stats.defense;
-                if proj.penetration <= 0 {
-                    despawn = true;
-                    break;
-                }
+                despawn = true;
+                break;
             }
 
             // Shrapnel self-damage: if the projectile's source is the player

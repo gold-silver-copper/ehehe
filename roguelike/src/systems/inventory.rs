@@ -270,7 +270,7 @@ pub fn spawn_loot(commands: &mut Commands, x: i32, y: i32, roll: f64) {
                 Item,
                 Name(gt.name.into()),
                 Renderable {
-                    symbol: "P".into(),
+                    symbol: "p".into(),
                     fg: gt.fg,
                     bg: RatColor::Black,
                 },

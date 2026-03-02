@@ -44,11 +44,11 @@ pub struct CommandBinding {
 /// Used by the `?` help overlay to display available commands.
 /// Related keys are grouped (WASD, IJKL) to reduce visual clutter.
 pub const KEYBINDINGS: &[CommandBinding] = &[
-    CommandBinding { key: "WASD / ↑↓←→", name: "Move (2 ticks)", docs: "Move the player one tile. Physical movement costs 2 ticks." },
+    CommandBinding { key: "WASD / ↑↓←→", name: "Move (3 ticks)", docs: "Move the player one tile. Physical movement costs 3 ticks." },
     CommandBinding { key: "IJKL", name: "Cursor (1 tick)", docs: "Move the cursor one tile for aiming. Costs 1 tick." },
     CommandBinding { key: "C", name: "Center cursor (1 tick)", docs: "Snap cursor onto your position. Costs 1 tick." },
     CommandBinding { key: "N", name: "Auto-aim (1 tick)", docs: "Cursor steps toward nearest enemy. Costs 1 tick." },
-    CommandBinding { key: "R", name: "Reload (1 tick)", docs: "Reload gun (1 bullet + 1 cap + 1 powder). Costs 1 tick." },
+    CommandBinding { key: "R", name: "Reload (6 ticks)", docs: "Reload gun (1 bullet + 1 cap + 1 powder). Cap and ball is slow. Costs 6 ticks." },
     CommandBinding { key: "E", name: "Kick (2 ticks)", docs: "Roundhouse kick all adjacent enemies. Costs 2 ticks." },
     CommandBinding { key: ".", name: "Wait (1 tick)", docs: "Skip your turn. Costs 1 tick." },
     CommandBinding { key: "G", name: "Pick up (1 tick)", docs: "Pick up item at your feet. Costs 1 tick." },
@@ -288,21 +288,21 @@ pub fn input_system(
                 }
             }
             // ── Movement keys (only while awaiting input) ───────
-            // Normal movement — costs 2 ticks (physical movement is slower)
+            // Normal movement — costs 3 ticks (physical movement is slower)
             KeyCode::Char('w') | KeyCode::Up if awaiting_input => {
-                extra_world_ticks.0 = 1;
+                extra_world_ticks.0 = 2;
                 emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 0, 1);
             }
             KeyCode::Char('s') | KeyCode::Down if awaiting_input => {
-                extra_world_ticks.0 = 1;
+                extra_world_ticks.0 = 2;
                 emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 0, -1);
             }
             KeyCode::Char('a') | KeyCode::Left if awaiting_input => {
-                extra_world_ticks.0 = 1;
+                extra_world_ticks.0 = 2;
                 emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, -1, 0);
             }
             KeyCode::Char('d') | KeyCode::Right if awaiting_input => {
-                extra_world_ticks.0 = 1;
+                extra_world_ticks.0 = 2;
                 emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 1, 0);
             }
             // ── Wait / skip turn ────────────────────────────────
@@ -310,8 +310,9 @@ pub fn input_system(
                 combat_log.push("You wait...".into());
                 advance_turn(&mut next_turn_state);
             }
-            // ── Reload weapon from inventory magazine ───────────
+            // ── Reload weapon from inventory magazine — costs 6 ticks ──
             KeyCode::Char('r') if awaiting_input => {
+                extra_world_ticks.0 = 5;
                 input_state.reload_pending = true;
                 advance_turn(&mut next_turn_state);
             }
