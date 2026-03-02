@@ -117,6 +117,16 @@ fn a_star_first_step(
     None // No path found within budget.
 }
 
+/// Public wrapper for `a_star_first_step` to allow integration testing.
+/// See [`a_star_first_step`] for full documentation.
+pub fn a_star_first_step_pub(
+    start: GridVec,
+    goal: GridVec,
+    is_walkable: impl Fn(GridVec) -> bool,
+) -> Option<GridVec> {
+    a_star_first_step(start, goal, is_walkable)
+}
+
 // ───────────────────────── AI System ───────────────────────────────
 
 /// AI range for soldier ranged attacks.
