@@ -214,6 +214,7 @@ pub fn ai_system(
     mut attack_intents: MessageWriter<AttackIntent>,
     mut spell_intents: MessageWriter<SpellCastIntent>,
     mut molotov_intents: MessageWriter<MolotovCastIntent>,
+    (dynamic_rng, seed): (Res<crate::resources::DynamicRng>, Res<crate::resources::MapSeed>),
 ) {
     let player_info = player_query.single().ok();
     let player_vec = player_info.map(|(_, p)| p.as_grid_vec());
@@ -544,6 +545,24 @@ pub fn ai_system(
                 if used_throwable {
                     energy.spend_action();
                     continue;
+                }
+
+                // 1/100 chance to throw sand at the target.
+                // XOR salt decorrelates the RNG from other per-entity rolls.
+                let sand_roll = dynamic_rng.roll(seed.0, entity.to_bits() ^ 0x5A4D);
+                if sand_roll < 0.01 && dist >= 2 && dist <= 5 {
+                    let toward = (target_vec - my_pos).king_step();
+                    if !toward.is_zero() {
+                        let sand_center = my_pos + toward * 2;
+                        spell_intents.write(SpellCastIntent {
+                            caster: entity,
+                            radius: 2,
+                            target: sand_center,
+                            grenade_index: usize::MAX, // sentinel: sand throw
+                        });
+                        energy.spend_action();
+                        continue;
+                    }
                 }
 
                 // Check inventory for a loaded gun to fire. Decrements the gun's

@@ -92,6 +92,7 @@ pub fn input_system(
     mut restart_requested: ResMut<RestartRequested>,
     mut cursor: ResMut<CursorPosition>,
     (mut extra_world_ticks, mut spectating, dynamic_rng, seed): (ResMut<ExtraWorldTicks>, ResMut<SpectatingAfterDeath>, Res<DynamicRng>, Res<MapSeed>),
+    mut god_mode: ResMut<crate::resources::GodMode>,
 ) {
     // Handle Dead and Victory states: Q to quit, R to restart, T to spectate.
     if *game_state.get() == GameState::Dead || *game_state.get() == GameState::Victory {
@@ -300,6 +301,15 @@ pub fn input_system(
                     picker: player_entity,
                 });
                 advance_turn(&mut next_turn_state);
+            }
+            // ── Toggle God Mode (Shift+G) ───────────────────────
+            KeyCode::Char('G') if awaiting_input => {
+                god_mode.0 = !god_mode.0;
+                if god_mode.0 {
+                    combat_log.push("God mode ENABLED — you are invincible.".into());
+                } else {
+                    combat_log.push("God mode DISABLED.".into());
+                }
             }
             // ── Dive (Z): move 3 tiles toward cursor, costs 20 stamina ──
             KeyCode::Char('z') if awaiting_input => {

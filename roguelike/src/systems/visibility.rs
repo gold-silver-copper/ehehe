@@ -8,7 +8,7 @@ use crate::resources::{CursorPosition, GameMapResource};
 use crate::typedefs::{CoordinateUnit, MyPoint};
 
 /// Minimum FOV radius when cursor is centered on the player (circle in all directions).
-pub const FOV_MIN_RADIUS: CoordinateUnit = 12;
+pub const FOV_MIN_RADIUS: CoordinateUnit = 36;
 
 /// Maximum FOV range when cursor is far from the player.
 pub const FOV_MAX_RANGE: CoordinateUnit = 120;
@@ -72,6 +72,8 @@ pub fn visibility_system(
         }
 
         // Directional FOV: filter visible tiles to a cone when aiming.
+        // When the cursor is off-center, the player can no longer see behind
+        // themselves — only tiles within the computed cone are kept.
         if let Some(dir) = cone_dir {
             let (cdx, cdy) = (dir.x as f64, dir.y as f64);
             let cursor_len = (cdx * cdx + cdy * cdy).sqrt();
@@ -82,14 +84,7 @@ pub fn visibility_system(
                     return true; // always see own tile
                 }
                 let (dx, dy) = (diff.x as f64, diff.y as f64);
-                let tile_dist = (dx * dx + dy * dy).sqrt();
-
-                // Always see tiles within the minimum radius (close circle).
-                if tile_dist <= FOV_MIN_RADIUS as f64 {
-                    return true;
-                }
-
-                let len = tile_dist;
+                let len = (dx * dx + dy * dy).sqrt();
                 let dot = (dx * cdx + dy * cdy) / (len * cursor_len);
                 dot >= cos_threshold
             });
@@ -107,8 +102,9 @@ pub fn visibility_system(
 /// - `cursor_dir`: None means cursor is centered (full circle at min radius).
 /// - Returns `(effective_range, cos_threshold)`.
 ///
-/// When cursor is close: range = FOV_MIN_RADIUS, cos_threshold ≈ -1 (360°).
-/// When cursor is far: range = FOV_MAX_RANGE, cos_threshold ≈ 0.85 (narrow ~30° cone).
+/// When cursor is close: range = FOV_MIN_RADIUS (36), cos_threshold ≈ -1 (360°).
+/// At cursor distance 2: range ≈ 60, cos_threshold ≈ 0.0 (forward hemisphere).
+/// When cursor is far: range = FOV_MAX_RANGE (120), cos_threshold ≈ 0.85 (narrow ~30° cone).
 pub fn compute_fov_params(cursor_dir: Option<GridVec>) -> (CoordinateUnit, f64) {
     let Some(dir) = cursor_dir else {
         return (FOV_MIN_RADIUS, -1.0); // full circle
@@ -119,15 +115,15 @@ pub fn compute_fov_params(cursor_dir: Option<GridVec>) -> (CoordinateUnit, f64) 
         return (FOV_MIN_RADIUS, -1.0); // full circle
     }
 
-    // Interpolation factor: 0.0 at distance 0, 1.0 at distance 40+
-    let t = (dist / 40.0).min(1.0);
+    // Range grows aggressively: +12 tiles per tile of cursor distance.
+    // At dist=2: range ≈ 60. Caps at FOV_MAX_RANGE (120).
+    let range = (FOV_MIN_RADIUS as f64 + dist * 12.0).min(FOV_MAX_RANGE as f64);
 
-    // Range increases from FOV_MIN_RADIUS to FOV_MAX_RANGE
-    let range = FOV_MIN_RADIUS as f64 + t * (FOV_MAX_RANGE - FOV_MIN_RADIUS) as f64;
-
-    // Cone narrows: cos threshold goes from -1.0 (360°) to 0.85 (~30° cone)
-    // At t=0: cos = -1.0 (see everything), at t=1: cos = 0.85 (narrow)
-    let cos_threshold = -1.0 + t * 1.85; // range: [-1.0, 0.85]
+    // Cone narrows aggressively. Reaches max narrowing at dist ≈ 4.
+    // At dist=2: cos ≈ 0.0 (forward hemisphere, no vision behind).
+    // At dist=4+: cos ≈ 0.85 (narrow ~30° cone).
+    let cone_t = (dist / 4.0).min(1.0);
+    let cos_threshold = -1.0 + cone_t * 1.85;
 
     (range as CoordinateUnit, cos_threshold)
 }

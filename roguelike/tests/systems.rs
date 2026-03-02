@@ -34,6 +34,7 @@ fn test_app() -> App {
     app.init_resource::<BloodMap>();
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
+    app.init_resource::<GodMode>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
     app.insert_resource(MapSeed(42));
@@ -572,6 +573,7 @@ fn test_app_with_spells() -> App {
     app.init_resource::<BloodMap>();
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
+    app.init_resource::<GodMode>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
     app.insert_resource(MapSeed(42));
@@ -1018,6 +1020,7 @@ fn test_app_with_ranged() -> App {
     app.init_resource::<TurnCounter>();
     app.init_resource::<DynamicRng>();
     app.init_resource::<InputState>();
+    app.init_resource::<GodMode>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
     app.insert_resource(MapSeed(42));
@@ -1466,15 +1469,17 @@ fn fov_min_radius_always_visible() {
 
     let viewshed = app.world_mut().query::<&Viewshed>().single(app.world()).unwrap();
 
-    // Within FOV_MIN_RADIUS, tiles should be visible regardless of cone direction
+    // When cursor is off-center (north), the player should NOT see behind
+    // themselves (south). Only tiles in the forward cone are visible.
     let origin = GridVec::new(60, 40);
-    // Very close tiles (distance 2) should always be visible
-    let close_east = origin + GridVec::new(2, 0);
-    let close_south = origin + GridVec::new(0, -2); // opposite of aiming direction but very close
-    assert!(viewshed.visible_tiles.contains(&close_east),
-        "Close tiles should be visible regardless of cone direction");
-    assert!(viewshed.visible_tiles.contains(&close_south),
-        "Close tiles in opposite direction should be visible within min radius");
+    // Close tile in the aiming direction should be visible
+    let close_north = origin + GridVec::new(0, 2);
+    assert!(viewshed.visible_tiles.contains(&close_north),
+        "Close tiles in cone direction should be visible");
+    // Close tile directly opposite (south) should NOT be visible
+    let close_south = origin + GridVec::new(0, -2);
+    assert!(!viewshed.visible_tiles.contains(&close_south),
+        "Close tiles in opposite direction should NOT be visible when aiming away");
 }
 
 #[test]
@@ -1507,19 +1512,24 @@ fn fov_npc_uses_ai_look_dir() {
 
 #[test]
 fn fov_range_increases_with_cursor_distance() {
-    // When cursor is very close: range should be close to FOV_MIN_RADIUS
+    // When cursor is very close: range grows aggressively from FOV_MIN_RADIUS
     let (range_close, _) = visibility::compute_fov_params(Some(GridVec::new(1, 0)));
-    assert!(range_close <= visibility::FOV_MIN_RADIUS + 5,
-        "Very close cursor should give near minimum range, got {}", range_close);
+    assert!(range_close >= visibility::FOV_MIN_RADIUS,
+        "Close cursor should give at least minimum range, got {}", range_close);
 
-    // When cursor is far: range should be much larger
+    // When cursor is far: range should be at or near maximum
     let (range_far, _) = visibility::compute_fov_params(Some(GridVec::new(50, 0)));
     assert!(range_far >= visibility::FOV_MAX_RANGE - 5,
         "Far cursor should give approximately maximum range, got {}", range_far);
 
-    // Far range should be significantly larger than close range
-    assert!(range_far > range_close * 2,
-        "Far range ({}) should be significantly larger than close range ({})", range_far, range_close);
+    // Far range should be larger than close range
+    assert!(range_far > range_close,
+        "Far range ({}) should be larger than close range ({})", range_far, range_close);
+
+    // At distance 2, range should be approximately 60 (aggressive growth)
+    let (range_mid, _) = visibility::compute_fov_params(Some(GridVec::new(2, 0)));
+    assert!(range_mid >= 55 && range_mid <= 65,
+        "At cursor distance 2, range should be ~60, got {}", range_mid);
 }
 
 #[test]

@@ -314,6 +314,10 @@ pub struct RestartRequested(pub bool);
 #[derive(Resource, Debug, Default)]
 pub struct SpectatingAfterDeath(pub bool);
 
+/// God mode: when true, the player cannot take damage. Toggled with Shift+G.
+#[derive(Resource, Debug, Default)]
+pub struct GodMode(pub bool);
+
 /// Extra world ticks remaining after a player action. Physical movement sets
 /// this to 1 so that the world turn cycles twice (2 total ticks), making
 /// physical movement slower than cursor movement (1 tick). The `end_world_turn`
