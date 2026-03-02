@@ -122,8 +122,8 @@ pub fn input_system(
     // without waiting for player input.
     if spectating.0 && awaiting_input {
         advance_turn(&mut next_turn_state);
-        // Consume any pending messages to avoid processing stale input.
-        for _message in messages.read() {}
+        // Drain pending key messages so they aren't processed as game input.
+        let _ = messages.read().count();
         return;
     }
 
