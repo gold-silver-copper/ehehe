@@ -192,17 +192,15 @@ pub fn npc_level_up_system(
     for (killer_entity, reward) in pending_npc_exp.entries.drain(..) {
         if let Ok((mut exp, mut level, mut stats, mut hp, killer_name, killer_pos)) = npc_query.get_mut(killer_entity) {
             exp.current += reward;
-            while exp.current >= exp.next_level {
-                exp.current -= exp.next_level;
-                level.0 += 1;
-                exp.next_level = 20 + (level.0 - 1) * 10;
+            while exp.ready_to_level() {
+                let new_level = exp.advance_level(&mut level);
                 stats.attack += 1;
                 stats.defense += 1;
                 hp.max += 3;
                 hp.current = hp.max;
                 let k_name = killer_name.map_or("???", |n| &n.0);
                 if let Some(p) = killer_pos {
-                    combat_log.push_at(format!("{k_name} levels up to {}!", level.0), p.as_grid_vec());
+                    combat_log.push_at(format!("{k_name} levels up to {new_level}!"), p.as_grid_vec());
                 }
             }
         }
@@ -230,19 +228,16 @@ pub fn level_up_system(
     pending_exp.0 = 0;
 
     // Check for level-up(s).
-    while exp.current >= exp.next_level {
-        exp.current -= exp.next_level;
-        level.0 += 1;
-        // Scale next-level requirement.
-        exp.next_level = 20 + (level.0 - 1) * 10;
+    while exp.ready_to_level() {
+        let new_level = exp.advance_level(&mut level);
         // Stat bonuses per level.
         stats.attack += 1;
         stats.defense += 1;
         hp.max += 5;
         stamina.max += 5;
         combat_log.push(format!(
-            "LEVEL UP! Now level {}! ATK {} DEF {} HP {} STA {}",
-            level.0, stats.attack, stats.defense, hp.max, stamina.max
+            "LEVEL UP! Now level {new_level}! ATK {} DEF {} HP {} STA {}",
+            stats.attack, stats.defense, hp.max, stamina.max
         ));
     }
 }
