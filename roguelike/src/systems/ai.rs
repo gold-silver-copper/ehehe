@@ -272,8 +272,8 @@ pub fn ai_system(
 
     // Collect sand cloud positions for line-of-sight checks.
     let sand_cloud_tiles: HashSet<GridVec> = spell_particles.particles.iter()
-        .filter(|(_, life, delay)| *delay == 0 && *life > 0)
-        .map(|(pos, _, _)| *pos)
+        .filter(|(_, life, delay, _)| *delay == 0 && *life > 0)
+        .map(|(pos, _, _, _)| *pos)
         .collect();
 
     for (entity, pos, mut ai, mut viewshed, mut energy, faction, ammo, mut ai_look_dir, patrol_origin, mut inventory) in &mut ai_query {

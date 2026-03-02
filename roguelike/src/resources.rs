@@ -182,13 +182,14 @@ pub struct CombatLog {
 const MAX_COMBAT_LOG_MESSAGES: usize = 50;
 
 /// Active combat particles for rendering grenade/bullet animations.
-/// Each entry is (position, remaining_lifetime_frames, delay_before_visible).
+/// Each entry is (position, remaining_lifetime_frames, delay_before_visible, is_sand).
 /// Particles with delay > 0 are not yet visible; they count down each tick.
+/// `is_sand` particles are rendered as `*` (asterisk) and disperse slowly over 12 ticks.
 ///
 /// Also stores pre-computed sound indicator positions for the render system.
 #[derive(Resource, Debug, Default)]
 pub struct SpellParticles {
-    pub particles: Vec<(MyPoint, u32, u32)>,
+    pub particles: Vec<(MyPoint, u32, u32, bool)>,
     /// World positions where "!" sound indicators should appear this frame.
     /// Computed by the particle tick system from SoundEvents + player viewshed.
     pub sound_indicators: Vec<MyPoint>,
@@ -218,7 +219,7 @@ impl SpellParticles {
                     }
                     let pos = origin + MyPoint::new(dx, dy);
                     let delay = (r as u32 - 1) * frames_per_ring;
-                    self.particles.push((pos, lifetime, delay));
+                    self.particles.push((pos, lifetime, delay, false));
                 }
             }
         }
@@ -226,7 +227,7 @@ impl SpellParticles {
 
     /// Ticks all particles: counts down delays, then lifetimes. Removes expired ones.
     pub fn tick(&mut self) {
-        self.particles.retain_mut(|(_, life, delay)| {
+        self.particles.retain_mut(|(_, life, delay, _)| {
             if *delay > 0 {
                 *delay -= 1;
                 true // still waiting to appear

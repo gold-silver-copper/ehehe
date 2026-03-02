@@ -224,7 +224,7 @@ pub fn draw_system(
         }
 
         // Overlay combat particles on the render packet.
-        for (particle_pos, lifetime, delay) in &spell_particles.particles {
+        for (particle_pos, lifetime, delay, is_sand) in &spell_particles.particles {
             if *delay > 0 {
                 continue; // not yet visible
             }
@@ -235,14 +235,24 @@ pub fn draw_system(
                     .map(|vt| vt.contains(particle_pos))
                     .unwrap_or(true);
                 if visible {
-                    // Particle symbol and color fade with lifetime.
-                    let intensity = (*lifetime as f32 / PARTICLE_LIFETIME).min(1.0);
-                    let r = (255.0 * intensity) as u8;
-                    let g = (165.0 * intensity) as u8;
-                    let symbol = if *lifetime > 4 { "✦" } else if *lifetime > 2 { "*" } else { "·" };
                     let bg = render_packet[screen.y as usize][screen.x as usize].2;
-                    render_packet[screen.y as usize][screen.x as usize] =
-                        (symbol.into(), RatColor::Rgb(r, g, 0), bg);
+                    if *is_sand {
+                        // Sand particles always display as asterisk, fading in color
+                        let intensity = (*lifetime as f32 / 12.0).min(1.0);
+                        let r = (210.0 * intensity) as u8;
+                        let g = (180.0 * intensity) as u8;
+                        let b = (120.0 * intensity) as u8;
+                        render_packet[screen.y as usize][screen.x as usize] =
+                            ("*".into(), RatColor::Rgb(r, g, b), bg);
+                    } else {
+                        // Explosion/fire particle symbol and color fade with lifetime.
+                        let intensity = (*lifetime as f32 / PARTICLE_LIFETIME).min(1.0);
+                        let r = (255.0 * intensity) as u8;
+                        let g = (165.0 * intensity) as u8;
+                        let symbol = if *lifetime > 4 { "✦" } else if *lifetime > 2 { "*" } else { "·" };
+                        render_packet[screen.y as usize][screen.x as usize] =
+                            (symbol.into(), RatColor::Rgb(r, g, 0), bg);
+                    }
                 }
             }
         }

@@ -337,7 +337,7 @@ pub fn throw_system(
         let mut hit = false;
 
         for (step_idx, &tile) in path.iter().enumerate().skip(1) {
-            spell_particles.particles.push((tile, 3, (step_idx as u32).saturating_sub(1)));
+            spell_particles.particles.push((tile, 3, (step_idx as u32).saturating_sub(1), false));
 
             if !game_map.0.is_passable(&tile) {
                 break;

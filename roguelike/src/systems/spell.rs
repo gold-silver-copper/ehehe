@@ -42,7 +42,7 @@ pub fn spell_system(
             for dx in -intent.radius..=intent.radius {
                 for dy in -intent.radius..=intent.radius {
                     let pos = origin + crate::grid_vec::GridVec::new(dx, dy);
-                    spell_particles.particles.push((pos, 12, 0));
+                    spell_particles.particles.push((pos, 12, 0, true));
                 }
             }
             continue;
