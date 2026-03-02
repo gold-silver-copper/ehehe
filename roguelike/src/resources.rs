@@ -3,8 +3,9 @@ use std::collections::{HashMap, VecDeque};
 use bevy::prelude::*;
 
 use crate::gamemap::GameMap;
+use crate::grid_vec::GridVec;
 use crate::noise::NoiseSeed;
-use crate::typedefs::MyPoint;
+use crate::typedefs::{MyPoint, SPAWN_X, SPAWN_Y};
 
 /// Bevy resource wrapping the game map for ECS access.
 #[derive(Resource)]
@@ -251,6 +252,49 @@ impl CombatLog {
 #[derive(Resource, Debug, Default)]
 pub struct RestartRequested(pub bool);
 
+/// Collectible supplies stored separately from inventory slots.
+/// These don't occupy inventory slots and are tracked by quantity.
+#[derive(Resource, Debug, Clone)]
+pub struct Collectibles {
+    /// Percussion caps (needed for reloading: 1 per round)
+    pub caps: i32,
+    /// .36 caliber lead bullets
+    pub bullets_36: i32,
+    /// .44 caliber lead bullets
+    pub bullets_44: i32,
+    /// Black powder charges (needed for reloading: 1 per round)
+    pub powder: i32,
+    /// Bandages (healing item)
+    pub bandages: i32,
+    /// Dollars (currency)
+    pub dollars: i32,
+}
+
+impl Default for Collectibles {
+    fn default() -> Self {
+        Self {
+            caps: 30,
+            bullets_36: 20,
+            bullets_44: 20,
+            powder: 30,
+            bandages: 5,
+            dollars: 0,
+        }
+    }
+}
+
+/// The cursor position in world coordinates.
+/// Moved with IJKL keys. Used for aiming and directional actions.
+/// Always visible on the map.
+#[derive(Resource, Debug, Clone)]
+pub struct CursorPosition(pub MyPoint);
+
+impl Default for CursorPosition {
+    fn default() -> Self {
+        Self(GridVec::new(SPAWN_X, SPAWN_Y))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,5 +465,27 @@ mod tests {
         assert!(index.entities_at(&old).is_empty());
         assert_eq!(index.entities_at(&new).len(), 1);
         assert_eq!(index.entities_at(&new)[0], entity);
+    }
+
+    // ─── Collectibles default tests ─────────────────────────────────
+
+    #[test]
+    fn collectibles_default_has_starting_supplies() {
+        let c = Collectibles::default();
+        assert_eq!(c.caps, 30);
+        assert_eq!(c.bullets_36, 20);
+        assert_eq!(c.bullets_44, 20);
+        assert_eq!(c.powder, 30);
+        assert_eq!(c.bandages, 5);
+        assert_eq!(c.dollars, 0);
+    }
+
+    // ─── CursorPosition default tests ───────────────────────────────
+
+    #[test]
+    fn cursor_default_at_spawn() {
+        let cursor = CursorPosition::default();
+        assert_eq!(cursor.0.x, SPAWN_X);
+        assert_eq!(cursor.0.y, SPAWN_Y);
     }
 }

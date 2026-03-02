@@ -54,6 +54,8 @@ pub struct RangedAttackIntent {
     /// Trajectory direction (normalized to -1/0/1 per axis).
     pub dx: CoordinateUnit,
     pub dy: CoordinateUnit,
+    /// Optional gun item entity. If present, decrements loaded rounds instead of Ammo.
+    pub gun_item: Option<Entity>,
 }
 
 /// Fired when the player reloads their weapon from a magazine in inventory.
@@ -74,4 +76,23 @@ pub struct AiRangedAttackIntent {
 #[derive(Message, Debug, Clone)]
 pub struct MeleeWideIntent {
     pub attacker: Entity,
+}
+
+/// Fired when the player drops an item from inventory onto the ground.
+#[derive(Message, Debug, Clone)]
+pub struct DropItemIntent {
+    pub user: Entity,
+    pub item_index: usize,
+}
+
+/// Fired when the player throws a knife or tomahawk toward the cursor.
+#[derive(Message, Debug, Clone)]
+pub struct ThrowItemIntent {
+    pub thrower: Entity,
+    pub item_entity: Entity,
+    pub item_index: usize,
+    pub dx: CoordinateUnit,
+    pub dy: CoordinateUnit,
+    pub range: CoordinateUnit,
+    pub damage: CoordinateUnit,
 }
