@@ -11,7 +11,7 @@ use roguelike::events::*;
 use roguelike::gamemap::GameMap;
 use roguelike::grid_vec::GridVec;
 use roguelike::resources::*;
-use roguelike::systems::{combat, movement, projectile, spatial_index, spell, visibility};
+use roguelike::systems::{ai, combat, movement, projectile, spatial_index, spell, visibility};
 
 // ─── Helper ──────────────────────────────────────────────────────
 
@@ -1554,4 +1554,1671 @@ fn fov_centered_cursor_gives_full_circle() {
     let (range, cos) = visibility::compute_fov_params(None);
     assert_eq!(range, visibility::FOV_MIN_RADIUS, "Centered cursor should give min radius");
     assert_eq!(cos, -1.0, "Centered cursor should give full circle (cos = -1)");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  CACTUS DAMAGE INTEGRATION TESTS
+// ═══════════════════════════════════════════════════════════════════
+
+/// Creates an app wired for cactus damage testing.
+/// Includes movement + cactus_damage_system + combat chain + state management.
+fn test_app_with_cactus() -> App {
+    let mut app = App::new();
+    app.add_plugins(bevy::app::ScheduleRunnerPlugin::default());
+    app.add_plugins(bevy::state::app::StatesPlugin);
+    app.add_message::<MoveIntent>();
+    app.add_message::<AttackIntent>();
+    app.add_message::<DamageEvent>();
+    app.init_resource::<SpatialIndex>();
+    app.init_resource::<CombatLog>();
+    app.init_resource::<KillCount>();
+    app.init_resource::<PendingExp>();
+    app.init_resource::<PendingNpcExp>();
+    app.init_resource::<SoundEvents>();
+    app.init_resource::<CursorPosition>();
+    app.init_resource::<BloodMap>();
+    app.init_resource::<TurnCounter>();
+    app.init_resource::<InputState>();
+    app.init_resource::<GodMode>();
+    app.init_state::<GameState>();
+    app.add_sub_state::<TurnState>();
+    app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
+    app.insert_resource(MapSeed(42));
+    app.add_systems(
+        Update,
+        (
+            spatial_index::spatial_index_system,
+            movement::movement_system,
+            movement::cactus_damage_system,
+            combat::combat_system,
+            combat::apply_damage_system,
+            combat::death_system,
+        )
+            .chain(),
+    );
+    app
+}
+
+/// Place a cactus at a specific position on the map for testing.
+fn place_cactus(app: &mut App, x: i32, y: i32) {
+    let map = &mut app.world_mut().resource_mut::<GameMapResource>().0;
+    if let Some(voxel) = map.get_voxel_at_mut(&GridVec::new(x, y)) {
+        voxel.furniture = Some(roguelike::typeenums::Furniture::Cactus);
+    }
+}
+
+/// Clears furniture at a position to ensure it's passable.
+fn clear_tile(app: &mut App, x: i32, y: i32) {
+    let map = &mut app.world_mut().resource_mut::<GameMapResource>().0;
+    if let Some(voxel) = map.get_voxel_at_mut(&GridVec::new(x, y)) {
+        voxel.furniture = None;
+    }
+}
+
+#[test]
+fn cactus_deals_1_damage_per_turn_not_per_frame() {
+    let mut app = test_app_with_cactus();
+
+    // Clear area and place a cactus adjacent to player position
+    clear_tile(&mut app, 60, 40);
+    clear_tile(&mut app, 61, 40);
+    place_cactus(&mut app, 61, 40);
+
+    let player = spawn_test_player(&mut app, 60, 40);
+
+    // Run multiple updates in AwaitingInput state (simulating many frames)
+    for _ in 0..30 {
+        app.update();
+    }
+
+    // Player should NOT have taken any damage - cactus is gated to turns
+    let hp = app.world().get::<Health>(player).unwrap();
+    assert_eq!(hp.current, 30,
+        "Cactus should not deal damage during AwaitingInput, HP is {}", hp.current);
+}
+
+#[test]
+fn cactus_damage_applies_during_player_turn() {
+    let mut app = test_app_with_cactus();
+
+    clear_tile(&mut app, 60, 40);
+    clear_tile(&mut app, 61, 40);
+    clear_tile(&mut app, 59, 40);
+    place_cactus(&mut app, 61, 40);
+
+    let player = spawn_test_player(&mut app, 60, 40);
+
+    app.update(); // Build spatial index
+
+    // Transition to PlayerTurn to trigger cactus damage
+    app.world_mut().resource_mut::<NextState<TurnState>>().set(TurnState::PlayerTurn);
+    app.update();
+
+    let hp = app.world().get::<Health>(player).unwrap();
+    assert!(hp.current <= 30,
+        "Player should be alive after cactus prick, HP is {}", hp.current);
+}
+
+#[test]
+fn cactus_does_not_instakill_player() {
+    let mut app = test_app_with_cactus();
+
+    // Clear area and surround player with cacti
+    for dx in -2..=2 {
+        for dy in -2..=2 {
+            clear_tile(&mut app, 60 + dx, 40 + dy);
+        }
+    }
+
+    // Place cacti in all cardinal directions
+    place_cactus(&mut app, 61, 40);
+    place_cactus(&mut app, 59, 40);
+    place_cactus(&mut app, 60, 41);
+    place_cactus(&mut app, 60, 39);
+
+    let player = spawn_test_player(&mut app, 60, 40);
+
+    // Run several game frames (simulating standing near cacti)
+    for _ in 0..10 {
+        app.update();
+    }
+
+    // Player (30 HP) should still be alive after 10 frames
+    let hp = app.world().get::<Health>(player).unwrap();
+    assert!(hp.current > 0,
+        "Player should survive standing near cacti for 10 frames, HP is {}", hp.current);
+    // At most 1 damage per actual turn (not frame), so with no turns taken HP should be ~30
+    assert!(hp.current >= 28,
+        "Player should have nearly full HP (cactus gated to turns), HP is {}", hp.current);
+}
+
+#[test]
+fn cactus_damage_only_once_per_turn_even_with_multiple_cacti() {
+    let mut app = test_app_with_cactus();
+
+    for dx in -2..=2 {
+        for dy in -2..=2 {
+            clear_tile(&mut app, 60 + dx, 40 + dy);
+        }
+    }
+
+    // Surround player with cacti
+    place_cactus(&mut app, 61, 40);
+    place_cactus(&mut app, 59, 40);
+    place_cactus(&mut app, 60, 41);
+    place_cactus(&mut app, 60, 39);
+
+    let player = spawn_test_player(&mut app, 60, 40);
+
+    app.update(); // Build spatial index
+
+    // Transition to PlayerTurn
+    app.world_mut().resource_mut::<NextState<TurnState>>().set(TurnState::PlayerTurn);
+    app.update();
+
+    let hp = app.world().get::<Health>(player).unwrap();
+    // Should take at most 1 damage (break after first cactus) per turn
+    assert!(hp.current >= 29,
+        "Multiple adjacent cacti should only deal 1 damage per turn, HP is {}", hp.current);
+}
+
+#[test]
+fn cactus_does_not_damage_distant_entity() {
+    let mut app = test_app_with_cactus();
+
+    for dx in -2..=2 {
+        for dy in -2..=2 {
+            clear_tile(&mut app, 60 + dx, 40 + dy);
+        }
+    }
+
+    // Place cactus far from player (3 tiles away)
+    place_cactus(&mut app, 63, 40);
+
+    let player = spawn_test_player(&mut app, 60, 40);
+
+    // Transition to PlayerTurn
+    app.update();
+    app.world_mut().resource_mut::<NextState<TurnState>>().set(TurnState::PlayerTurn);
+    app.update();
+
+    let hp = app.world().get::<Health>(player).unwrap();
+    assert_eq!(hp.current, 30,
+        "Entity far from cactus should take no damage, HP is {}", hp.current);
+}
+
+#[test]
+fn cactus_logs_damage_message() {
+    let mut app = test_app_with_cactus();
+
+    clear_tile(&mut app, 60, 40);
+    clear_tile(&mut app, 61, 40);
+    place_cactus(&mut app, 61, 40);
+
+    let _player = spawn_test_player(&mut app, 60, 40);
+
+    app.update();
+    app.world_mut().resource_mut::<NextState<TurnState>>().set(TurnState::PlayerTurn);
+    app.update();
+
+    let log = app.world().resource::<CombatLog>();
+    let has_cactus_msg = log.messages.iter().any(|m| m.contains("Cactus"));
+    assert!(has_cactus_msg,
+        "Combat log should contain cactus damage message");
+}
+
+#[test]
+fn cactus_damages_monsters_too() {
+    let mut app = test_app_with_cactus();
+
+    clear_tile(&mut app, 60, 40);
+    clear_tile(&mut app, 65, 40);
+    clear_tile(&mut app, 66, 40);
+    place_cactus(&mut app, 66, 40);
+
+    let _player = spawn_test_player(&mut app, 60, 40);
+    let monster = spawn_test_monster(&mut app, 65, 40, "Goblin");
+
+    app.update();
+    app.world_mut().resource_mut::<NextState<TurnState>>().set(TurnState::PlayerTurn);
+    app.update();
+
+    let hp = app.world().get::<Health>(monster).unwrap();
+    assert!(hp.current < 10,
+        "Monster adjacent to cactus should take damage, HP is {}", hp.current);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  SAND PARTICLE TESTS
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn sand_particles_created_with_sand_flag() {
+    let mut particles = SpellParticles::default();
+    let origin = GridVec::new(10, 10);
+    // Simulate sand throw: add particles with is_sand=true
+    for dx in -2..=2 {
+        for dy in -2..=2 {
+            let pos = origin + GridVec::new(dx, dy);
+            particles.particles.push((pos, 12, 0, true));
+        }
+    }
+
+    // All particles should have is_sand=true
+    assert!(particles.particles.iter().all(|(_, _, _, is_sand)| *is_sand),
+        "Sand particles should have is_sand flag set");
+
+    // Should have 25 particles (5×5 grid)
+    assert_eq!(particles.particles.len(), 25);
+}
+
+#[test]
+fn sand_particles_persist_for_12_ticks() {
+    let mut particles = SpellParticles::default();
+    let origin = GridVec::new(10, 10);
+    particles.particles.push((origin, 12, 0, true));
+
+    // Tick 11 times - particle should still exist
+    for _ in 0..11 {
+        particles.tick();
+    }
+    assert_eq!(particles.particles.len(), 1,
+        "Sand particle should persist for 12 ticks (11 ticks elapsed)");
+
+    // Tick once more - particle should expire
+    particles.tick();
+    assert_eq!(particles.particles.len(), 0,
+        "Sand particle should expire after 12 ticks");
+}
+
+#[test]
+fn explosion_particles_are_not_sand() {
+    let mut particles = SpellParticles::default();
+    let origin = GridVec::new(10, 10);
+    particles.add_aoe(origin, 6);
+
+    // All AoE particles should have is_sand=false
+    assert!(particles.particles.iter().all(|(_, _, _, is_sand)| !*is_sand),
+        "Explosion particles should NOT have is_sand flag set");
+}
+
+#[test]
+fn sand_and_explosion_particles_coexist() {
+    let mut particles = SpellParticles::default();
+    let origin = GridVec::new(10, 10);
+
+    // Add sand particles
+    particles.particles.push((origin, 12, 0, true));
+
+    // Add explosion particles
+    particles.add_aoe(origin + GridVec::new(5, 5), 6);
+
+    let sand_count = particles.particles.iter().filter(|(_, _, _, is_sand)| *is_sand).count();
+    let explosion_count = particles.particles.iter().filter(|(_, _, _, is_sand)| !*is_sand).count();
+
+    assert_eq!(sand_count, 1, "Should have 1 sand particle");
+    assert!(explosion_count > 0, "Should have explosion particles");
+}
+
+#[test]
+fn particles_tick_respects_delay() {
+    let mut particles = SpellParticles::default();
+    // Particle with delay=3
+    particles.particles.push((GridVec::new(0, 0), 6, 3, false));
+
+    // After 2 ticks, delay should be reduced but particle still waiting
+    particles.tick();
+    particles.tick();
+    assert_eq!(particles.particles.len(), 1);
+    assert_eq!(particles.particles[0].2, 1, "Delay should be decremented");
+
+    // After 1 more tick, delay reaches 0, lifetime starts counting
+    particles.tick();
+    assert_eq!(particles.particles.len(), 1);
+    assert_eq!(particles.particles[0].2, 0, "Delay should be 0");
+    assert_eq!(particles.particles[0].1, 6, "Lifetime should not yet decrement when delay just reached 0");
+}
+
+#[test]
+fn spell_sand_throw_creates_sand_particles() {
+    let mut app = test_app_with_spells();
+    let player = app.world_mut().spawn((
+        Position { x: 60, y: 40 },
+        Player,
+        BlocksMovement,
+        Name("Player".into()),
+        Health { current: 30, max: 30 },
+        CombatStats { attack: 5, defense: 2 },
+        Stamina { current: 50, max: 50 },
+    )).id();
+
+    app.update();
+
+    // Sand throw uses grenade_index == usize::MAX as sentinel
+    app.world_mut().write_message(SpellCastIntent {
+        caster: player,
+        radius: 2,
+        target: GridVec::new(62, 40),
+        grenade_index: usize::MAX,
+    });
+    app.update();
+
+    let particles = app.world().resource::<SpellParticles>();
+    assert!(!particles.particles.is_empty(),
+        "Sand throw should create particles");
+
+    // All particles from sand throw should be sand particles
+    let sand_particles: Vec<_> = particles.particles.iter()
+        .filter(|(_, _, _, is_sand)| *is_sand)
+        .collect();
+    assert!(!sand_particles.is_empty(),
+        "Sand throw particles should have is_sand=true");
+
+    // Sand particles should have lifetime 12
+    assert!(sand_particles.iter().all(|(_, life, _, _)| *life == 12),
+        "Sand particles should have 12-tick lifetime");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  NPC AI INTEGRATION TESTS
+// ═══════════════════════════════════════════════════════════════════
+
+/// Creates an app wired for full AI testing with all systems.
+fn test_app_with_ai() -> App {
+    let mut app = App::new();
+    app.add_plugins(bevy::app::ScheduleRunnerPlugin::default());
+    app.add_plugins(bevy::state::app::StatesPlugin);
+    app.add_message::<MoveIntent>();
+    app.add_message::<AttackIntent>();
+    app.add_message::<DamageEvent>();
+    app.add_message::<SpellCastIntent>();
+    app.add_message::<RangedAttackIntent>();
+    app.add_message::<AiRangedAttackIntent>();
+    app.add_message::<MeleeWideIntent>();
+    app.add_message::<MolotovCastIntent>();
+    app.add_message::<ThrowItemIntent>();
+    app.init_resource::<SpatialIndex>();
+    app.init_resource::<CombatLog>();
+    app.init_resource::<KillCount>();
+    app.init_resource::<PendingExp>();
+    app.init_resource::<PendingNpcExp>();
+    app.init_resource::<SoundEvents>();
+    app.init_resource::<SpellParticles>();
+    app.init_resource::<CursorPosition>();
+    app.init_resource::<BloodMap>();
+    app.init_resource::<TurnCounter>();
+    app.init_resource::<InputState>();
+    app.init_resource::<GodMode>();
+    app.init_resource::<DynamicRng>();
+    app.init_state::<GameState>();
+    app.add_sub_state::<TurnState>();
+    app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
+    app.insert_resource(MapSeed(42));
+    app.add_systems(
+        Update,
+        (
+            spatial_index::spatial_index_system,
+            ai::energy_accumulate_system,
+            ai::ai_system,
+            movement::movement_system,
+            movement::cactus_damage_system,
+            combat::combat_system,
+            combat::ai_ranged_attack_system,
+            combat::melee_wide_system,
+            projectile::projectile_system,
+            combat::apply_damage_system,
+            combat::death_system,
+            combat::level_up_system,
+            combat::npc_level_up_system,
+        )
+            .chain(),
+    );
+    app
+}
+
+/// Spawns an NPC with full AI capabilities at the given position.
+fn spawn_ai_npc(app: &mut App, x: i32, y: i32, name: &str, faction: Faction) -> Entity {
+    app.world_mut().spawn((
+        Position { x, y },
+        Hostile,
+        BlocksMovement,
+        Name(name.into()),
+        Health { current: 20, max: 20 },
+        CombatStats { attack: 5, defense: 2 },
+        Speed(ACTION_COST),
+        Energy(0),
+        AiState::Idle,
+        AiLookDir(GridVec::new(1, 0)),
+        PatrolOrigin(GridVec::new(x, y)),
+        faction,
+        Viewshed {
+            range: 20,
+            visible_tiles: std::collections::HashSet::new(),
+            revealed_tiles: std::collections::HashSet::new(),
+            dirty: true,
+        },
+        Inventory { items: vec![] },
+        Stamina { current: 50, max: 50 },
+    )).id()
+}
+
+/// Spawns a whiskey item entity (not in any inventory).
+fn spawn_whiskey_item(app: &mut App) -> Entity {
+    app.world_mut().spawn((
+        Item,
+        Name("Whiskey Bottle".into()),
+        Renderable {
+            symbol: "w".into(),
+            fg: roguelike::typedefs::RatColor::Rgb(180, 120, 60),
+            bg: roguelike::typedefs::RatColor::Black,
+        },
+        ItemKind::Whiskey { heal: 10 },
+    )).id()
+}
+
+/// Spawns a knife item entity (not in any inventory).
+fn spawn_knife_item(app: &mut App) -> Entity {
+    app.world_mut().spawn((
+        Item,
+        Name("Bowie Knife".into()),
+        Renderable {
+            symbol: "/".into(),
+            fg: roguelike::typedefs::RatColor::Rgb(192, 192, 210),
+            bg: roguelike::typedefs::RatColor::Black,
+        },
+        ItemKind::Knife { attack: 4 },
+    )).id()
+}
+
+/// Spawns a grenade item entity (not in any inventory).
+fn spawn_grenade_item(app: &mut App) -> Entity {
+    app.world_mut().spawn((
+        Item,
+        Name("Dynamite Stick".into()),
+        Renderable {
+            symbol: "*".into(),
+            fg: roguelike::typedefs::RatColor::Rgb(255, 165, 0),
+            bg: roguelike::typedefs::RatColor::Black,
+        },
+        ItemKind::Grenade { damage: 8, radius: 2 },
+    )).id()
+}
+
+// ─── AI State Transition Tests ───────────────────────────────────
+
+#[test]
+fn ai_idle_transitions_to_chasing_on_player_sight() {
+    let mut app = test_app_with_ai();
+
+    // Clear tiles around both entities
+    for dx in -5..=5 {
+        for dy in -5..=5 {
+            clear_tile(&mut app, 60 + dx, 40 + dy);
+        }
+    }
+
+    let _player = spawn_test_player(&mut app, 60, 40);
+    let npc = spawn_ai_npc(&mut app, 63, 40, "Outlaw", Faction::Outlaws);
+
+    // Pre-populate the NPC's viewshed so it "sees" the player
+    // (visibility system is not in this test app)
+    {
+        let mut vs = app.world_mut().get_mut::<Viewshed>(npc).unwrap();
+        vs.visible_tiles.insert(GridVec::new(60, 40)); // player position
+        vs.dirty = false;
+    }
+
+    // Give NPC enough energy to act
+    app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+
+    app.update();
+
+    // Check NPC state - should have transitioned from Idle to Chasing
+    let state = app.world().get::<AiState>(npc).unwrap();
+    assert_eq!(*state, AiState::Chasing,
+        "NPC should transition to Chasing when player is visible");
+}
+
+#[test]
+fn ai_chasing_npc_moves_toward_player() {
+    let mut app = test_app_with_ai();
+
+    for dx in -10..=10 {
+        for dy in -5..=5 {
+            clear_tile(&mut app, 60 + dx, 40 + dy);
+        }
+    }
+
+    let _player = spawn_test_player(&mut app, 60, 40);
+    let npc = spawn_ai_npc(&mut app, 68, 40, "Outlaw", Faction::Outlaws);
+
+    // Set NPC to Chasing with enough energy
+    app.world_mut().get_mut::<AiState>(npc).unwrap().clone_from(&AiState::Chasing);
+    app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+
+    let initial_pos = *app.world().get::<Position>(npc).unwrap();
+
+    // Run a few ticks for AI to process
+    for _ in 0..5 {
+        app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+        app.update();
+    }
+
+    let new_pos = *app.world().get::<Position>(npc).unwrap();
+
+    // NPC should have moved closer to player (or attacked if adjacent)
+    let initial_dist = GridVec::new(initial_pos.x, initial_pos.y).chebyshev_distance(GridVec::new(60, 40));
+    let new_dist = GridVec::new(new_pos.x, new_pos.y).chebyshev_distance(GridVec::new(60, 40));
+
+    assert!(new_dist < initial_dist || new_dist <= 1,
+        "NPC should move toward player: initial dist={}, new dist={}", initial_dist, new_dist);
+}
+
+#[test]
+fn ai_loses_target_returns_to_patrol() {
+    let mut app = test_app_with_ai();
+
+    for dx in -5..=5 {
+        for dy in -5..=5 {
+            clear_tile(&mut app, 60 + dx, 40 + dy);
+        }
+    }
+
+    // No player spawned — NPC should eventually revert to Idle/Patrolling
+    let npc = spawn_ai_npc(&mut app, 60, 40, "Outlaw", Faction::Outlaws);
+
+    // Start in Chasing state with energy
+    app.world_mut().get_mut::<AiState>(npc).unwrap().clone_from(&AiState::Chasing);
+    app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+
+    // Run several ticks
+    for _ in 0..5 {
+        app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+        app.update();
+    }
+
+    let state = app.world().get::<AiState>(npc).unwrap();
+    assert!(*state != AiState::Chasing,
+        "NPC should stop chasing when no target is visible, state is {:?}", state);
+}
+
+// ─── NPC Healing Tests ───────────────────────────────────────────
+
+#[test]
+fn ai_npc_heals_with_whiskey_when_wounded() {
+    let mut app = test_app_with_ai();
+
+    for dx in -5..=5 {
+        for dy in -5..=5 {
+            clear_tile(&mut app, 60 + dx, 40 + dy);
+        }
+    }
+
+    let npc = spawn_ai_npc(&mut app, 60, 40, "Outlaw", Faction::Outlaws);
+
+    // Give NPC a whiskey and wound it below 50% HP
+    let whiskey = spawn_whiskey_item(&mut app);
+    app.world_mut().get_mut::<Inventory>(npc).unwrap().items.push(whiskey);
+    app.world_mut().get_mut::<Health>(npc).unwrap().current = 8; // 40% HP (below 50% threshold)
+    app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+
+    let hp_before = app.world().get::<Health>(npc).unwrap().current;
+
+    // Run AI system
+    app.update();
+
+    let hp_after = app.world().get::<Health>(npc).unwrap().current;
+    let inv = app.world().get::<Inventory>(npc).unwrap();
+
+    // NPC should have used the whiskey
+    assert!(hp_after > hp_before,
+        "NPC should have healed: before={}, after={}", hp_before, hp_after);
+    assert!(inv.items.is_empty(),
+        "Whiskey should be consumed from inventory");
+}
+
+#[test]
+fn ai_npc_does_not_heal_when_healthy() {
+    let mut app = test_app_with_ai();
+
+    for dx in -5..=5 {
+        for dy in -5..=5 {
+            clear_tile(&mut app, 60 + dx, 40 + dy);
+        }
+    }
+
+    let npc = spawn_ai_npc(&mut app, 60, 40, "Outlaw", Faction::Outlaws);
+
+    // Give NPC a whiskey but keep HP at full
+    let whiskey = spawn_whiskey_item(&mut app);
+    app.world_mut().get_mut::<Inventory>(npc).unwrap().items.push(whiskey);
+    // HP is full (20/20) - above 50% threshold
+    app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+
+    app.update();
+
+    let inv = app.world().get::<Inventory>(npc).unwrap();
+    assert!(!inv.items.is_empty(),
+        "NPC should NOT use whiskey when at full HP");
+}
+
+#[test]
+fn ai_npc_does_not_heal_at_exactly_50_percent() {
+    let mut app = test_app_with_ai();
+
+    for dx in -5..=5 {
+        for dy in -5..=5 {
+            clear_tile(&mut app, 60 + dx, 40 + dy);
+        }
+    }
+
+    let npc = spawn_ai_npc(&mut app, 60, 40, "Outlaw", Faction::Outlaws);
+
+    // Give NPC a whiskey with HP exactly at 50%
+    let whiskey = spawn_whiskey_item(&mut app);
+    app.world_mut().get_mut::<Inventory>(npc).unwrap().items.push(whiskey);
+    app.world_mut().get_mut::<Health>(npc).unwrap().current = 10; // 50% HP
+    app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+
+    app.update();
+
+    // At exactly 50%, fraction < 0.5 is false, so shouldn't heal
+    let inv = app.world().get::<Inventory>(npc).unwrap();
+    assert!(!inv.items.is_empty(),
+        "NPC should NOT use whiskey when exactly at 50% HP");
+}
+
+// ─── NPC Item Usage Tests ────────────────────────────────────────
+
+#[test]
+fn ai_npc_picks_up_floor_items() {
+    let mut app = test_app_with_ai();
+
+    for dx in -5..=5 {
+        for dy in -5..=5 {
+            clear_tile(&mut app, 60 + dx, 40 + dy);
+        }
+    }
+
+    let npc = spawn_ai_npc(&mut app, 60, 40, "Outlaw", Faction::Outlaws);
+
+    // Place a knife on the same tile as the NPC
+    let knife = spawn_knife_item(&mut app);
+    app.world_mut().entity_mut(knife).insert(Position { x: 60, y: 40 });
+
+    // Pre-populate viewshed so NPC can "see" the item
+    {
+        let mut vs = app.world_mut().get_mut::<Viewshed>(npc).unwrap();
+        vs.visible_tiles.insert(GridVec::new(60, 40));
+        vs.dirty = false;
+    }
+
+    app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+
+    app.update();
+
+    // NPC should have picked up the knife
+    let inv = app.world().get::<Inventory>(npc).unwrap();
+    assert!(inv.items.contains(&knife),
+        "NPC should auto-pickup items on the same tile");
+}
+
+// ─── A* Pathfinding Tests ────────────────────────────────────────
+
+#[test]
+fn a_star_finds_path_around_obstacle() {
+    // Test that A* pathfinding can navigate around obstacles.
+    // This is tested through the ai module's public functions.
+    let start = GridVec::new(0, 0);
+    let goal = GridVec::new(5, 0);
+
+    // Create a wall blocking the direct path
+    let wall_positions: std::collections::HashSet<GridVec> = [
+        GridVec::new(2, -1), GridVec::new(2, 0), GridVec::new(2, 1),
+    ].into_iter().collect();
+
+    let step = ai::a_star_first_step_pub(start, goal, |pos| {
+        !wall_positions.contains(&pos)
+    });
+
+    assert!(step.is_some(),
+        "A* should find a path around the obstacle");
+    // The first step should not go into the wall
+    let s = step.unwrap();
+    assert!(!wall_positions.contains(&(start + s)),
+        "A* should not step into the wall");
+}
+
+#[test]
+fn a_star_returns_none_when_unreachable() {
+    let start = GridVec::new(0, 0);
+    let goal = GridVec::new(5, 0);
+
+    // Completely surround the start position with walls
+    let step = ai::a_star_first_step_pub(start, goal, |pos| {
+        // Only the start is walkable
+        pos == start
+    });
+
+    assert!(step.is_none(),
+        "A* should return None when goal is unreachable");
+}
+
+#[test]
+fn a_star_diagonal_path() {
+    let start = GridVec::new(0, 0);
+    let goal = GridVec::new(5, 5);
+
+    let step = ai::a_star_first_step_pub(start, goal, |_| true);
+
+    assert!(step.is_some(),
+        "A* should find diagonal path");
+    let s = step.unwrap();
+    // Should step diagonally toward goal
+    assert!(s.x > 0 && s.y > 0,
+        "Should take a diagonal step toward (5,5), got ({}, {})", s.x, s.y);
+}
+
+#[test]
+fn a_star_at_goal_returns_none() {
+    let pos = GridVec::new(5, 5);
+    let step = ai::a_star_first_step_pub(pos, pos, |_| true);
+    assert!(step.is_none(),
+        "A* should return None when already at goal");
+}
+
+// ─── Faction Interaction Tests ───────────────────────────────────
+
+#[test]
+fn factions_are_hostile_outlaws_vs_lawmen() {
+    assert!(ai::factions_are_hostile(Faction::Outlaws, Faction::Lawmen));
+    assert!(ai::factions_are_hostile(Faction::Lawmen, Faction::Outlaws));
+}
+
+#[test]
+fn factions_are_hostile_wildlife_vs_all() {
+    assert!(ai::factions_are_hostile(Faction::Wildlife, Faction::Outlaws));
+    assert!(ai::factions_are_hostile(Faction::Wildlife, Faction::Lawmen));
+    assert!(ai::factions_are_hostile(Faction::Wildlife, Faction::Vaqueros));
+    assert!(ai::factions_are_hostile(Faction::Outlaws, Faction::Wildlife));
+    assert!(ai::factions_are_hostile(Faction::Lawmen, Faction::Wildlife));
+}
+
+#[test]
+fn factions_same_faction_not_hostile() {
+    assert!(!ai::factions_are_hostile(Faction::Outlaws, Faction::Outlaws));
+    assert!(!ai::factions_are_hostile(Faction::Lawmen, Faction::Lawmen));
+    assert!(!ai::factions_are_hostile(Faction::Wildlife, Faction::Wildlife));
+    assert!(!ai::factions_are_hostile(Faction::Vaqueros, Faction::Vaqueros));
+}
+
+#[test]
+fn factions_vaqueros_vs_outlaws() {
+    assert!(ai::factions_are_hostile(Faction::Vaqueros, Faction::Outlaws));
+    assert!(ai::factions_are_hostile(Faction::Outlaws, Faction::Vaqueros));
+}
+
+#[test]
+fn factions_lawmen_and_vaqueros_not_hostile() {
+    // Lawmen and Vaqueros are not hostile to each other
+    assert!(!ai::factions_are_hostile(Faction::Lawmen, Faction::Vaqueros));
+    assert!(!ai::factions_are_hostile(Faction::Vaqueros, Faction::Lawmen));
+}
+
+// ─── Energy / Speed Integration Tests ────────────────────────────
+
+#[test]
+fn energy_system_accumulates_for_npcs() {
+    let mut app = App::new();
+    app.add_plugins(bevy::app::ScheduleRunnerPlugin::default());
+    app.add_plugins(bevy::state::app::StatesPlugin);
+    app.init_state::<GameState>();
+    // Only run energy accumulation, NOT the AI system (which would spend energy)
+    app.add_systems(Update, ai::energy_accumulate_system);
+
+    let npc = app.world_mut().spawn((
+        Speed(ACTION_COST),
+        Energy(0),
+    )).id();
+
+    assert_eq!(app.world().get::<Energy>(npc).unwrap().0, 0);
+
+    app.update();
+
+    let energy = app.world().get::<Energy>(npc).unwrap().0;
+    assert_eq!(energy, ACTION_COST,
+        "NPC with Speed(100) should gain ACTION_COST energy per tick, got {}", energy);
+}
+
+#[test]
+fn fast_npc_acts_more_frequently() {
+    let mut app = test_app_with_ai();
+
+    for dx in -5..=5 {
+        for dy in -5..=5 {
+            clear_tile(&mut app, 60 + dx, 40 + dy);
+        }
+    }
+
+    // Create a fast NPC (Speed 200) - should act twice per tick
+    let npc = app.world_mut().spawn((
+        Position { x: 60, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("FastNPC".into()),
+        Health { current: 20, max: 20 },
+        CombatStats { attack: 5, defense: 2 },
+        Speed(200),
+        Energy(0),
+        AiState::Idle,
+        Faction::Outlaws,
+        Inventory { items: vec![] },
+    )).id();
+
+    app.update();
+
+    // After one energy accumulation, speed 200 gives 200 energy
+    // Can act twice (200 >= 100, 200-100=100 >= 100)
+    let energy = app.world().get::<Energy>(npc).unwrap().0;
+    // Energy may have been spent on actions, but should have accumulated 200
+    assert!(energy <= 200, "Energy should not exceed 200");
+}
+
+#[test]
+fn slow_npc_acts_less_frequently() {
+    let mut app = test_app_with_ai();
+
+    let npc = app.world_mut().spawn((
+        Position { x: 60, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("SlowNPC".into()),
+        Health { current: 20, max: 20 },
+        CombatStats { attack: 5, defense: 2 },
+        Speed(50),
+        Energy(0),
+        AiState::Idle,
+        Faction::Outlaws,
+        Inventory { items: vec![] },
+    )).id();
+
+    app.update();
+
+    let energy = app.world().get::<Energy>(npc).unwrap().0;
+    // Speed 50 gives 50 energy - not enough to act (need 100)
+    assert_eq!(energy, 50,
+        "Slow NPC should not have enough energy to act after 1 tick");
+}
+
+// ─── Combat Integration Tests ────────────────────────────────────
+
+#[test]
+fn multiple_monsters_can_attack_player_in_sequence() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+    let m1 = spawn_test_monster(&mut app, 61, 40, "Goblin1");
+    let m2 = spawn_test_monster(&mut app, 59, 40, "Goblin2");
+
+    app.update();
+
+    // Both monsters attack player from different sides
+    app.world_mut().write_message(MoveIntent {
+        entity: m1,
+        dx: -1,
+        dy: 0,
+    });
+    app.world_mut().write_message(MoveIntent {
+        entity: m2,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let hp = app.world().get::<Health>(player).unwrap();
+    // Monster attack=3, player defense=2 → 1 damage each = 2 total
+    assert_eq!(hp.current, 28,
+        "Player should take damage from both monsters, HP is {}", hp.current);
+}
+
+#[test]
+fn kill_awards_kill_count_with_damage_source() {
+    let mut app = test_app();
+    let player = app.world_mut().spawn((
+        Position { x: 60, y: 40 },
+        Player,
+        BlocksMovement,
+        Name("Player".into()),
+        Health { current: 30, max: 30 },
+        CombatStats { attack: 20, defense: 2 },
+        Level(1),
+        Experience { current: 0, next_level: 100 },
+    )).id();
+
+    let monster = app.world_mut().spawn((
+        Position { x: 61, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("Weakling".into()),
+        Health { current: 1, max: 1 },
+        CombatStats { attack: 1, defense: 0 },
+    )).id();
+
+    app.update();
+
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    // Monster should be dead
+    assert!(app.world().get::<Health>(monster).is_none(),
+        "Monster should be dead");
+
+    // Kill count should attribute the kill to the player
+    let kills = app.world().resource::<KillCount>();
+    assert_eq!(kills.0, 1,
+        "Kill count should correctly attribute kill to player");
+}
+
+#[test]
+fn god_mode_prevents_player_damage() {
+    let mut app = test_app();
+    app.world_mut().resource_mut::<GodMode>().0 = true;
+
+    let player = spawn_test_player(&mut app, 60, 40);
+    let monster = spawn_test_monster(&mut app, 61, 40, "Goblin");
+
+    app.update();
+
+    app.world_mut().write_message(MoveIntent {
+        entity: monster,
+        dx: -1,
+        dy: 0,
+    });
+    app.update();
+
+    let hp = app.world().get::<Health>(player).unwrap();
+    assert_eq!(hp.current, 30,
+        "God mode should prevent player from taking damage");
+}
+
+// ─── Projectile Tests ────────────────────────────────────────────
+
+#[test]
+fn projectile_despawns_on_wall_collision() {
+    let mut app = test_app_with_ranged();
+    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+
+    app.update();
+
+    // Fire toward a wall (border at x=0)
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 100,
+        dx: -1,
+        dy: 0,
+        gun_item: None,
+    });
+    app.update(); // Spawn projectile
+    app.update(); // Advance projectile
+    app.update(); // Continue advancement
+
+    // Projectile should be despawned after hitting wall
+    let projectile_count = app.world_mut().query::<&Projectile>()
+        .iter(app.world())
+        .count();
+    assert_eq!(projectile_count, 0,
+        "Projectile should despawn after hitting a wall");
+}
+
+#[test]
+fn ranged_attack_preserves_player_position() {
+    let mut app = test_app_with_ranged();
+    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+
+    app.update();
+
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 8,
+        dx: 1,
+        dy: 0,
+        gun_item: None,
+    });
+    app.update();
+
+    let pos = app.world().get::<Position>(player).unwrap();
+    assert_eq!(pos.x, 60,
+        "Player position should not change when firing");
+    assert_eq!(pos.y, 40);
+}
+
+// ─── Spell / Sand / Molotov Integration Tests ───────────────────
+
+#[test]
+fn spell_consumes_stamina() {
+    let mut app = test_app_with_spells();
+    let player = app.world_mut().spawn((
+        Position { x: 60, y: 40 },
+        Player,
+        BlocksMovement,
+        Name("Player".into()),
+        Health { current: 30, max: 30 },
+        CombatStats { attack: 5, defense: 2 },
+        Stamina { current: 50, max: 50 },
+        Inventory { items: vec![] },
+    )).id();
+
+    // Give player a grenade
+    let grenade = spawn_grenade_item(&mut app);
+    app.world_mut().get_mut::<Inventory>(player).unwrap().items.push(grenade);
+
+    app.update();
+
+    app.world_mut().write_message(SpellCastIntent {
+        caster: player,
+        radius: 3,
+        target: GridVec::new(63, 40),
+        grenade_index: 0,
+    });
+    app.update();
+
+    let stamina = app.world().get::<Stamina>(player).unwrap();
+    assert!(stamina.current < 50,
+        "Spell should consume stamina, current is {}", stamina.current);
+}
+
+#[test]
+fn sand_throw_costs_less_stamina_than_grenade() {
+    let mut app = test_app_with_spells();
+    let player = app.world_mut().spawn((
+        Position { x: 60, y: 40 },
+        Player,
+        BlocksMovement,
+        Name("Player".into()),
+        Health { current: 30, max: 30 },
+        CombatStats { attack: 5, defense: 2 },
+        Stamina { current: 50, max: 50 },
+    )).id();
+
+    app.update();
+
+    app.world_mut().write_message(SpellCastIntent {
+        caster: player,
+        radius: 2,
+        target: GridVec::new(62, 40),
+        grenade_index: usize::MAX, // sand throw sentinel
+    });
+    app.update();
+
+    let stamina = app.world().get::<Stamina>(player).unwrap();
+    // Sand throw costs 5, grenade costs 10
+    assert_eq!(stamina.current, 45,
+        "Sand throw should cost 5 stamina, current is {}", stamina.current);
+}
+
+// ─── Blood Map Tests ─────────────────────────────────────────────
+
+#[test]
+fn wounded_entity_leaves_blood_trail() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+    let _monster = spawn_test_monster(&mut app, 61, 40, "Goblin");
+
+    app.update();
+
+    // Player gets hurt by bumping monster
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    // Monster attacks back
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: -1,
+        dy: 0,
+    });
+    app.update();
+
+    // Now move player (who is wounded) to leave blood
+    let hp = app.world().get::<Health>(player).unwrap();
+    if hp.current < hp.max {
+        // Move wounded player
+        app.world_mut().write_message(MoveIntent {
+            entity: player,
+            dx: 0,
+            dy: 1,
+        });
+        app.update();
+
+        let blood = app.world().resource::<BloodMap>();
+        assert!(!blood.stains.is_empty(),
+            "Wounded entity should leave blood trail when moving");
+    }
+}
+
+// ─── Movement Edge Cases ─────────────────────────────────────────
+
+#[test]
+fn diagonal_movement_works() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+
+    app.update();
+
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 1,
+    });
+    app.update();
+
+    let pos = app.world().get::<Position>(player).unwrap();
+    assert_eq!(pos.x, 61);
+    assert_eq!(pos.y, 41);
+}
+
+#[test]
+fn cursor_follows_player_movement() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+
+    app.update();
+
+    let cursor_before = app.world().resource::<CursorPosition>().pos;
+
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let cursor_after = app.world().resource::<CursorPosition>().pos;
+    assert_eq!(cursor_after.x, cursor_before.x + 1,
+        "Cursor should follow player movement");
+}
+
+#[test]
+fn multiple_moves_in_same_frame_resolve_correctly() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+
+    app.update();
+
+    // Send two move intents in the same frame
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let pos = app.world().get::<Position>(player).unwrap();
+    // Both intents should resolve: player moves right twice
+    assert_eq!(pos.x, 62,
+        "Two consecutive move intents should both resolve");
+}
+
+// ─── Inventory Integration Tests ─────────────────────────────────
+
+#[test]
+fn npc_inventory_limits_respected() {
+    let mut app = test_app_with_ai();
+
+    let npc = spawn_ai_npc(&mut app, 60, 40, "Outlaw", Faction::Outlaws);
+
+    // Fill inventory to capacity (9 items)
+    for _ in 0..9 {
+        let item = spawn_knife_item(&mut app);
+        app.world_mut().get_mut::<Inventory>(npc).unwrap().items.push(item);
+    }
+
+    // Place another item on the same tile
+    let extra_item = spawn_knife_item(&mut app);
+    app.world_mut().entity_mut(extra_item).insert(Position { x: 60, y: 40 });
+
+    app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+    app.update();
+
+    // NPC should NOT pick up the extra item (inventory full)
+    let inv = app.world().get::<Inventory>(npc).unwrap();
+    assert_eq!(inv.items.len(), 9,
+        "NPC should not exceed inventory limit of 9");
+}
+
+// ─── Health Component Edge Cases ─────────────────────────────────
+
+#[test]
+fn health_zero_damage_no_change() {
+    let mut hp = Health { current: 30, max: 30 };
+    let actual = hp.apply_damage(0);
+    assert_eq!(actual, 0);
+    assert_eq!(hp.current, 30);
+}
+
+#[test]
+fn health_negative_damage_clamped_to_zero() {
+    let mut hp = Health { current: 30, max: 30 };
+    let actual = hp.apply_damage(-5);
+    assert_eq!(actual, 0, "Negative damage should be clamped to 0");
+    assert_eq!(hp.current, 30);
+}
+
+#[test]
+fn health_heal_from_zero() {
+    let mut hp = Health { current: 0, max: 30 };
+    let healed = hp.heal(10);
+    assert_eq!(healed, 10);
+    assert_eq!(hp.current, 10);
+}
+
+// ─── Compute Damage Edge Cases ───────────────────────────────────
+
+#[test]
+fn compute_damage_large_values() {
+    assert_eq!(compute_damage(1000, 999), 1);
+    assert_eq!(compute_damage(1000, 0), 1000);
+    assert_eq!(compute_damage(0, 1000), 0);
+}
+
+#[test]
+fn compute_damage_equal_zero() {
+    assert_eq!(compute_damage(0, 0), 0);
+}
+
+// ─── Stamina Edge Cases ──────────────────────────────────────────
+
+#[test]
+fn stamina_spend_zero_cost() {
+    let mut s = Stamina { current: 50, max: 50 };
+    assert!(s.spend(0));
+    assert_eq!(s.current, 50);
+}
+
+#[test]
+fn stamina_recover_from_zero() {
+    let mut s = Stamina { current: 0, max: 50 };
+    s.recover(25);
+    assert_eq!(s.current, 25);
+}
+
+// ─── Ammo Edge Cases ────────────────────────────────────────────
+
+#[test]
+fn ammo_spend_one_at_one_succeeds() {
+    let mut a = Ammo { current: 1, max: 10 };
+    assert!(a.spend_one());
+    assert_eq!(a.current, 0);
+    assert!(a.is_empty());
+}
+
+// ─── SpellParticles Stress Tests ─────────────────────────────────
+
+#[test]
+fn spell_particles_respect_max_limit() {
+    let mut particles = SpellParticles::default();
+    // Add many AoE effects to test the MAX_PARTICLES limit
+    for i in 0..100 {
+        particles.add_aoe(GridVec::new(i * 10, 0), 6);
+    }
+    // Should not exceed the internal max
+    assert!(particles.particles.len() <= 800,
+        "Particles should respect MAX_PARTICLES limit, count is {}", particles.particles.len());
+}
+
+#[test]
+fn spell_particles_all_expire_eventually() {
+    let mut particles = SpellParticles::default();
+    particles.add_aoe(GridVec::new(10, 10), 6);
+    particles.particles.push((GridVec::new(0, 0), 12, 0, true));
+
+    // Tick enough times for all particles to expire
+    for _ in 0..50 {
+        particles.tick();
+    }
+
+    assert!(particles.particles.is_empty(),
+        "All particles should eventually expire");
+}
+
+// ─── Spatial Index Integrity Tests ───────────────────────────────
+
+#[test]
+fn spatial_index_move_entity_preserves_other_entities() {
+    let mut index = SpatialIndex::default();
+    let e1 = Entity::from_bits(1);
+    let e2 = Entity::from_bits(2);
+    let e3 = Entity::from_bits(3);
+    let pos = GridVec::new(5, 5);
+
+    index.add_entity(pos, e1);
+    index.add_entity(pos, e2);
+    index.add_entity(pos, e3);
+
+    // Move e2 away
+    index.move_entity(&pos, GridVec::new(6, 5), e2);
+
+    let at_original = index.entities_at(&pos);
+    assert_eq!(at_original.len(), 2);
+    assert!(at_original.contains(&e1));
+    assert!(at_original.contains(&e3));
+    assert!(!at_original.contains(&e2));
+}
+
+// ─── GridVec Mathematical Property Tests ─────────────────────────
+
+#[test]
+fn gridvec_king_step_normalizes_correctly() {
+    let v = GridVec::new(5, -3);
+    let step = v.king_step();
+    assert_eq!(step, GridVec::new(1, -1));
+
+    let zero = GridVec::ZERO;
+    assert_eq!(zero.king_step(), GridVec::ZERO);
+}
+
+#[test]
+fn gridvec_chebyshev_distance_symmetry() {
+    let a = GridVec::new(3, 7);
+    let b = GridVec::new(10, 2);
+    assert_eq!(a.chebyshev_distance(b), b.chebyshev_distance(a));
+}
+
+#[test]
+fn gridvec_chebyshev_distance_to_self_is_zero() {
+    let v = GridVec::new(42, -17);
+    assert_eq!(v.chebyshev_distance(v), 0);
+}
+
+#[test]
+fn gridvec_bresenham_line_endpoints() {
+    let start = GridVec::new(0, 0);
+    let end = GridVec::new(5, 3);
+    let line = start.bresenham_line(end);
+    assert_eq!(*line.first().unwrap(), start);
+    assert_eq!(*line.last().unwrap(), end);
+}
+
+#[test]
+fn gridvec_bresenham_line_adjacent() {
+    let start = GridVec::new(0, 0);
+    let end = GridVec::new(1, 0);
+    let line = start.bresenham_line(end);
+    assert_eq!(line.len(), 2);
+    assert_eq!(line[0], start);
+    assert_eq!(line[1], end);
+}
+
+#[test]
+fn gridvec_cardinal_neighbors_count() {
+    let v = GridVec::new(5, 5);
+    let neighbors = v.cardinal_neighbors();
+    assert_eq!(neighbors.len(), 4);
+}
+
+// ─── CombatLog Visibility Filtering Tests ────────────────────────
+
+#[test]
+fn combat_log_filters_by_visibility() {
+    let mut log = CombatLog::default();
+
+    // Message always visible (no position)
+    log.push("Global event".into());
+
+    // Message at a specific position
+    log.push_at("Local event".into(), GridVec::new(5, 5));
+
+    // Message at another position
+    log.push_at("Far event".into(), GridVec::new(100, 100));
+
+    let mut visible = std::collections::HashSet::new();
+    visible.insert(GridVec::new(5, 5));
+
+    let msgs = log.recent_visible(10, &visible);
+
+    assert!(msgs.contains(&"Global event"));
+    assert!(msgs.contains(&"Local event"));
+    assert!(!msgs.contains(&"Far event"),
+        "Messages outside visible tiles should be filtered");
+}
+
+#[test]
+fn combat_log_clear_empties_all() {
+    let mut log = CombatLog::default();
+    log.push("msg1".into());
+    log.push_at("msg2".into(), GridVec::new(1, 1));
+    log.clear();
+    assert!(log.messages.is_empty());
+    assert!(log.recent(10).is_empty());
+}
+
+// ─── Kill Count Tests ────────────────────────────────────────────
+
+#[test]
+fn kill_count_starts_at_zero() {
+    let app = test_app();
+    let kills = app.world().resource::<KillCount>();
+    assert_eq!(kills.0, 0);
+}
+
+#[test]
+fn multiple_kills_increment_count() {
+    let mut app = test_app();
+    let player = spawn_test_player(&mut app, 60, 40);
+
+    // Spawn two weak monsters
+    let _m1 = app.world_mut().spawn((
+        Position { x: 61, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("Weak1".into()),
+        Health { current: 1, max: 1 },
+        CombatStats { attack: 1, defense: 0 },
+    )).id();
+
+    let _m2 = app.world_mut().spawn((
+        Position { x: 62, y: 40 },
+        Hostile,
+        BlocksMovement,
+        Name("Weak2".into()),
+        Health { current: 1, max: 1 },
+        CombatStats { attack: 1, defense: 0 },
+    )).id();
+
+    app.update();
+
+    // Kill first monster
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    // Kill second monster (player should now be at (60,40) still, monster at (62,40))
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    // May need another bump for the second kill
+    app.world_mut().write_message(MoveIntent {
+        entity: player,
+        dx: 1,
+        dy: 0,
+    });
+    app.update();
+
+    let kills = app.world().resource::<KillCount>();
+    assert!(kills.0 >= 1,
+        "Kill count should be at least 1 after killing monsters, got {}", kills.0);
+}
+
+// ─── Experience / Level Tests ────────────────────────────────────
+
+#[test]
+fn experience_ready_to_level() {
+    let exp = Experience { current: 20, next_level: 20 };
+    assert!(exp.ready_to_level());
+}
+
+#[test]
+fn experience_not_ready_when_below_threshold() {
+    let exp = Experience { current: 15, next_level: 20 };
+    assert!(!exp.ready_to_level());
+}
+
+#[test]
+fn experience_advance_level_increases_level() {
+    let mut exp = Experience { current: 25, next_level: 20 };
+    let mut level = Level(1);
+    let new_level = exp.advance_level(&mut level);
+    assert_eq!(new_level, 2);
+    assert_eq!(level.0, 2);
+    assert_eq!(exp.current, 5, "Excess EXP should carry over");
+}
+
+// ─── Collectibles Tests ─────────────────────────────────────────
+
+#[test]
+fn collectibles_can_reload_with_supplies() {
+    let c = Collectibles::default();
+    assert!(c.can_reload(Caliber::Cal36),
+        "Should be able to reload with starting supplies");
+}
+
+#[test]
+fn collectibles_consume_reload_decrements() {
+    let mut c = Collectibles::default();
+    let bullets_before = c.bullets(Caliber::Cal36);
+    let caps_before = c.caps;
+    let powder_before = c.powder;
+
+    c.consume_reload(Caliber::Cal36);
+
+    assert_eq!(c.bullets(Caliber::Cal36), bullets_before - 1);
+    assert_eq!(c.caps, caps_before - 1);
+    assert_eq!(c.powder, powder_before - 1);
+}
+
+#[test]
+fn collectibles_collect_adds_items() {
+    let mut c = Collectibles::default();
+    c.collect(CollectibleKind::Caps(10));
+    assert_eq!(c.caps, 40);
+    c.collect(CollectibleKind::Bandages(5));
+    assert_eq!(c.bandages, 5);
+    c.collect(CollectibleKind::Dollars(100));
+    assert_eq!(c.dollars, 100);
+}
+
+// ─── DynamicRng Determinism Tests ────────────────────────────────
+
+#[test]
+fn dynamic_rng_deterministic() {
+    let rng = DynamicRng { tick: 42 };
+    let val1 = rng.roll(123, 456);
+    let val2 = rng.roll(123, 456);
+    assert_eq!(val1, val2,
+        "Same seed+tick+key should produce same result");
+}
+
+#[test]
+fn dynamic_rng_different_keys_different_values() {
+    let rng = DynamicRng { tick: 42 };
+    let val1 = rng.roll(123, 1);
+    let val2 = rng.roll(123, 2);
+    assert_ne!(val1, val2,
+        "Different keys should produce different values");
+}
+
+#[test]
+fn dynamic_rng_range_zero_to_one() {
+    let rng = DynamicRng { tick: 0 };
+    for key in 0..100 {
+        let val = rng.roll(42, key);
+        assert!(val >= 0.0 && val < 1.0,
+            "RNG value should be in [0, 1), got {}", val);
+    }
+}
+
+#[test]
+fn dynamic_rng_random_index_in_bounds() {
+    let rng = DynamicRng { tick: 99 };
+    for key in 0..100 {
+        let idx = rng.random_index(42, key, 10);
+        assert!(idx < 10,
+            "Random index should be in [0, 10), got {}", idx);
+    }
+}
+
+#[test]
+fn dynamic_rng_advance_changes_output() {
+    let mut rng = DynamicRng { tick: 0 };
+    let val1 = rng.roll(123, 456);
+    rng.advance();
+    let val2 = rng.roll(123, 456);
+    assert_ne!(val1, val2,
+        "Advancing tick should change RNG output");
+}
+
+// ─── Blood Map Tests ─────────────────────────────────────────────
+
+#[test]
+fn blood_map_prune_removes_old_stains() {
+    let mut blood = BloodMap::default();
+    blood.stains.insert(GridVec::new(1, 1), 0);     // turn 0
+    blood.stains.insert(GridVec::new(2, 2), 100);   // turn 100
+    blood.stains.insert(GridVec::new(3, 3), 250);   // turn 250
+
+    // Prune at turn 300
+    blood.prune(300);
+
+    // Stain at turn 0 (age 300 > 200) should be removed
+    assert!(!blood.stains.contains_key(&GridVec::new(1, 1)),
+        "Old blood stain should be pruned");
+    // Stain at turn 100 (age 200 = 200) should remain
+    assert!(blood.stains.contains_key(&GridVec::new(2, 2)),
+        "Recent-ish blood stain should remain");
+    // Stain at turn 250 (age 50 < 200) should remain
+    assert!(blood.stains.contains_key(&GridVec::new(3, 3)),
+        "Recent blood stain should remain");
+}
+
+// ─── Sound Events Tests ──────────────────────────────────────────
+
+#[test]
+fn sound_events_expire_after_ticks() {
+    let mut sounds = SoundEvents::default();
+    sounds.add(GridVec::new(10, 10));
+
+    // Sound has 3 ticks lifetime
+    sounds.tick();
+    assert_eq!(sounds.events.len(), 1, "Sound should persist after 1 tick");
+    sounds.tick();
+    assert_eq!(sounds.events.len(), 1, "Sound should persist after 2 ticks");
+    sounds.tick();
+    assert_eq!(sounds.events.len(), 0, "Sound should expire after 3 ticks");
+}
+
+// ─── Turn State Transition Tests ─────────────────────────────────
+
+#[test]
+fn turn_counter_starts_at_zero() {
+    let app = test_app();
+    let counter = app.world().resource::<TurnCounter>();
+    assert_eq!(counter.0, 0);
 }

@@ -38,8 +38,8 @@ pub fn visibility_system(
 
     // Collect sand cloud positions (particles with lifetime > 0 and delay == 0).
     let sand_cloud_tiles: HashSet<MyPoint> = spell_particles.particles.iter()
-        .filter(|(_, life, delay)| *delay == 0 && *life > 0)
-        .map(|(pos, _, _)| *pos)
+        .filter(|(_, life, delay, _)| *delay == 0 && *life > 0)
+        .map(|(pos, _, _, _)| *pos)
         .collect();
 
     for (entity, pos, mut viewshed, ai_look_dir, faction) in &mut query {

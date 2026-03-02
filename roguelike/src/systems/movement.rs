@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::components::{BlocksMovement, Health, Hostile, Player, Position, Stamina, Viewshed};
 use crate::events::{AttackIntent, MoveIntent};
 use crate::grid_vec::GridVec;
-use crate::resources::{BloodMap, CombatLog, CursorPosition, GameMapResource, InputState, SpatialIndex, TurnCounter};
+use crate::resources::{BloodMap, CombatLog, CursorPosition, GameMapResource, InputState, SpatialIndex, TurnCounter, TurnState};
 use crate::typeenums::Furniture;
 
 /// Processes `MoveIntent` events: checks the target tile on the `GameMap` for
@@ -121,11 +121,25 @@ const CACTUS_DAMAGE: i32 = 1;
 
 /// Applies cactus contact damage: any entity standing on a tile adjacent to a
 /// cactus takes `CACTUS_DAMAGE` each turn. Runs after movement.
+///
+/// **Turn-gated**: only applies damage during `PlayerTurn` or `WorldTurn`,
+/// not during `AwaitingInput` (which runs every frame at 30 FPS). Without
+/// this gate the system would deal 30 damage/second, instantly killing
+/// any entity near a cactus.
 pub fn cactus_damage_system(
     game_map: Res<GameMapResource>,
     mut health_query: Query<(&Position, &mut Health)>,
     mut combat_log: ResMut<CombatLog>,
+    turn_state: Option<Res<State<TurnState>>>,
 ) {
+    // Only apply cactus damage during actual turns, not every frame.
+    let is_active_turn = turn_state.as_ref().is_some_and(|ts| {
+        matches!(ts.get(), TurnState::PlayerTurn | TurnState::WorldTurn)
+    });
+    if !is_active_turn {
+        return;
+    }
+
     for (pos, mut hp) in &mut health_query {
         let p = pos.as_grid_vec();
         // Check if standing adjacent to (or on) a cactus
