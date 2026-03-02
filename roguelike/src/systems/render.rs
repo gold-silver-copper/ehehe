@@ -282,7 +282,7 @@ pub fn draw_system(
                 if visible {
                     let bg = render_packet[screen.y as usize][screen.x as usize].2;
                     // Fast blink: alternate between bright and dim every 3 frames
-                    let blink_bright = (cursor.blink_frame() / 3) % 2 == 0;
+                    let blink_bright = (cursor.blink_frame() / 3).is_multiple_of(2);
                     let fg = if blink_bright {
                         proj_render.fg
                     } else {
@@ -369,14 +369,13 @@ pub fn draw_system(
             let mut items = Vec::new();
             if let Some(vt) = visible_tiles {
                 for tile in vt {
-                    if let Some(voxel) = game_map.0.get_voxel_at(tile) {
-                        if let Some(ref furn) = voxel.furniture {
+                    if let Some(voxel) = game_map.0.get_voxel_at(tile)
+                        && let Some(ref furn) = voxel.furniture {
                             let name = format!("{furn}");
                             if seen.insert(name.clone()) {
                                 items.push((furn.symbol(), furn.fg_color(), name));
                             }
                         }
-                    }
                 }
             }
             items

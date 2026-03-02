@@ -150,8 +150,8 @@ pub fn death_system(
         let is_wildlife = faction.is_some_and(|f| matches!(f, Faction::Wildlife));
 
         // Drop entire NPC inventory on the ground (animals drop nothing).
-        if !is_wildlife {
-            if let (Some(inv), Some(p)) = (inventory, pos) {
+        if !is_wildlife
+            && let (Some(inv), Some(p)) = (inventory, pos) {
                 for &item_entity in &inv.items {
                     commands.entity(item_entity).insert(Position { x: p.x, y: p.y });
                 }
@@ -159,11 +159,10 @@ pub fn death_system(
                     combat_log.push_at(format!("{label} dropped their gear!"), p.as_grid_vec());
                 }
             }
-        }
 
         // Loot drop: non-wildlife entities with a LootTable may also drop collectible supplies.
-        if !is_wildlife {
-            if let (Some(_lt), Some(p)) = (loot_table, pos) {
+        if !is_wildlife
+            && let (Some(_lt), Some(p)) = (loot_table, pos) {
                 // Drop collectible supplies (caps + random ammo).
                 let coll_roll = value_noise(p.x.wrapping_add(kill_count.0 as i32 + 1), p.y, seed.0.wrapping_add(33333));
                 if coll_roll < 0.5 {
@@ -188,7 +187,6 @@ pub fn death_system(
                     ));
                 }
             }
-        }
 
         commands.entity(entity).despawn();
     }

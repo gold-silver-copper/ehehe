@@ -278,7 +278,7 @@ impl CombatLog {
         let visible_msgs: Vec<&str> = self.messages
             .iter()
             .zip(self.positions.iter())
-            .filter(|(_, pos)| pos.map_or(true, |p| visible.contains(&p)))
+            .filter(|(_, pos)| pos.is_none_or(|p| visible.contains(&p)))
             .map(|(msg, _)| msg.as_str())
             .collect();
         let start = visible_msgs.len().saturating_sub(n);
