@@ -11,7 +11,7 @@ use crate::components::{Experience, Health, Hostile, Inventory, ItemKind, Level,
 use crate::graphic_trait::GraphicElement;
 use crate::grid_vec::GridVec;
 use crate::resources::{
-    CameraPosition, Collectibles, CombatLog, CursorPosition, GameMapResource, GameState, InputMode,
+    BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, GameMapResource, GameState, InputMode,
     InputState, KillCount, SoundEvents, SpellParticles, TurnCounter, SOUND_RANGE,
 };
 use crate::systems::input::KEYBINDINGS;
@@ -77,7 +77,7 @@ pub fn draw_system(
     state: Res<State<GameState>>,
     combat_log: Res<CombatLog>,
     turn_counter: Res<TurnCounter>,
-    kill_count: Res<KillCount>,
+    (kill_count, blood_map): (Res<KillCount>, Res<BloodMap>),
     spell_particles: Res<SpellParticles>,
     input_state: Res<InputState>,
     cursor: Res<CursorPosition>,
@@ -158,6 +158,35 @@ pub fn draw_system(
                                 b.saturating_sub(10),
                             );
                         }
+                }
+            }
+        }
+
+        // Overlay blood stains on the render packet (after map, before entities).
+        {
+            let current_turn = turn_counter.0;
+            for (&world_pos, &blood_turn) in &blood_map.stains {
+                let in_view = visible_tiles
+                    .map(|vt| vt.contains(&world_pos))
+                    .unwrap_or(false);
+                if !in_view {
+                    continue;
+                }
+                let screen = world_pos - bottom_left;
+                if screen.x >= 0
+                    && screen.x < render_width as CoordinateUnit
+                    && screen.y >= 0
+                    && screen.y < render_height as CoordinateUnit
+                {
+                    let age = current_turn.saturating_sub(blood_turn);
+                    // Lerp from bright red (200,0,0) to dark red (80,20,10) over 50 turns
+                    let t = (age as f32 / 50.0).min(1.0);
+                    let r = (200.0 - 120.0 * t) as u8;
+                    let g = (20.0 * t) as u8;
+                    let b = (10.0 * t) as u8;
+                    let bg = render_packet[screen.y as usize][screen.x as usize].2;
+                    render_packet[screen.y as usize][screen.x as usize] =
+                        (".".into(), RatColor::Rgb(r, g, b), bg);
                 }
             }
         }

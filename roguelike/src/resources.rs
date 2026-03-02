@@ -283,6 +283,24 @@ impl CombatLog {
     }
 }
 
+/// Tracks blood splatters left by wounded entities when they move.
+/// Maps world positions to the turn number when blood was placed,
+/// allowing the renderer to darken blood over time.
+#[derive(Resource, Debug, Default)]
+pub struct BloodMap {
+    pub stains: HashMap<GridVec, u32>,
+}
+
+/// Blood stains older than this many turns are removed to prevent unbounded growth.
+const BLOOD_MAX_AGE: u32 = 200;
+
+impl BloodMap {
+    /// Removes blood stains older than `BLOOD_MAX_AGE` turns.
+    pub fn prune(&mut self, current_turn: u32) {
+        self.stains.retain(|_, &mut turn| current_turn.saturating_sub(turn) <= BLOOD_MAX_AGE);
+    }
+}
+
 /// Marker resource indicating a restart has been requested.
 #[derive(Resource, Debug, Default)]
 pub struct RestartRequested(pub bool);
