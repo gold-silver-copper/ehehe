@@ -185,13 +185,16 @@ fn rotate_look_dir(
 
 /// Checks line-of-sight between two points using Bresenham, ignoring
 /// the directional FOV cone.  Returns `true` when no vision-blocking
-/// furniture exists on the path (the endpoints are excluded from the
+/// furniture or sand cloud exists on the path (the endpoints are excluded from the
 /// obstruction check so the attacker can fire from / into a doorway).
-fn has_clear_line_of_sight(origin: GridVec, target: GridVec, game_map: &GameMapResource) -> bool {
+fn has_clear_line_of_sight(origin: GridVec, target: GridVec, game_map: &GameMapResource, sand_clouds: &HashSet<GridVec>) -> bool {
     let path = origin.bresenham_line(target);
     for &tile in &path[1..] {
         if tile == target {
             return true;
+        }
+        if sand_clouds.contains(&tile) {
+            return false;
         }
         match game_map.0.get_voxel_at(&tile) {
             Some(v) => {
@@ -262,10 +265,16 @@ pub fn ai_system(
     mut attack_intents: MessageWriter<AttackIntent>,
     mut spell_intents: MessageWriter<SpellCastIntent>,
     mut molotov_intents: MessageWriter<MolotovCastIntent>,
-    (dynamic_rng, seed): (Res<crate::resources::DynamicRng>, Res<crate::resources::MapSeed>),
+    (dynamic_rng, seed, spell_particles): (Res<crate::resources::DynamicRng>, Res<crate::resources::MapSeed>, Res<crate::resources::SpellParticles>),
 ) {
     let player_info = player_query.single().ok();
     let player_vec = player_info.map(|(_, p)| p.as_grid_vec());
+
+    // Collect sand cloud positions for line-of-sight checks.
+    let sand_cloud_tiles: HashSet<GridVec> = spell_particles.particles.iter()
+        .filter(|(_, life, delay)| *delay == 0 && *life > 0)
+        .map(|(pos, _, _)| *pos)
+        .collect();
 
     for (entity, pos, mut ai, mut viewshed, mut energy, faction, ammo, mut ai_look_dir, patrol_origin, mut inventory) in &mut ai_query {
         // Only act if enough energy has accumulated.
@@ -563,7 +572,7 @@ pub fn ai_system(
                 // If all guns are empty, attempt to reload one before attacking.
                 let mut used_gun = false;
                 if dist > 1 && dist <= AI_RANGED_ATTACK_RANGE
-                    && has_clear_line_of_sight(my_pos, target_vec, &game_map)
+                    && has_clear_line_of_sight(my_pos, target_vec, &game_map, &sand_cloud_tiles)
                 {
                     if let Some(ref mut inv) = inventory {
                         let gun_ent = inv.items.iter().copied().find(|&ent| {

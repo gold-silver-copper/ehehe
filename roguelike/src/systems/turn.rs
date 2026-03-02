@@ -38,8 +38,8 @@ pub fn end_world_turn(
     mut player_query: Query<(&mut Stamina, &mut Health), With<Player>>,
     mut extra_ticks: ResMut<ExtraWorldTicks>,
     mut sound_events: ResMut<SoundEvents>,
-    mut spectating: ResMut<SpectatingAfterDeath>,
-    mut next_game_state: ResMut<NextState<GameState>>,
+    spectating: ResMut<SpectatingAfterDeath>,
+    _next_game_state: ResMut<NextState<GameState>>,
     mut dynamic_rng: ResMut<DynamicRng>,
 ) {
     turn_counter.0 += 1;
@@ -56,11 +56,11 @@ pub fn end_world_turn(
         }
     }
 
-    // If spectating after death, transition back to Dead state after one world turn.
+    // If spectating after death, stay in Playing and go to AwaitingInput
+    // so the input system can auto-advance the next turn.
     if spectating.0 {
-        spectating.0 = false;
         extra_ticks.0 = 0;
-        next_game_state.set(GameState::Dead);
+        next_state.set(TurnState::AwaitingInput);
         return;
     }
 

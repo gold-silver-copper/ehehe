@@ -130,11 +130,23 @@ pub fn input_system(
         .is_some_and(|s| *s.get() == TurnState::AwaitingInput);
 
     // When spectating after death, automatically advance to WorldTurn
-    // without waiting for player input.
+    // without waiting for player input. Allow Q/R to quit/restart.
     if spectating.0 && awaiting_input {
+        for message in messages.read() {
+            match message.code {
+                KeyCode::Char('q') => {
+                    intents.exit.write_default();
+                    return;
+                }
+                KeyCode::Char('r') => {
+                    restart_requested.0 = true;
+                    spectating.0 = false;
+                    return;
+                }
+                _ => {}
+            }
+        }
         advance_turn(&mut next_turn_state);
-        // Drain pending key messages so they aren't processed as game input.
-        let _ = messages.read().count();
         return;
     }
 

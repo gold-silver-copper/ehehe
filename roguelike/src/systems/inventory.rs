@@ -145,8 +145,8 @@ pub fn use_item_system(
 }
 
 /// Reload system: finds the first gun in inventory that is not fully loaded
-/// and reloads one round using collectibles (1 matching bullet + 1 cap + 1 powder).
-/// If all guns are full or no guns exist, reload fails.
+/// and can be reloaded with available collectibles, then reloads one round.
+/// If the first gun's caliber is unavailable, tries other guns before failing.
 pub fn reload_system(
     player_query: Query<&Inventory, With<Player>>,
     mut item_kind_query: Query<(&mut ItemKind, Option<&Name>)>,
@@ -163,49 +163,54 @@ pub fn reload_system(
         return;
     };
 
-    // Find the first gun in inventory that is not fully loaded.
-    let gun_entity = inv.items.iter().find(|&&ent| {
+    // Collect all guns that are not fully loaded.
+    let gun_entities: Vec<Entity> = inv.items.iter().copied().filter(|&ent| {
         item_kind_query
             .get(ent)
             .ok()
             .is_some_and(|(k, _)| {
                 matches!(k, ItemKind::Gun { loaded, capacity, .. } if *loaded < *capacity)
             })
-    }).copied();
+    }).collect();
 
-    let Some(gun_ent) = gun_entity else {
+    if gun_entities.is_empty() {
         combat_log.push("No guns need reloading.".into());
-        return;
-    };
-
-    // Read the gun's caliber and name before mutating.
-    let (caliber, gun_name) = {
-        let Ok((ref kind, _)) = item_kind_query.get(gun_ent) else {
-            return;
-        };
-        if let ItemKind::Gun { caliber, name, .. } = kind {
-            (*caliber, name.clone())
-        } else {
-            return;
-        }
-    };
-
-    // Check if collectibles are available for reloading.
-    if !collectibles.can_reload(caliber) {
-        combat_log.push(format!(
-            "Need: 1 {caliber} bullet, 1 cap, 1 powder to reload {gun_name}"
-        ));
         return;
     }
 
-    // Consume collectibles and increment loaded count.
-    collectibles.consume_reload(caliber);
-    if let Ok((mut kind_mut, _)) = item_kind_query.get_mut(gun_ent)
-        && let ItemKind::Gun { ref mut loaded, capacity, .. } = *kind_mut {
-            *loaded += 1;
+    // Try each gun in order until we find one we can reload.
+    for gun_ent in &gun_entities {
+        let (caliber, gun_name) = {
+            let Ok((ref kind, _)) = item_kind_query.get(*gun_ent) else {
+                continue;
+            };
+            if let ItemKind::Gun { caliber, name, .. } = kind {
+                (*caliber, name.clone())
+            } else {
+                continue;
+            }
+        };
+
+        if collectibles.can_reload(caliber) {
+            collectibles.consume_reload(caliber);
+            if let Ok((mut kind_mut, _)) = item_kind_query.get_mut(*gun_ent)
+                && let ItemKind::Gun { ref mut loaded, capacity, .. } = *kind_mut {
+                    *loaded += 1;
+                    combat_log.push(format!(
+                        "Loaded 1 round into {gun_name} ({}/{capacity})",
+                        *loaded
+                    ));
+                }
+            return;
+        }
+    }
+
+    // No gun could be reloaded — report the first gun's requirements.
+    let first_gun = gun_entities[0];
+    if let Ok((ref kind, _)) = item_kind_query.get(first_gun)
+        && let ItemKind::Gun { caliber, name, .. } = kind {
             combat_log.push(format!(
-                "Loaded 1 round into {gun_name} ({}/{capacity})",
-                *loaded
+                "Need: 1 {caliber} bullet, 1 cap, 1 powder to reload {name}"
             ));
         }
 }

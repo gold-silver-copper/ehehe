@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use bevy::prelude::*;
 
-use crate::components::{AiLookDir, Player, Position, Viewshed};
+use crate::components::{AiLookDir, Faction, Player, Position, Viewshed};
 use crate::grid_vec::GridVec;
 use crate::resources::{CursorPosition, GameMapResource};
 use crate::typedefs::{CoordinateUnit, MyPoint};
@@ -29,13 +29,20 @@ pub const FOV_MAX_RANGE: CoordinateUnit = 120;
 /// Reference: Albert Ford, "Symmetric Shadowcasting" (2017).
 pub fn visibility_system(
     game_map: Res<GameMapResource>,
-    mut query: Query<(Entity, &Position, &mut Viewshed, Option<&AiLookDir>)>,
+    mut query: Query<(Entity, &Position, &mut Viewshed, Option<&AiLookDir>, Option<&Faction>)>,
     player_query: Query<Entity, With<Player>>,
     cursor: Res<CursorPosition>,
+    spell_particles: Res<crate::resources::SpellParticles>,
 ) {
     let player_entity = player_query.single().ok();
 
-    for (entity, pos, mut viewshed, ai_look_dir) in &mut query {
+    // Collect sand cloud positions (particles with lifetime > 0 and delay == 0).
+    let sand_cloud_tiles: HashSet<MyPoint> = spell_particles.particles.iter()
+        .filter(|(_, life, delay)| *delay == 0 && *life > 0)
+        .map(|(pos, _, _)| *pos)
+        .collect();
+
+    for (entity, pos, mut viewshed, ai_look_dir, faction) in &mut query {
         if !viewshed.dirty {
             continue;
         }
@@ -43,16 +50,43 @@ pub fn visibility_system(
         viewshed.visible_tiles.clear();
         let origin = pos.as_grid_vec();
 
+        let is_player = player_entity == Some(entity);
+        let is_wildlife = faction.is_some_and(|f| matches!(f, Faction::Wildlife));
+        let is_npc = !is_player && ai_look_dir.is_some();
+
         // Determine the aiming direction.
-        let cone_dir = if player_entity == Some(entity) {
+        let cone_dir = if is_player {
             let d = cursor.pos - origin;
             if d.is_zero() { None } else { Some(d) }
         } else {
+            // NPCs always use their look direction (never circle FOV).
             ai_look_dir.map(|look| look.0).filter(|d| !d.is_zero())
         };
 
-        // Compute dynamic FOV range and cone width based on cursor distance.
-        let (effective_range, cos_threshold) = compute_fov_params(cone_dir);
+        // Compute dynamic FOV range and cone width.
+        let (effective_range, cos_threshold) = if is_wildlife {
+            // Animals: very small FOV — short range, narrow cone.
+            let range = viewshed.range.min(8);
+            let cos_t = if cone_dir.is_some() { 0.6 } else { -1.0 };
+            (range, cos_t)
+        } else if is_npc {
+            // Human NPCs: always directional, narrower than player.
+            // They never get circle FOV — always looking in their direction.
+            if let Some(dir) = cone_dir {
+                let dist = ((dir.x as f64).powi(2) + (dir.y as f64).powi(2)).sqrt();
+                let range = (viewshed.range as f64 + dist * 8.0).min(FOV_MAX_RANGE as f64);
+                // Narrower than player: higher cos_threshold baseline.
+                let cone_t = (dist / 3.0).min(1.0);
+                let cos_t = -0.3 + cone_t * 1.15;
+                (range as CoordinateUnit, cos_t)
+            } else {
+                // NPC has no look direction set — use a forward hemisphere.
+                (viewshed.range, 0.0)
+            }
+        } else {
+            // Player: use the original formula.
+            compute_fov_params(cone_dir)
+        };
 
         // The origin is always visible.
         viewshed.visible_tiles.insert(origin);
@@ -68,6 +102,7 @@ pub fn visibility_system(
                 1,
                 Slope { y: 1, x: 1 }, // start slope = 1/1
                 Slope { y: 0, x: 1 }, // end slope   = 0/1
+                &sand_cloud_tiles,
             );
         }
 
@@ -146,7 +181,10 @@ impl Slope {
 }
 
 /// Returns `true` if the tile at `point` blocks line-of-sight.
-fn is_opaque(game_map: &GameMapResource, point: MyPoint) -> bool {
+fn is_opaque(game_map: &GameMapResource, point: MyPoint, sand_clouds: &HashSet<MyPoint>) -> bool {
+    if sand_clouds.contains(&point) {
+        return true;
+    }
     match game_map.0.get_voxel_at(&point) {
         Some(v) => v.furniture.as_ref().is_some_and(|f| f.blocks_vision()),
         None => true, // off-map ⇒ opaque
@@ -189,6 +227,7 @@ fn shadowcast_octant(
     row: CoordinateUnit,
     mut start: Slope,
     end: Slope,
+    sand_clouds: &HashSet<MyPoint>,
 ) {
     if row > range {
         return;
@@ -215,7 +254,7 @@ fn shadowcast_octant(
         let world = transform(origin, octant, row, col);
         visible.insert(world);
 
-        let cur_opaque = is_opaque(game_map, world);
+        let cur_opaque = is_opaque(game_map, world, sand_clouds);
         if cur_opaque {
             if !prev_opaque {
                 // Transition transparent → opaque: save start slope for the
@@ -235,7 +274,7 @@ fn shadowcast_octant(
                 x: 2 * row,
             };
             shadowcast_octant(
-                game_map, visible, origin, range, octant, row + 1, saved_start, next_end,
+                game_map, visible, origin, range, octant, row + 1, saved_start, next_end, sand_clouds,
             );
         }
         prev_opaque = cur_opaque;
@@ -244,7 +283,7 @@ fn shadowcast_octant(
     // If the last tile in the row was transparent, continue scanning.
     if !prev_opaque {
         shadowcast_octant(
-            game_map, visible, origin, range, octant, row + 1, start, end,
+            game_map, visible, origin, range, octant, row + 1, start, end, sand_clouds,
         );
     }
 }
