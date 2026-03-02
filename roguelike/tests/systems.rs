@@ -1631,9 +1631,9 @@ fn cactus_deals_1_damage_per_turn_not_per_frame() {
         app.update();
     }
 
-    // Player should NOT have taken 30 damage - cactus is gated to turns
+    // Player should NOT have taken any damage - cactus is gated to turns
     let hp = app.world().get::<Health>(player).unwrap();
-    assert!(hp.current >= 28,
+    assert_eq!(hp.current, 30,
         "Cactus should not deal damage during AwaitingInput, HP is {}", hp.current);
 }
 

@@ -237,6 +237,9 @@ pub fn factions_are_hostile(a: Faction, b: Faction) -> bool {
     )
 }
 
+/// Dodge probability: chance per turn that an NPC sidesteps nearby explosions.
+const DODGE_CHANCE: f64 = 0.20;
+
 /// Patrol radius: how far an NPC will wander from its spawn point.
 const PATROL_RADIUS: i32 = 8;
 
@@ -417,7 +420,7 @@ pub fn ai_system(
         let nearby_danger = spell_particles.particles.iter().any(|(p, life, delay, _)| {
             *delay == 0 && *life > 0 && my_pos.chebyshev_distance(*p) <= 2
         });
-        if nearby_danger && dodge_roll < 0.20 {
+        if nearby_danger && dodge_roll < DODGE_CHANCE {
             // Find a safe direction to dodge
             let mut best_dir = None;
             let mut best_dist = 0;
