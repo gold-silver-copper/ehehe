@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use bevy::prelude::*;
 
+use crate::components::Caliber;
 use crate::gamemap::GameMap;
 use crate::grid_vec::GridVec;
 use crate::noise::NoiseSeed;
@@ -368,6 +369,45 @@ impl Default for Collectibles {
             bandages: 0,
             dollars: 0,
         }
+    }
+}
+
+impl Collectibles {
+    /// Returns a mutable reference to the bullet count for the given caliber.
+    pub fn bullets_mut(&mut self, caliber: Caliber) -> &mut i32 {
+        match caliber {
+            Caliber::Cal31 => &mut self.bullets_31,
+            Caliber::Cal36 => &mut self.bullets_36,
+            Caliber::Cal44 => &mut self.bullets_44,
+            Caliber::Cal50 => &mut self.bullets_50,
+            Caliber::Cal58 => &mut self.bullets_58,
+            Caliber::Cal577 => &mut self.bullets_577,
+            Caliber::Cal69 => &mut self.bullets_69,
+        }
+    }
+
+    /// Returns `true` if the pool has enough supplies to reload one round
+    /// of the given caliber (1 matching bullet + 1 cap + 1 powder).
+    pub fn can_reload(&self, caliber: Caliber) -> bool {
+        let has_bullet = match caliber {
+            Caliber::Cal31 => self.bullets_31 > 0,
+            Caliber::Cal36 => self.bullets_36 > 0,
+            Caliber::Cal44 => self.bullets_44 > 0,
+            Caliber::Cal50 => self.bullets_50 > 0,
+            Caliber::Cal58 => self.bullets_58 > 0,
+            Caliber::Cal577 => self.bullets_577 > 0,
+            Caliber::Cal69 => self.bullets_69 > 0,
+        };
+        has_bullet && self.caps > 0 && self.powder > 0
+    }
+
+    /// Consumes one round of reload supplies (1 matching bullet + 1 cap + 1 powder).
+    ///
+    /// **Pre-condition**: `self.can_reload(caliber)` is `true`.
+    pub fn consume_reload(&mut self, caliber: Caliber) {
+        *self.bullets_mut(caliber) -= 1;
+        self.caps -= 1;
+        self.powder -= 1;
     }
 }
 
