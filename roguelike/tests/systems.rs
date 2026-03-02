@@ -1361,6 +1361,7 @@ fn test_app_with_fov() -> App {
     app.init_resource::<SpatialIndex>();
     app.init_resource::<CursorPosition>();
     app.init_resource::<InputState>();
+    app.init_resource::<SpellParticles>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
     app.insert_resource(MapSeed(42));

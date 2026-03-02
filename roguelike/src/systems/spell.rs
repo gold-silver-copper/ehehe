@@ -31,17 +31,18 @@ pub fn spell_system(
             continue;
         };
 
-        // Sand throw (sentinel: grenade_index == usize::MAX) — visual particles only.
+        // Sand throw (sentinel: grenade_index == usize::MAX) — creates dust clouds
+        // that block line of sight for 12 ticks.
         if intent.grenade_index == usize::MAX {
             if let Some(mut stamina) = stamina {
                 stamina.spend(5); // Sand throw costs 5 stamina
             }
-            // Create sand cloud particles at target.
+            // Create sand dust cloud particles at target (blocks sight).
             let origin = intent.target;
             for dx in -intent.radius..=intent.radius {
                 for dy in -intent.radius..=intent.radius {
                     let pos = origin + crate::grid_vec::GridVec::new(dx, dy);
-                    spell_particles.particles.push((pos, 10, 0));
+                    spell_particles.particles.push((pos, 12, 0));
                 }
             }
             continue;

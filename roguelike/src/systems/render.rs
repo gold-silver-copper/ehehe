@@ -383,7 +383,6 @@ pub fn draw_system(
             &turn_counter,
             &kill_count,
             &collectibles,
-            visible_tiles,
         );
 
         // ── Inventory Bar (wide, horizontal) ────────────────────
@@ -416,13 +415,16 @@ pub fn draw_system(
             }
         }
 
-        // Show "YOU DIED" overlay when the player has fallen
-        if *state.get() == GameState::Dead {
+        // Show "YOU DIED" overlay when the player has fallen.
+        // Show it right above the UI panel, not in the center of the screen.
+        let player_is_dead = player_hp.is_some_and(|hp| hp.is_dead());
+        if *state.get() == GameState::Dead || player_is_dead {
             let label = " YOU DIED — Press T to continue watching, Q to quit, R to restart ";
             let label_width = label.len() as u16;
-            if render_width >= label_width && render_height >= 1 {
+            if render_width >= label_width && game_area.height >= 1 {
                 let cx = game_area.x + (render_width - label_width) / 2;
-                let cy = game_area.y + render_height / 2;
+                // Position right above the UI (bottom of game area)
+                let cy = game_area.y + game_area.height.saturating_sub(1);
                 let death_area = Rect {
                     x: cx,
                     y: cy,
@@ -465,7 +467,6 @@ fn render_bottom_panel(
     turn_counter: &TurnCounter,
     kill_count: &KillCount,
     collectibles: &Collectibles,
-    visible_tiles: Option<&HashSet<MyPoint>>,
 ) {
     // Split bottom panel into four horizontal columns: stats | log | furniture | visible
     let horiz_chunks = Layout::default()
@@ -487,13 +488,9 @@ fn render_bottom_panel(
     render_stats_column(frame, stats_area, player_hp, player_stamina, player_level, player_exp, collectibles);
 
     // ── Central Log (middle) ────────────────────────────────────
-    // Only show messages the player can witness within their line of sight.
+    // Show all recent messages — the log should persist across ticks, not reset.
     let log_height = log_area.height.saturating_sub(2) as usize; // subtract border
-    let log_lines: Vec<Line> = if let Some(vt) = visible_tiles {
-        combat_log.recent_visible(log_height.max(1), vt)
-    } else {
-        combat_log.recent(log_height.max(1))
-    }
+    let log_lines: Vec<Line> = combat_log.recent(log_height.max(1))
     .into_iter()
     .map(|s| Line::from(format!(" {s}")).dark_gray())
     .collect();
