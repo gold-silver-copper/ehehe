@@ -548,6 +548,7 @@ pub fn ai_system(
                 }
 
                 // 1/100 chance to throw sand at the target.
+                // XOR salt decorrelates the RNG from other per-entity rolls.
                 let sand_roll = dynamic_rng.roll(seed.0, entity.to_bits() ^ 0x5A4D);
                 if sand_roll < 0.01 && dist >= 2 && dist <= 5 {
                     let toward = (target_vec - my_pos).king_step();
