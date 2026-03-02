@@ -125,12 +125,6 @@ impl GridVec {
         self.x == 0 && self.y == 0
     }
 
-    /// Convert to `(f64, f64)` for floating-point calculations (noise, etc.).
-    #[inline]
-    pub fn as_f64(self) -> (f64, f64) {
-        (self.x as f64, self.y as f64)
-    }
-
     /// Dot product (inner product): a · b = aₓbₓ + aᵧbᵧ.
     ///
     /// The dot product captures the projection of one vector onto another.

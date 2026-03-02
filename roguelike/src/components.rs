@@ -175,6 +175,12 @@ pub fn compute_damage(attack: CoordinateUnit, defense: CoordinateUnit) -> Coordi
 #[derive(Component, Clone, Debug)]
 pub struct Name(pub String);
 
+/// Returns the display string of an optional `Name`, falling back to `"???"`.
+#[inline]
+pub fn display_name(name: Option<&Name>) -> &str {
+    name.map_or("???", |n| &n.0)
+}
+
 /// Movement speed: determines how much energy an entity gains each world tick.
 ///
 /// In the energy-based turn model, an entity acts when its accumulated energy

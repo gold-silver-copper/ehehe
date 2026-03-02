@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::{CollectibleKind, CombatStats, ExpReward, Experience, Faction, Health, HellGate, Hostile, Inventory, Item, ItemKind, LastDamageSource, Level, LootTable, Stamina, Ammo, Name, Player, Position, Renderable};
+use crate::components::{CollectibleKind, CombatStats, ExpReward, Experience, Faction, Health, HellGate, Hostile, Inventory, Item, ItemKind, LastDamageSource, Level, LootTable, Stamina, Ammo, Name, Player, Position, Renderable, display_name};
 use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, RangedAttackIntent};
 use crate::noise::value_noise;
 use crate::resources::{CombatLog, DynamicRng, GameMapResource, GameState, KillCount, MapSeed, PendingExp, PendingNpcExp, SoundEvents};
@@ -38,8 +38,8 @@ pub fn combat_system(
         };
 
         let damage = attacker_stats.damage_against(target_stats);
-        let a_name = attacker_name.map_or("???", |n| &n.0);
-        let t_name = target_name.map_or("???", |n| &n.0);
+        let a_name = display_name(attacker_name);
+        let t_name = display_name(target_name);
         let pos = attacker_pos.map(|p| p.as_grid_vec());
 
         if damage > 0 {
@@ -198,7 +198,7 @@ pub fn npc_level_up_system(
                 stats.defense += 1;
                 hp.max += 3;
                 hp.current = hp.max;
-                let k_name = killer_name.map_or("???", |n| &n.0);
+                let k_name = display_name(killer_name);
                 if let Some(p) = killer_pos {
                     combat_log.push_at(format!("{k_name} levels up to {new_level}!"), p.as_grid_vec());
                 }
@@ -269,7 +269,7 @@ pub fn ranged_attack_system(
             continue;
         };
         let origin = caster_pos.as_grid_vec();
-        let c_name = caster_name.map_or("???", |n| &n.0);
+        let c_name = display_name(caster_name);
 
         // Determine damage and consume ammo from either a gun item or the global Ammo pool.
         let damage;
@@ -351,7 +351,7 @@ pub fn ai_ranged_attack_system(
 
         let origin = attacker_pos.as_grid_vec();
         let target_vec = target_pos.as_grid_vec();
-        let a_name = attacker_name.map_or("???", |n| &n.0);
+        let a_name = display_name(attacker_name);
 
         // Use the actual direction delta for accurate aiming (not just signum).
         let dx = target_vec.x - origin.x;
@@ -397,14 +397,14 @@ pub fn melee_wide_system(
             continue;
         };
         let origin = attacker_pos.as_grid_vec();
-        let a_name = attacker_name.map_or("???", |n| &n.0);
+        let a_name = display_name(attacker_name);
         let mut hit_count = 0;
 
         for (target_entity, target_pos, target_stats, target_name) in &targets {
             let dist = origin.chebyshev_distance(target_pos.as_grid_vec());
             if dist == 1 {
                 let damage = attacker_stats.damage_against(target_stats);
-                let t_name = target_name.map_or("???", |n| &n.0);
+                let t_name = display_name(target_name);
                 if damage > 0 {
                     damage_events.write(DamageEvent {
                         target: target_entity,

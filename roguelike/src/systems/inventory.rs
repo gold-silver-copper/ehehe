@@ -237,19 +237,7 @@ pub fn auto_pickup_system(
 
         // Handle collectible items: add to Collectibles resource instead of inventory.
         if let Some(kind) = coll_kind {
-            match *kind {
-                CollectibleKind::Caps(n) => collectibles.caps += n,
-                CollectibleKind::Bullets31(n) => collectibles.bullets_31 += n,
-                CollectibleKind::Bullets36(n) => collectibles.bullets_36 += n,
-                CollectibleKind::Bullets44(n) => collectibles.bullets_44 += n,
-                CollectibleKind::Bullets50(n) => collectibles.bullets_50 += n,
-                CollectibleKind::Bullets58(n) => collectibles.bullets_58 += n,
-                CollectibleKind::Bullets577(n) => collectibles.bullets_577 += n,
-                CollectibleKind::Bullets69(n) => collectibles.bullets_69 += n,
-                CollectibleKind::Powder(n) => collectibles.powder += n,
-                CollectibleKind::Bandages(n) => collectibles.bandages += n,
-                CollectibleKind::Dollars(n) => collectibles.dollars += n,
-            }
+            collectibles.collect(*kind);
             combat_log.push(format!("Picked up {name_str}"));
             commands.entity(item_entity).despawn();
             continue;
