@@ -19,10 +19,6 @@ pub const SPAWN_X: CoordinateUnit = 200;
 pub const SPAWN_Y: CoordinateUnit = 140;
 pub const SPAWN_POINT: MyPoint = GridVec::new(SPAWN_X, SPAWN_Y);
 
-pub const GATE_X: CoordinateUnit = 340;
-pub const GATE_Y: CoordinateUnit = 220;
-pub const GATE_POINT: MyPoint = GridVec::new(GATE_X, GATE_Y);
-
 /// Creates a 2D array of GraphicTriples initialized with spaces on a black background.
 /// Indexed Y first for performance.
 pub fn create_2d_array(render_width: usize, render_height: usize) -> RenderPacket {

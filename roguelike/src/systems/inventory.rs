@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::components::{
     CollectibleKind, Health, Hostile, Inventory, Item, ItemKind, Name, Player, Position,
-    Thrown,
+    Thrown, display_name,
 };
 use crate::events::{DropItemIntent, PickupItemIntent, ThrowItemIntent, UseItemIntent};
 use crate::grid_vec::GridVec;
@@ -237,19 +237,7 @@ pub fn auto_pickup_system(
 
         // Handle collectible items: add to Collectibles resource instead of inventory.
         if let Some(kind) = coll_kind {
-            match *kind {
-                CollectibleKind::Caps(n) => collectibles.caps += n,
-                CollectibleKind::Bullets31(n) => collectibles.bullets_31 += n,
-                CollectibleKind::Bullets36(n) => collectibles.bullets_36 += n,
-                CollectibleKind::Bullets44(n) => collectibles.bullets_44 += n,
-                CollectibleKind::Bullets50(n) => collectibles.bullets_50 += n,
-                CollectibleKind::Bullets58(n) => collectibles.bullets_58 += n,
-                CollectibleKind::Bullets577(n) => collectibles.bullets_577 += n,
-                CollectibleKind::Bullets69(n) => collectibles.bullets_69 += n,
-                CollectibleKind::Powder(n) => collectibles.powder += n,
-                CollectibleKind::Bandages(n) => collectibles.bandages += n,
-                CollectibleKind::Dollars(n) => collectibles.dollars += n,
-            }
+            collectibles.collect(*kind);
             combat_log.push(format!("Picked up {name_str}"));
             commands.entity(item_entity).despawn();
             continue;
@@ -336,7 +324,7 @@ pub fn throw_system(
         let mut target_by_pos: std::collections::HashMap<GridVec, (Entity, i32, String)> =
             std::collections::HashMap::new();
         for (target_entity, target_pos, target_stats, target_name) in &targets {
-            let t_name = target_name.map_or("???".to_string(), |n| n.0.clone());
+            let t_name = display_name(target_name).to_string();
             target_by_pos.insert(target_pos.as_grid_vec(), (target_entity, target_stats.defense, t_name));
         }
 

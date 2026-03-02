@@ -66,7 +66,6 @@ impl GameMap {
                 row.push(Voxel {
                     floor: Some(floor),
                     furniture,
-                    voxel_pos: GridVec::new(x, y),
                 });
             }
             voxels.push(row);

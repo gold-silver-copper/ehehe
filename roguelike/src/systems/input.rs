@@ -2,7 +2,7 @@ use bevy::{app::AppExit, ecs::system::SystemParam, prelude::*};
 use bevy_ratatui::event::KeyMessage;
 use ratatui::crossterm::event::KeyCode;
 
-use crate::components::{Ammo, Hostile, Inventory, ItemKind, Stamina, Player, Position, Viewshed};
+use crate::components::{Hostile, Inventory, ItemKind, Stamina, Player, Position, Viewshed};
 use crate::events::{MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
 use crate::resources::{CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameState, InputMode, InputState, MapSeed, RestartRequested, SpectatingAfterDeath, TurnState};
 
@@ -79,7 +79,7 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
 pub fn input_system(
     mut messages: MessageReader<KeyMessage>,
     mut intents: IntentWriters,
-    player_query: Query<(Entity, &Position, Option<&Stamina>, Option<&Ammo>, Option<&Inventory>), With<Player>>,
+    player_query: Query<(Entity, &Position, Option<&Stamina>, Option<&Inventory>), With<Player>>,
     mut player_viewshed: Query<&mut Viewshed, With<Player>>,
     item_kind_query: Query<&ItemKind>,
     hostiles_query: Query<&Position, With<Hostile>>,
@@ -115,7 +115,7 @@ pub fn input_system(
         return;
     }
 
-    let Ok((player_entity, player_pos, player_stamina, _player_ammo, player_inv)) = player_query.single() else {
+    let Ok((player_entity, player_pos, player_stamina, player_inv)) = player_query.single() else {
         // Player entity is gone (should only happen transiently).
         for message in messages.read() {
             if matches!(message.code, KeyCode::Char('q')) {

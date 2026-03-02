@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::{CombatStats, Health, Hostile, Name, Player, Position, Projectile, Renderable};
+use crate::components::{CombatStats, Health, Hostile, Name, Player, Position, Projectile, Renderable, display_name};
 use crate::events::DamageEvent;
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
@@ -151,7 +151,7 @@ pub fn projectile_system(
     let mut target_by_pos: std::collections::HashMap<GridVec, Vec<(Entity, i32, String, i32)>> =
         std::collections::HashMap::new();
     for (target_entity, target_pos, target_stats, target_health, target_name) in &targets {
-        let t_name = target_name.map_or("???".to_string(), |n| n.0.clone());
+        let t_name = display_name(target_name).to_string();
         target_by_pos
             .entry(target_pos.as_grid_vec())
             .or_default()
@@ -166,11 +166,7 @@ pub fn projectile_system(
         let steps = proj.tiles_per_tick;
 
         // Look up the name of the entity that fired this projectile.
-        let source_name: String = source_names
-            .get(proj.source)
-            .ok()
-            .flatten()
-            .map_or("???".into(), |n| n.0.clone());
+        let source_name = display_name(source_names.get(proj.source).ok().flatten());
 
         for _ in 0..steps {
             // Check current tile for damage before advancing.
@@ -261,7 +257,7 @@ pub fn projectile_system(
                 let is_bullet = proj.tiles_per_tick == BULLET_TILES_PER_TICK;
                 if is_bullet {
                     let aim_point = proj.path.last().copied().unwrap_or(tile);
-                    let p_name = player_name.map_or("???", |n| &n.0);
+                    let p_name = display_name(*player_name);
                     match resolve_bullet_hit(tile, aim_point, proj.path_index, player_health.max, proj.penetration) {
                         BulletHitResult::Miss => {
                             combat_log.push(format!("{source_name}'s bullet barely misses {p_name}!"));
@@ -300,7 +296,7 @@ pub fn projectile_system(
                         amount: hit_damage,
                         source: Some(proj.source),
                     });
-                    let p_name = player_name.map_or("???", |n| &n.0);
+                    let p_name = display_name(*player_name);
                     combat_log.push(format!("Shrapnel hits {p_name} for {hit_damage} damage!"));
                     sound_events.add(tile);
                     proj.penetration -= player_stats.defense;

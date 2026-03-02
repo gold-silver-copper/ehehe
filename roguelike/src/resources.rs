@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use bevy::prelude::*;
 
-use crate::components::Caliber;
+use crate::components::{Caliber, CollectibleKind};
 use crate::gamemap::GameMap;
 use crate::grid_vec::GridVec;
 use crate::noise::NoiseSeed;
@@ -379,6 +379,19 @@ impl Default for Collectibles {
 }
 
 impl Collectibles {
+    /// Returns an immutable reference to the bullet count for the given caliber.
+    pub fn bullets(&self, caliber: Caliber) -> i32 {
+        match caliber {
+            Caliber::Cal31 => self.bullets_31,
+            Caliber::Cal36 => self.bullets_36,
+            Caliber::Cal44 => self.bullets_44,
+            Caliber::Cal50 => self.bullets_50,
+            Caliber::Cal58 => self.bullets_58,
+            Caliber::Cal577 => self.bullets_577,
+            Caliber::Cal69 => self.bullets_69,
+        }
+    }
+
     /// Returns a mutable reference to the bullet count for the given caliber.
     pub fn bullets_mut(&mut self, caliber: Caliber) -> &mut i32 {
         match caliber {
@@ -395,16 +408,7 @@ impl Collectibles {
     /// Returns `true` if the pool has enough supplies to reload one round
     /// of the given caliber (1 matching bullet + 1 cap + 1 powder).
     pub fn can_reload(&self, caliber: Caliber) -> bool {
-        let has_bullet = match caliber {
-            Caliber::Cal31 => self.bullets_31 > 0,
-            Caliber::Cal36 => self.bullets_36 > 0,
-            Caliber::Cal44 => self.bullets_44 > 0,
-            Caliber::Cal50 => self.bullets_50 > 0,
-            Caliber::Cal58 => self.bullets_58 > 0,
-            Caliber::Cal577 => self.bullets_577 > 0,
-            Caliber::Cal69 => self.bullets_69 > 0,
-        };
-        has_bullet && self.caps > 0 && self.powder > 0
+        self.bullets(caliber) > 0 && self.caps > 0 && self.powder > 0
     }
 
     /// Consumes one round of reload supplies (1 matching bullet + 1 cap + 1 powder).
@@ -414,6 +418,23 @@ impl Collectibles {
         *self.bullets_mut(caliber) -= 1;
         self.caps -= 1;
         self.powder -= 1;
+    }
+
+    /// Adds a collectible pickup to the resource pool.
+    pub fn collect(&mut self, kind: CollectibleKind) {
+        match kind {
+            CollectibleKind::Caps(n) => self.caps += n,
+            CollectibleKind::Bullets31(n) => self.bullets_31 += n,
+            CollectibleKind::Bullets36(n) => self.bullets_36 += n,
+            CollectibleKind::Bullets44(n) => self.bullets_44 += n,
+            CollectibleKind::Bullets50(n) => self.bullets_50 += n,
+            CollectibleKind::Bullets58(n) => self.bullets_58 += n,
+            CollectibleKind::Bullets577(n) => self.bullets_577 += n,
+            CollectibleKind::Bullets69(n) => self.bullets_69 += n,
+            CollectibleKind::Powder(n) => self.powder += n,
+            CollectibleKind::Bandages(n) => self.bandages += n,
+            CollectibleKind::Dollars(n) => self.dollars += n,
+        }
     }
 }
 

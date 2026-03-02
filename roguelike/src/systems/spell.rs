@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::{CombatStats, Inventory, Item, ItemKind, Stamina, Name, Position, Renderable};
+use crate::components::{CombatStats, Inventory, Item, ItemKind, Stamina, Name, Position, Renderable, display_name};
 use crate::events::{MolotovCastIntent, SpellCastIntent};
 use crate::resources::{CombatLog, GameMapResource, MapSeed, SpellParticles};
 use crate::typeenums::{Floor, Furniture};
@@ -62,7 +62,7 @@ pub fn spell_system(
             }
 
         let origin = intent.target;
-        let c_name = caster_name.map_or("???", |n| &n.0);
+        let c_name = display_name(caster_name);
 
         combat_log.push(format!("{c_name} throws a grenade!"));
 
@@ -166,7 +166,7 @@ pub fn molotov_system(
             }
 
         let origin = intent.target;
-        let c_name = caster_name.map_or("???", |n| &n.0);
+        let c_name = display_name(caster_name);
 
         combat_log.push(format!("{c_name} hurls a Molotov cocktail!"));
 

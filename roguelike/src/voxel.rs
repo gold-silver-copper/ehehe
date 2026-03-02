@@ -1,13 +1,15 @@
 use crate::graphic_trait::GraphicElement;
 use crate::typeenums::{Floor, Furniture};
-use crate::typedefs::{GraphicTriple, MyPoint, RatColor};
+use crate::typedefs::{GraphicTriple, RatColor};
 
 /// A single cell in the game map grid.
+///
+/// Position is implicit from the `(row, col)` indices in the `GameMap`'s
+/// 2D voxel array, so no position field is stored here.
 #[derive(Clone, Debug)]
 pub struct Voxel {
     pub floor: Option<Floor>,
     pub furniture: Option<Furniture>,
-    pub voxel_pos: MyPoint,
 }
 
 impl Voxel {
@@ -50,7 +52,6 @@ pub fn dim(color: RatColor, factor: f32) -> RatColor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grid_vec::GridVec;
     use crate::typeenums::{Floor, Furniture};
 
     #[test]
@@ -78,7 +79,6 @@ mod tests {
         let voxel = Voxel {
             floor: Some(Floor::Grass),
             furniture: None,
-            voxel_pos: GridVec::new(5, 5),
         };
         let graphic = voxel.to_graphic(true);
         // Should have the floor's symbol
@@ -90,7 +90,6 @@ mod tests {
         let voxel = Voxel {
             floor: Some(Floor::Grass),
             furniture: Some(Furniture::Tree),
-            voxel_pos: GridVec::new(5, 5),
         };
         let graphic = voxel.to_graphic(true);
         // Furniture symbol overrides floor symbol
@@ -102,7 +101,6 @@ mod tests {
         let voxel = Voxel {
             floor: Some(Floor::Grass),
             furniture: None,
-            voxel_pos: GridVec::new(5, 5),
         };
         let visible = voxel.to_graphic(true);
         let dimmed = voxel.to_graphic(false);
@@ -115,7 +113,6 @@ mod tests {
         let voxel = Voxel {
             floor: None,
             furniture: None,
-            voxel_pos: GridVec::new(0, 0),
         };
         let graphic = voxel.to_graphic(true);
         assert_eq!(graphic.0, " ");
