@@ -241,6 +241,7 @@ fn generate_outfit(seed: u64) -> String {
         "a pocket watch chain glinting at the waist", "dust on every inch of cloth",
     ];
 
+    // Prime multipliers and bit-shifts decorrelate selections across categories.
     let h = (seed.wrapping_mul(7919) >> 3) as usize % HATS.len();
     let s = (seed.wrapping_mul(104729) >> 5) as usize % SHIRTS.len();
     let b = (seed.wrapping_mul(3571) >> 7) as usize % BOTTOMS.len();
