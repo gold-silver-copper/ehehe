@@ -35,8 +35,11 @@ const LAST_NAMES: &[&str] = &[
 ];
 
 /// Generates a procedural 1850s cowboy-themed name from position hash.
-/// ~30% of NPCs get a nickname (e.g., "Dusty" Silas Crowley).
+/// About 30% of NPCs get a nickname (e.g., "Dusty" Silas Crowley).
 fn generate_npc_name(x: i32, y: i32) -> String {
+    /// Out of 10, how many NPCs receive a nickname prefix.
+    const NICKNAME_CHANCE: usize = 3;
+
     let hash1 = (x.wrapping_mul(7919) ^ y.wrapping_mul(104729)).unsigned_abs() as usize;
     let hash2 = (x.wrapping_mul(1009) ^ y.wrapping_mul(7529)).unsigned_abs() as usize;
     let hash3 = (x.wrapping_mul(2903) ^ y.wrapping_mul(3571)).unsigned_abs() as usize;
@@ -45,7 +48,7 @@ fn generate_npc_name(x: i32, y: i32) -> String {
     let first = FIRST_NAMES[hash1 % FIRST_NAMES.len()];
     let last = LAST_NAMES[hash2 % LAST_NAMES.len()];
 
-    if hash3 % 10 < 3 {
+    if hash3 % 10 < NICKNAME_CHANCE {
         let nick = NICKNAMES[hash4 % NICKNAMES.len()];
         format!("\"{nick}\" {first} {last}")
     } else {

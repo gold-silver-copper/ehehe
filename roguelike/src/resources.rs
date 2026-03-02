@@ -272,17 +272,14 @@ impl CombatLog {
     /// Returns the most recent `n` messages that are either untagged
     /// (always visible) or tagged with a position inside `visible`.
     pub fn recent_visible(&self, n: usize, visible: &std::collections::HashSet<GridVec>) -> Vec<&str> {
-        self.messages
+        let visible_msgs: Vec<&str> = self.messages
             .iter()
             .zip(self.positions.iter())
             .filter(|(_, pos)| pos.map_or(true, |p| visible.contains(&p)))
-            .rev()
-            .take(n)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
             .map(|(msg, _)| msg.as_str())
-            .collect()
+            .collect();
+        let start = visible_msgs.len().saturating_sub(n);
+        visible_msgs[start..].to_vec()
     }
 }
 
