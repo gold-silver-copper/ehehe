@@ -43,20 +43,14 @@ pub fn combat_system(
         let pos = attacker_pos.map(|p| p.as_grid_vec());
 
         if damage > 0 {
-            if let Some(p) = pos {
-                combat_log.push_at(format!("{a_name} hits {t_name} for {damage} damage"), p);
-            } else {
-                combat_log.push(format!("{a_name} hits {t_name} for {damage} damage"));
-            }
+            combat_log.push_opt(format!("{a_name} hits {t_name} for {damage} damage"), pos);
             damage_events.write(DamageEvent {
                 target: intent.target,
                 amount: damage,
                 source: Some(intent.attacker),
             });
-        } else if let Some(p) = pos {
-            combat_log.push_at(format!("{a_name} attacks {t_name} but deals no damage"), p);
         } else {
-            combat_log.push(format!("{a_name} attacks {t_name} but deals no damage"));
+            combat_log.push_opt(format!("{a_name} attacks {t_name} but deals no damage"), pos);
         }
     }
 }
@@ -114,11 +108,7 @@ pub fn death_system(
         }
 
         let label = name.map_or("Something", |n| &n.0);
-        if let Some(p) = pos {
-            combat_log.push_at(format!("{label} has been slain!"), p.as_grid_vec());
-        } else {
-            combat_log.push(format!("{label} has been slain!"));
-        }
+        combat_log.push_opt(format!("{label} has been slain!"), pos.map(|p| p.as_grid_vec()));
 
         // If the player died, transition to Dead state (don't despawn so UI can read stats).
         if is_player.is_some() {

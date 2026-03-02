@@ -239,25 +239,31 @@ impl SpellParticles {
 }
 
 impl CombatLog {
-    /// Adds a message (always visible) and trims the oldest entry.
-    /// O(1) amortised via `VecDeque::pop_front` (no element shifting).
-    pub fn push(&mut self, message: String) {
+    /// Internal: appends a message with an optional position and trims oldest entry.
+    fn push_inner(&mut self, message: String, pos: Option<GridVec>) {
         self.messages.push_back(message);
-        self.positions.push_back(None);
+        self.positions.push_back(pos);
         if self.messages.len() > MAX_COMBAT_LOG_MESSAGES {
             self.messages.pop_front();
             self.positions.pop_front();
         }
     }
 
+    /// Adds a message (always visible) and trims the oldest entry.
+    /// O(1) amortised via `VecDeque::pop_front` (no element shifting).
+    pub fn push(&mut self, message: String) {
+        self.push_inner(message, None);
+    }
+
     /// Adds a message tagged with a world position for visibility filtering.
     pub fn push_at(&mut self, message: String, pos: GridVec) {
-        self.messages.push_back(message);
-        self.positions.push_back(Some(pos));
-        if self.messages.len() > MAX_COMBAT_LOG_MESSAGES {
-            self.messages.pop_front();
-            self.positions.pop_front();
-        }
+        self.push_inner(message, Some(pos));
+    }
+
+    /// Adds a message with an optional position. Shorthand for the common
+    /// pattern of `if pos { push_at } else { push }`.
+    pub fn push_opt(&mut self, message: String, pos: Option<GridVec>) {
+        self.push_inner(message, pos);
     }
 
     /// Clears all entries (messages and positions).
