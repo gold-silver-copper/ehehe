@@ -181,8 +181,10 @@ pub fn ai_system(
                     // This costs energy so they don't act for free forever.
                     if let Some(ref mut look) = ai_look_dir {
                         // Rotate 45° clockwise by cycling through DIRECTIONS_8.
+                        // If current direction isn't in the array, normalize via king_step first.
+                        let current_normalized = look.0.king_step();
                         let idx = GridVec::DIRECTIONS_8.iter()
-                            .position(|&d| d == look.0)
+                            .position(|&d| d == current_normalized)
                             .map(|i| (i + 1) % 8)
                             .unwrap_or(0);
                         look.0 = GridVec::DIRECTIONS_8[idx];
@@ -196,14 +198,13 @@ pub fn ai_system(
             AiState::Chasing => {
                 // If the enemy has an AiLookDir, check if they need to rotate
                 // toward the player first (costs a tick).
-                let needs_rotation = ai_look_dir.as_ref().is_some_and(|look| {
-                    let toward_player = (player_vec - my_pos).king_step();
-                    !toward_player.is_zero() && look.0 != toward_player
-                });
+                let toward_player = (player_vec - my_pos).king_step();
+                let needs_rotation = !toward_player.is_zero()
+                    && ai_look_dir.as_ref().is_some_and(|look| look.0 != toward_player);
 
                 if needs_rotation {
                     if let Some(ref mut look) = ai_look_dir {
-                        look.0 = (player_vec - my_pos).king_step();
+                        look.0 = toward_player;
                         if let Some(ref mut vs) = viewshed {
                             vs.dirty = true;
                         }

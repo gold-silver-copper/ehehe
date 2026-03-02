@@ -143,7 +143,9 @@ pub fn input_system(
                     }
                 }
                 KeyCode::Char('d') | KeyCode::Char('D') => {
-                    // Drop the selected item — inventory stays open.
+                    // Drop the selected item. Intentionally keeps the inventory
+                    // open (no `mode = InputMode::Game`) so the player can drop
+                    // multiple items without reopening the menu each time.
                     if item_count > 0 && input_state.inv_selection < item_count {
                         intents.drop_item_intents.write(DropItemIntent {
                             user: player_entity,

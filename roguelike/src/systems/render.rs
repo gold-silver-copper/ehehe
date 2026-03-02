@@ -623,7 +623,7 @@ fn render_help_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
 fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
     let binding_count = KEYBINDINGS.len() as u16;
     let w = 62u16.min(game_area.width.saturating_sub(4));
-    // narrative(3) + blank(1) + objective(2) + blank(1) + bindings + blank(1) + press-any(1) + border(2)
+    // blank(1) + title(1) + blank(1) + narrative(2) + blank(1) + objective(2) + blank(1) + bindings + blank(1) + press-any(1) + border(2) = 13 + bindings
     let h = (binding_count + 13).min(game_area.height.saturating_sub(4));
 
     if w < 20 || h < 10 {
