@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 
-use crate::components::{CombatStats, Hostile, Name, Player, Position, Projectile, Renderable};
+use crate::components::{CombatStats, Health, Hostile, Name, Player, Position, Projectile, Renderable};
 use crate::events::DamageEvent;
 use crate::grid_vec::GridVec;
+use crate::noise::value_noise;
 use crate::resources::{CombatLog, GameMapResource, SoundEvents};
 use crate::typedefs::RatColor;
 
@@ -96,22 +97,22 @@ pub fn projectile_system(
     mut commands: Commands,
     mut projectiles: Query<(Entity, &mut Position, &mut Projectile, &mut Renderable)>,
     mut damage_events: MessageWriter<DamageEvent>,
-    targets: Query<(Entity, &Position, &CombatStats, Option<&Name>), (With<Hostile>, Without<Projectile>)>,
-    player_query: Query<(Entity, &Position, &CombatStats, Option<&Name>), (With<Player>, Without<Projectile>)>,
+    targets: Query<(Entity, &Position, &CombatStats, &Health, Option<&Name>), (With<Hostile>, Without<Projectile>)>,
+    player_query: Query<(Entity, &Position, &CombatStats, &Health, Option<&Name>), (With<Player>, Without<Projectile>)>,
     source_names: Query<Option<&Name>>,
     game_map: Res<GameMapResource>,
     mut combat_log: ResMut<CombatLog>,
     mut sound_events: ResMut<SoundEvents>,
 ) {
     // Build a lookup of hostile entities by position for O(1) hit detection.
-    let mut target_by_pos: std::collections::HashMap<GridVec, Vec<(Entity, i32, String)>> =
+    let mut target_by_pos: std::collections::HashMap<GridVec, Vec<(Entity, i32, String, i32)>> =
         std::collections::HashMap::new();
-    for (target_entity, target_pos, target_stats, target_name) in &targets {
+    for (target_entity, target_pos, target_stats, target_health, target_name) in &targets {
         let t_name = target_name.map_or("???".to_string(), |n| n.0.clone());
         target_by_pos
             .entry(target_pos.as_grid_vec())
             .or_default()
-            .push((target_entity, target_stats.defense, t_name));
+            .push((target_entity, target_stats.defense, t_name, target_health.max));
     }
 
     // Player position for NPC bullet hits and shrapnel self-damage.
@@ -147,10 +148,52 @@ pub fn projectile_system(
             // so subsequent targets take less damage — matching standard
             // roguelike bullet-through-armor mechanics.
             if let Some(entities_here) = target_by_pos.get(&tile) {
-                for (target_entity, target_def, t_name) in entities_here {
+                for (target_entity, target_def, t_name, t_max_hp) in entities_here {
                     if proj.penetration <= 0 {
                         break;
                     }
+
+                    // Chance-to-hit for bullets (shrapnel always hits).
+                    let is_bullet = proj.tiles_per_tick == BULLET_TILES_PER_TICK;
+                    if is_bullet {
+                        let aim_point = proj.path.last().copied().unwrap_or(tile);
+                        let dx = (aim_point.x - tile.x) as f64;
+                        let dy = (aim_point.y - tile.y) as f64;
+                        let distance = (dx * dx + dy * dy).sqrt();
+                        let hit_chance = (0.95 - distance * 0.04).clamp(0.15, 0.95);
+                        let headshot_chance = 0.02 + if distance < 0.5 { 0.08 } else { 0.0 };
+
+                        let roll_seed = 7919_u64.wrapping_add(proj.path_index as u64);
+                        let roll = value_noise(tile.x, tile.y + proj.path_index as i32, roll_seed);
+
+                        if roll > hit_chance {
+                            // Miss
+                            combat_log.push_at(
+                                format!("{source_name}'s bullet barely misses {t_name}!"),
+                                tile,
+                            );
+                            continue;
+                        }
+
+                        // Headshot check
+                        let hs_roll = value_noise(tile.x, tile.y + proj.path_index as i32, roll_seed.wrapping_add(13));
+                        if hs_roll < headshot_chance {
+                            let hs_damage = *t_max_hp;
+                            damage_events.write(DamageEvent {
+                                target: *target_entity,
+                                amount: hs_damage,
+                                source: Some(proj.source),
+                            });
+                            combat_log.push_at(
+                                format!("{source_name} headshots {t_name}!"),
+                                tile,
+                            );
+                            sound_events.add(tile);
+                            proj.penetration -= target_def;
+                            continue;
+                        }
+                    }
+
                     let hit_damage = proj.penetration;
                     damage_events.write(DamageEvent {
                         target: *target_entity,
@@ -174,28 +217,73 @@ pub fn projectile_system(
             // is NOT the player and it landed on the player's tile.
             // Always stop the bullet after hitting the player to prevent
             // any possibility of double damage.
-            if let Some((player_entity, player_pos, player_stats, player_name)) = &player_info
+            if let Some((player_entity, player_pos, player_stats, player_health, player_name)) = &player_info
                 && proj.source != *player_entity
                 && tile == player_pos.as_grid_vec()
                 && proj.penetration > 0
             {
-                let hit_damage = proj.penetration;
-                damage_events.write(DamageEvent {
-                    target: *player_entity,
-                    amount: hit_damage,
-                    source: Some(proj.source),
-                });
-                let p_name = player_name.map_or("???", |n| &n.0);
-                combat_log.push(format!("{source_name}'s bullet hits {p_name} for {hit_damage} damage!"));
-                sound_events.add(tile);
-                proj.penetration -= player_stats.defense;
-                despawn = true;
-                break;
+                // Chance-to-hit for bullets (shrapnel always hits).
+                let is_bullet = proj.tiles_per_tick == BULLET_TILES_PER_TICK;
+                if is_bullet {
+                    let aim_point = proj.path.last().copied().unwrap_or(tile);
+                    let dx = (aim_point.x - tile.x) as f64;
+                    let dy = (aim_point.y - tile.y) as f64;
+                    let distance = (dx * dx + dy * dy).sqrt();
+                    let hit_chance = (0.95 - distance * 0.04).clamp(0.15, 0.95);
+                    let headshot_chance = 0.02 + if distance < 0.5 { 0.08 } else { 0.0 };
+
+                    let roll_seed = 7919_u64.wrapping_add(proj.path_index as u64);
+                    let roll = value_noise(tile.x, tile.y + proj.path_index as i32, roll_seed);
+                    let p_name = player_name.map_or("???", |n| &n.0);
+
+                    if roll > hit_chance {
+                        combat_log.push(format!("{source_name}'s bullet barely misses {p_name}!"));
+                        // Bullet continues through on miss — don't despawn.
+                    } else {
+                        // Headshot check
+                        let hs_roll = value_noise(tile.x, tile.y + proj.path_index as i32, roll_seed.wrapping_add(13));
+                        if hs_roll < headshot_chance {
+                            let hs_damage = player_health.max;
+                            damage_events.write(DamageEvent {
+                                target: *player_entity,
+                                amount: hs_damage,
+                                source: Some(proj.source),
+                            });
+                            combat_log.push(format!("{source_name} headshots {p_name}!"));
+                        } else {
+                            let hit_damage = proj.penetration;
+                            damage_events.write(DamageEvent {
+                                target: *player_entity,
+                                amount: hit_damage,
+                                source: Some(proj.source),
+                            });
+                            combat_log.push(format!("{source_name}'s bullet hits {p_name} for {hit_damage} damage!"));
+                        }
+                        sound_events.add(tile);
+                        proj.penetration -= player_stats.defense;
+                        despawn = true;
+                        break;
+                    }
+                } else {
+                    // Non-bullet (shrapnel) always hits.
+                    let hit_damage = proj.penetration;
+                    damage_events.write(DamageEvent {
+                        target: *player_entity,
+                        amount: hit_damage,
+                        source: Some(proj.source),
+                    });
+                    let p_name = player_name.map_or("???", |n| &n.0);
+                    combat_log.push(format!("Shrapnel hits {p_name} for {hit_damage} damage!"));
+                    sound_events.add(tile);
+                    proj.penetration -= player_stats.defense;
+                    despawn = true;
+                    break;
+                }
             }
 
             // Shrapnel self-damage: if the projectile's source is the player
             // and the projectile lands on the player's tile.
-            if let Some((player_entity, player_pos, _, _)) = &player_info
+            if let Some((player_entity, player_pos, _, _, _)) = &player_info
                 && proj.source == *player_entity && tile == player_pos.as_grid_vec() {
                     let self_damage = (proj.damage / SELF_DAMAGE_DIVISOR).max(1);
                     damage_events.write(DamageEvent {
