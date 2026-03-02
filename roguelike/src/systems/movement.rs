@@ -123,10 +123,10 @@ const CACTUS_DAMAGE: i32 = 1;
 /// cactus takes `CACTUS_DAMAGE` each turn. Runs after movement.
 pub fn cactus_damage_system(
     game_map: Res<GameMapResource>,
-    mut health_query: Query<(Entity, &Position, &mut Health)>,
+    mut health_query: Query<(&Position, &mut Health)>,
     mut combat_log: ResMut<CombatLog>,
 ) {
-    for (_entity, pos, mut hp) in &mut health_query {
+    for (pos, mut hp) in &mut health_query {
         let p = pos.as_grid_vec();
         // Check if standing adjacent to (or on) a cactus
         for neighbor in p.cardinal_neighbors() {

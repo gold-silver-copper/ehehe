@@ -337,7 +337,7 @@ pub fn ai_ranged_attack_system(
     mut commands: Commands,
     mut intents: MessageReader<AiRangedAttackIntent>,
     attacker_query: Query<(&Position, &CombatStats, Option<&Name>)>,
-    target_query: Query<(&Position, Option<&Name>)>,
+    target_query: Query<&Position>,
     mut combat_log: ResMut<CombatLog>,
     mut sound_events: ResMut<SoundEvents>,
 ) {
@@ -345,7 +345,7 @@ pub fn ai_ranged_attack_system(
         let Ok((attacker_pos, attacker_stats, attacker_name)) = attacker_query.get(intent.attacker) else {
             continue;
         };
-        let Ok((target_pos, _target_name)) = target_query.get(intent.target) else {
+        let Ok(target_pos) = target_query.get(intent.target) else {
             continue;
         };
 

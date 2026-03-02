@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::components::{
     CollectibleKind, Health, Hostile, Inventory, Item, ItemKind, Name, Player, Position,
-    Thrown,
+    Thrown, display_name,
 };
 use crate::events::{DropItemIntent, PickupItemIntent, ThrowItemIntent, UseItemIntent};
 use crate::grid_vec::GridVec;
@@ -324,7 +324,7 @@ pub fn throw_system(
         let mut target_by_pos: std::collections::HashMap<GridVec, (Entity, i32, String)> =
             std::collections::HashMap::new();
         for (target_entity, target_pos, target_stats, target_name) in &targets {
-            let t_name = target_name.map_or("???".to_string(), |n| n.0.clone());
+            let t_name = display_name(target_name).to_string();
             target_by_pos.insert(target_pos.as_grid_vec(), (target_entity, target_stats.defense, t_name));
         }
 
