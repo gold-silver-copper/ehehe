@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::components::{BlocksMovement, Health, Hostile, Player, Position, Viewshed};
 use crate::events::{AttackIntent, MoveIntent};
 use crate::grid_vec::GridVec;
-use crate::resources::{CombatLog, CursorPosition, GameMapResource, SpatialIndex};
+use crate::resources::{BloodMap, CombatLog, CursorPosition, GameMapResource, SpatialIndex, TurnCounter};
 use crate::typeenums::Furniture;
 
 /// Processes `MoveIntent` events: checks the target tile on the `GameMap` for
@@ -28,9 +28,12 @@ pub fn movement_system(
     game_map: Res<GameMapResource>,
     mut spatial: ResMut<SpatialIndex>,
     mut cursor: ResMut<CursorPosition>,
+    mut blood_map: ResMut<BloodMap>,
+    turn_counter: Res<TurnCounter>,
     blockers: Query<(), With<BlocksMovement>>,
     hostiles: Query<(), With<Hostile>>,
     players: Query<(), With<Player>>,
+    healths: Query<&Health>,
     mut attack_intents: MessageWriter<AttackIntent>,
     mut movers: Query<(&mut Position, Option<&mut Viewshed>)>,
 ) {
@@ -79,6 +82,14 @@ pub fn movement_system(
 
         if tile_passable && !entity_blocked {
             let old_pos = pos.as_grid_vec();
+
+            // ── Blood trail: wounded entities leave blood behind ─
+            if let Ok(hp) = healths.get(intent.entity) {
+                if hp.current < hp.max {
+                    blood_map.stains.insert(old_pos, turn_counter.0);
+                }
+            }
+
             let delta = GridVec::new(intent.dx, intent.dy);
             pos.x = target.x;
             pos.y = target.y;
@@ -101,6 +112,9 @@ pub fn movement_system(
             }
         }
     }
+
+    // Periodically prune old blood stains to prevent unbounded growth.
+    blood_map.prune(turn_counter.0);
 }
 
 /// Damage dealt by walking into a cactus (adjacent tile).

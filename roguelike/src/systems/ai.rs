@@ -572,6 +572,7 @@ pub fn ai_system(
                                 }
                         } else {
                             // No loaded gun found — try to reload a gun that needs reloading.
+                            // NPCs reload one round at a time, just like the player.
                             let reloadable_gun = inv.items.iter().copied().find(|&ent| {
                                 item_kinds.get(ent).ok().is_some_and(|k|
                                     matches!(k, ItemKind::Gun { loaded, capacity, .. } if *loaded < *capacity)
@@ -579,9 +580,8 @@ pub fn ai_system(
                             });
                             if let Some(gun_entity) = reloadable_gun {
                                 if let Ok(mut kind) = item_kinds.get_mut(gun_entity)
-                                    && let ItemKind::Gun { ref mut loaded, capacity, .. } = *kind {
-                                        // NPCs reload their gun fully in one action.
-                                        *loaded = capacity;
+                                    && let ItemKind::Gun { ref mut loaded, .. } = *kind {
+                                        *loaded += 1;
                                         used_gun = true; // Spent this action reloading.
                                     }
                             }

@@ -283,9 +283,33 @@ impl CombatLog {
     }
 }
 
+/// Tracks blood splatters left by wounded entities when they move.
+/// Maps world positions to the turn number when blood was placed,
+/// allowing the renderer to darken blood over time.
+#[derive(Resource, Debug, Default)]
+pub struct BloodMap {
+    pub stains: HashMap<GridVec, u32>,
+}
+
+/// Blood stains older than this many turns are removed to prevent unbounded growth.
+const BLOOD_MAX_AGE: u32 = 200;
+
+impl BloodMap {
+    /// Removes blood stains older than `BLOOD_MAX_AGE` turns.
+    pub fn prune(&mut self, current_turn: u32) {
+        self.stains.retain(|_, &mut turn| current_turn.saturating_sub(turn) <= BLOOD_MAX_AGE);
+    }
+}
+
 /// Marker resource indicating a restart has been requested.
 #[derive(Resource, Debug, Default)]
 pub struct RestartRequested(pub bool);
+
+/// When true, the player is dead but watching the game continue.
+/// Set by pressing "." on the death screen. The end_world_turn system
+/// transitions back to Dead state after each spectated world turn.
+#[derive(Resource, Debug, Default)]
+pub struct SpectatingAfterDeath(pub bool);
 
 /// Extra world ticks remaining after a player action. Physical movement sets
 /// this to 1 so that the world turn cycles twice (2 total ticks), making
@@ -306,6 +330,14 @@ pub struct Collectibles {
     pub bullets_36: i32,
     /// .44 caliber lead bullets
     pub bullets_44: i32,
+    /// .50 caliber lead bullets
+    pub bullets_50: i32,
+    /// .58 caliber lead bullets
+    pub bullets_58: i32,
+    /// .577 caliber lead bullets
+    pub bullets_577: i32,
+    /// .69 caliber lead bullets
+    pub bullets_69: i32,
     /// Black powder charges (needed for reloading: 1 per round)
     pub powder: i32,
     /// Bandages (healing item)
@@ -321,6 +353,10 @@ impl Default for Collectibles {
             bullets_31: 10,
             bullets_36: 20,
             bullets_44: 20,
+            bullets_50: 5,
+            bullets_58: 5,
+            bullets_577: 5,
+            bullets_69: 5,
             powder: 30,
             bandages: 5,
             dollars: 0,

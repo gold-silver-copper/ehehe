@@ -4,7 +4,7 @@ use ratatui::crossterm::event::KeyCode;
 
 use crate::components::{Ammo, Hostile, Inventory, ItemKind, Stamina, Player, Position, Viewshed};
 use crate::events::{DropItemIntent, MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
-use crate::resources::{CombatLog, CursorPosition, ExtraWorldTicks, GameState, InputMode, InputState, RestartRequested, TurnState};
+use crate::resources::{CombatLog, CursorPosition, ExtraWorldTicks, GameState, InputMode, InputState, RestartRequested, SpectatingAfterDeath, TurnState};
 
 /// Bundles all intent MessageWriters to stay under Bevy's 16-param system limit.
 #[derive(SystemParam)]
@@ -44,11 +44,11 @@ pub struct CommandBinding {
 /// Used by the `?` help overlay to display available commands.
 /// Related keys are grouped (WASD, IJKL) to reduce visual clutter.
 pub const KEYBINDINGS: &[CommandBinding] = &[
-    CommandBinding { key: "WASD / ↑↓←→", name: "Move (2 ticks)", docs: "Move the player one tile. Physical movement costs 2 ticks." },
+    CommandBinding { key: "WASD / ↑↓←→", name: "Move (3 ticks)", docs: "Move the player one tile. Physical movement costs 3 ticks." },
     CommandBinding { key: "IJKL", name: "Cursor (1 tick)", docs: "Move the cursor one tile for aiming. Costs 1 tick." },
     CommandBinding { key: "C", name: "Center cursor (1 tick)", docs: "Snap cursor onto your position. Costs 1 tick." },
     CommandBinding { key: "N", name: "Auto-aim (1 tick)", docs: "Cursor steps toward nearest enemy. Costs 1 tick." },
-    CommandBinding { key: "R", name: "Reload (1 tick)", docs: "Reload gun (1 bullet + 1 cap + 1 powder). Costs 1 tick." },
+    CommandBinding { key: "R", name: "Reload (6 ticks)", docs: "Reload gun (1 bullet + 1 cap + 1 powder). Cap and ball is slow. Costs 6 ticks." },
     CommandBinding { key: "E", name: "Kick (2 ticks)", docs: "Roundhouse kick all adjacent enemies. Costs 2 ticks." },
     CommandBinding { key: ".", name: "Wait (1 tick)", docs: "Skip your turn. Costs 1 tick." },
     CommandBinding { key: "G", name: "Pick up (1 tick)", docs: "Pick up item at your feet. Costs 1 tick." },
@@ -81,8 +81,9 @@ pub fn input_system(
     mut restart_requested: ResMut<RestartRequested>,
     mut cursor: ResMut<CursorPosition>,
     mut extra_world_ticks: ResMut<ExtraWorldTicks>,
+    mut spectating: ResMut<SpectatingAfterDeath>,
 ) {
-    // Handle Dead and Victory states: only Q/Esc to quit, R to restart.
+    // Handle Dead and Victory states: Q/Esc to quit, R to restart, . to spectate.
     if *game_state.get() == GameState::Dead || *game_state.get() == GameState::Victory {
         for message in messages.read() {
             match message.code {
@@ -91,6 +92,11 @@ pub fn input_system(
                 }
                 KeyCode::Char('r') => {
                     restart_requested.0 = true;
+                }
+                // Allow watching the game continue after death by pressing wait key.
+                KeyCode::Char('.') if *game_state.get() == GameState::Dead => {
+                    spectating.0 = true;
+                    next_game_state.set(GameState::Playing);
                 }
                 _ => {}
             }
@@ -111,6 +117,16 @@ pub fn input_system(
     let awaiting_input = turn_state
         .as_ref()
         .is_some_and(|s| *s.get() == TurnState::AwaitingInput);
+
+    // When spectating after death, automatically advance to WorldTurn
+    // without waiting for player input.
+    if spectating.0 && awaiting_input {
+        advance_turn(&mut next_turn_state);
+        // Drain pending key messages so they aren't processed as game input.
+        let _ = messages.read().count();
+        return;
+    }
+
 
     // ── Inventory input mode ────────────────────────────────────
     if input_state.mode == InputMode::Inventory {
@@ -288,21 +304,21 @@ pub fn input_system(
                 }
             }
             // ── Movement keys (only while awaiting input) ───────
-            // Normal movement — costs 2 ticks (physical movement is slower)
+            // Normal movement — costs 3 ticks (physical movement is slower)
             KeyCode::Char('w') | KeyCode::Up if awaiting_input => {
-                extra_world_ticks.0 = 1;
+                extra_world_ticks.0 = 2;
                 emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 0, 1);
             }
             KeyCode::Char('s') | KeyCode::Down if awaiting_input => {
-                extra_world_ticks.0 = 1;
+                extra_world_ticks.0 = 2;
                 emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 0, -1);
             }
             KeyCode::Char('a') | KeyCode::Left if awaiting_input => {
-                extra_world_ticks.0 = 1;
+                extra_world_ticks.0 = 2;
                 emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, -1, 0);
             }
             KeyCode::Char('d') | KeyCode::Right if awaiting_input => {
-                extra_world_ticks.0 = 1;
+                extra_world_ticks.0 = 2;
                 emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 1, 0);
             }
             // ── Wait / skip turn ────────────────────────────────
@@ -310,8 +326,9 @@ pub fn input_system(
                 combat_log.push("You wait...".into());
                 advance_turn(&mut next_turn_state);
             }
-            // ── Reload weapon from inventory magazine ───────────
+            // ── Reload weapon from inventory magazine — costs 6 ticks ──
             KeyCode::Char('r') if awaiting_input => {
+                extra_world_ticks.0 = 5;
                 input_state.reload_pending = true;
                 advance_turn(&mut next_turn_state);
             }
@@ -338,11 +355,12 @@ pub fn input_system(
                 if let Some(inv) = player_inv
                     && let Some(&item_entity) = inv.items.get(idx)
                         && let Ok(kind) = item_kind_query.get(item_entity) {
-                            if let ItemKind::Gun { loaded, .. } = kind {
+                            if let ItemKind::Gun { loaded, name, .. } = kind {
                                 if *loaded > 0 {
                                     let delta = cursor.pos - player_pos.as_grid_vec();
                                     if delta != crate::grid_vec::GridVec::ZERO {
-                                        extra_world_ticks.0 = 1;
+                                        // Double-action revolvers (Starr 1858) cost only 1 tick.
+                                        extra_world_ticks.0 = if name.contains("Starr") { 0 } else { 1 };
                                         intents.ranged_intents.write(RangedAttackIntent {
                                             attacker: player_entity,
                                             range: RANGED_ATTACK_RANGE,

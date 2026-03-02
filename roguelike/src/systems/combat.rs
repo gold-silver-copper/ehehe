@@ -1,10 +1,9 @@
 use bevy::prelude::*;
 
-use crate::components::{CollectibleKind, CombatStats, ExpReward, Experience, Health, HellGate, Hostile, Item, ItemKind, LastDamageSource, Level, LootTable, Stamina, Ammo, Name, Player, Position, Renderable};
+use crate::components::{CollectibleKind, CombatStats, ExpReward, Experience, Faction, Health, HellGate, Hostile, Inventory, Item, ItemKind, LastDamageSource, Level, LootTable, Stamina, Ammo, Name, Player, Position, Renderable};
 use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, RangedAttackIntent};
 use crate::noise::value_noise;
 use crate::resources::{CombatLog, GameMapResource, GameState, KillCount, MapSeed, PendingExp, PendingNpcExp, SoundEvents};
-use crate::systems::inventory::spawn_loot;
 use crate::grid_vec::GridVec;
 use crate::typeenums::Furniture;
 use crate::typedefs::{CoordinateUnit, RatColor};
@@ -82,13 +81,15 @@ pub fn apply_damage_system(
 /// Despawns entities whose health has reached zero.
 /// Logs a death message, increments the kill counter for hostile entities,
 /// awards EXP to the PendingExp resource only when the player dealt the killing
-/// blow, spawns loot from entities with a LootTable, and removes the entity.
+/// blow, drops the entity's entire inventory on the ground, and removes the entity.
+/// Animals (Wildlife faction) drop nothing. Non-wildlife NPCs drop their full
+/// inventory including guns with ammo.
 /// If the Hell Gate is destroyed, transitions to the Victory state.
 /// If the player dies, transitions to the Dead state.
 /// NPCs that kill other entities also gain stat bonuses (enemy level-up).
 pub fn death_system(
     mut commands: Commands,
-    query: Query<(Entity, &Health, Option<&Name>, Option<&Hostile>, Option<&HellGate>, Option<&Position>, Option<&LootTable>, Option<&Player>, Option<&ExpReward>, Option<&LastDamageSource>)>,
+    query: Query<(Entity, &Health, Option<&Name>, Option<&Hostile>, Option<&HellGate>, Option<&Position>, Option<&LootTable>, Option<&Player>, Option<&ExpReward>, Option<&LastDamageSource>, Option<&Inventory>, Option<&Faction>)>,
     player_entities: Query<Entity, With<Player>>,
     mut combat_log: ResMut<CombatLog>,
     mut kill_count: ResMut<KillCount>,
@@ -99,7 +100,7 @@ pub fn death_system(
 ) {
     let player_entity = player_entities.single().ok();
 
-    for (entity, health, name, hostile, hell_gate, pos, loot_table, is_player, exp_reward, last_damage_source) in &query {
+    for (entity, health, name, hostile, hell_gate, pos, loot_table, is_player, exp_reward, last_damage_source, inventory, faction) in &query {
         if !health.is_dead() {
             continue;
         }
@@ -113,7 +114,7 @@ pub fn death_system(
 
         // If the player died, transition to Dead state (don't despawn so UI can read stats).
         if is_player.is_some() {
-            combat_log.push("You have fallen... Press Esc to quit or R to restart.".into());
+            combat_log.push("You have fallen... Press . to continue watching, Esc to quit, or R to restart.".into());
             next_game_state.set(GameState::Dead);
             continue; // don't despawn the player
         }
@@ -138,37 +139,46 @@ pub fn death_system(
             next_game_state.set(GameState::Victory);
         }
 
-        // Loot drop: if the entity has a LootTable, roll for item drop.
-        if let (Some(lt), Some(p)) = (loot_table, pos) {
-            let drop_roll = value_noise(p.x.wrapping_add(kill_count.0 as i32), p.y, seed.0.wrapping_add(55555));
-            if drop_roll < lt.drop_chance {
-                let item_roll = value_noise(p.y, p.x.wrapping_add(kill_count.0 as i32), seed.0.wrapping_add(77777));
-                spawn_loot(&mut commands, p.x, p.y, item_roll);
-                combat_log.push_at(format!("{label} dropped an item!"), p.as_grid_vec());
-            }
+        let is_wildlife = faction.is_some_and(|f| matches!(f, Faction::Wildlife));
 
-            // Also drop collectible supplies (caps + random ammo).
-            let coll_roll = value_noise(p.x.wrapping_add(kill_count.0 as i32 + 1), p.y, seed.0.wrapping_add(33333));
-            if coll_roll < 0.5 {
-                let caps_amount = ((coll_roll * 20.0) as i32).max(1);
-                commands.spawn((
-                    Position { x: p.x, y: p.y },
-                    Item,
-                    Name(format!("{caps_amount} Caps")),
-                    Renderable { symbol: "$".into(), fg: RatColor::Rgb(255, 215, 0), bg: RatColor::Black },
-                    CollectibleKind::Caps(caps_amount),
-                ));
+        // Drop entire NPC inventory on the ground (animals drop nothing).
+        if !is_wildlife {
+            if let (Some(inv), Some(p)) = (inventory, pos) {
+                for &item_entity in &inv.items {
+                    commands.entity(item_entity).insert(Position { x: p.x, y: p.y });
+                }
+                if !inv.items.is_empty() {
+                    combat_log.push_at(format!("{label} dropped their gear!"), p.as_grid_vec());
+                }
             }
-            let ammo_roll = value_noise(p.y.wrapping_add(kill_count.0 as i32 + 1), p.x, seed.0.wrapping_add(44444));
-            if ammo_roll < 0.3 {
-                let amount = ((ammo_roll * 15.0) as i32).max(1);
-                commands.spawn((
-                    Position { x: p.x, y: p.y },
-                    Item,
-                    Name(format!("{amount}x .36 Bullets")),
-                    Renderable { symbol: "·".into(), fg: RatColor::Rgb(180, 180, 180), bg: RatColor::Black },
-                    CollectibleKind::Bullets36(amount),
-                ));
+        }
+
+        // Loot drop: non-wildlife entities with a LootTable may also drop collectible supplies.
+        if !is_wildlife {
+            if let (Some(_lt), Some(p)) = (loot_table, pos) {
+                // Drop collectible supplies (caps + random ammo).
+                let coll_roll = value_noise(p.x.wrapping_add(kill_count.0 as i32 + 1), p.y, seed.0.wrapping_add(33333));
+                if coll_roll < 0.5 {
+                    let caps_amount = ((coll_roll * 20.0) as i32).max(1);
+                    commands.spawn((
+                        Position { x: p.x, y: p.y },
+                        Item,
+                        Name(format!("{caps_amount} Caps")),
+                        Renderable { symbol: "$".into(), fg: RatColor::Rgb(255, 215, 0), bg: RatColor::Black },
+                        CollectibleKind::Caps(caps_amount),
+                    ));
+                }
+                let ammo_roll = value_noise(p.y.wrapping_add(kill_count.0 as i32 + 1), p.x, seed.0.wrapping_add(44444));
+                if ammo_roll < 0.3 {
+                    let amount = ((ammo_roll * 15.0) as i32).max(1);
+                    commands.spawn((
+                        Position { x: p.x, y: p.y },
+                        Item,
+                        Name(format!("{amount}x .36 Bullets")),
+                        Renderable { symbol: "·".into(), fg: RatColor::Rgb(180, 180, 180), bg: RatColor::Black },
+                        CollectibleKind::Bullets36(amount),
+                    ));
+                }
             }
         }
 
