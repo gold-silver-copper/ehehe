@@ -1399,10 +1399,10 @@ fn fov_range_increases_with_cursor_distance() {
     assert!(range_far > range_close,
         "Far range ({}) should be larger than close range ({})", range_far, range_close);
 
-    // At distance 2, range should be approximately 60 (aggressive growth)
+    // At distance 2, range should be approximately 104 (80 base + 2*12 growth)
     let (range_mid, _) = visibility::compute_fov_params(Some(GridVec::new(2, 0)));
-    assert!(range_mid >= 55 && range_mid <= 65,
-        "At cursor distance 2, range should be ~60, got {}", range_mid);
+    assert!(range_mid >= 95 && range_mid <= 115,
+        "At cursor distance 2, range should be ~104, got {}", range_mid);
 }
 
 #[test]

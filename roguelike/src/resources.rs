@@ -191,6 +191,10 @@ pub struct SpellParticles {
 /// Maximum number of active combat particles to prevent unbounded growth.
 const MAX_PARTICLES: usize = 800;
 
+/// Number of movement sub-steps per tick for particle animations.
+/// Higher values make particles move faster and more visibly.
+const PARTICLE_SUB_STEPS: usize = 2;
+
 impl SpellParticles {
     /// Adds an expanding ring of particles for a grenade blast.
     /// Particles at greater distances from the origin appear later, creating
@@ -224,14 +228,13 @@ impl SpellParticles {
     /// Ticks all particles: counts down delays, then lifetimes and moves particles.
     /// Particles move multiple sub-steps per tick for visible, satisfying motion.
     pub fn tick(&mut self) {
-        let sub_steps = 2; // move particles multiple times per tick
         self.particles.retain_mut(|(pos, life, delay, _is_sand, vx, vy)| {
             if *delay > 0 {
                 *delay -= 1;
                 true // still waiting to appear
             } else {
                 // Move the particle multiple sub-steps for visible motion
-                for _ in 0..sub_steps {
+                for _ in 0..PARTICLE_SUB_STEPS {
                     if *life > 0 {
                         pos.x += *vx;
                         pos.y += *vy;

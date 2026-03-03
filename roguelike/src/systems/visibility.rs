@@ -8,7 +8,7 @@ use crate::resources::{CursorPosition, GameMapResource};
 use crate::typedefs::{CoordinateUnit, MyPoint};
 
 /// Minimum FOV radius when cursor is centered on the player (circle in all directions).
-pub const FOV_MIN_RADIUS: CoordinateUnit = 36;
+pub const FOV_MIN_RADIUS: CoordinateUnit = 80;
 
 /// Maximum FOV range when cursor is far from the player.
 pub const FOV_MAX_RANGE: CoordinateUnit = 120;
