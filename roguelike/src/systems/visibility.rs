@@ -145,8 +145,9 @@ pub fn visibility_system(
 ///
 /// When cursor is close: range = FOV_MIN_RADIUS (36), cos_threshold ≈ -1 (360°).
 /// At cursor distance 6: range ≈ 108, cos_threshold ≈ 0.0 (forward hemisphere).
-/// When cursor is far (~12 tiles): range = FOV_MAX_RANGE (120), cos_threshold ≈ 0.65 (cone ~50°).
-/// The FOV is always at least 3 tiles wide around the player.
+/// When cursor is very far (~20+ tiles): cos_threshold ≈ 0.985 (cone ~10°).
+/// This simulates tunnel vision when aiming far away.
+/// The keyhole effect (adjacent tiles always illuminated) is applied separately.
 pub fn compute_fov_params(cursor_dir: Option<GridVec>) -> (CoordinateUnit, f64) {
     let Some(dir) = cursor_dir else {
         return (FOV_MIN_RADIUS, -1.0); // full circle
@@ -158,16 +159,15 @@ pub fn compute_fov_params(cursor_dir: Option<GridVec>) -> (CoordinateUnit, f64) 
     }
 
     // Range grows aggressively: +12 tiles per tile of cursor distance.
-    // At dist=2: range ≈ 60. Caps at FOV_MAX_RANGE (120).
     let range = (FOV_MIN_RADIUS as f64 + dist * 12.0).min(FOV_MAX_RANGE as f64);
 
-    // Cone narrows gradually. Reaches max narrowing at dist ≈ 12.
-    // At dist=4: cos ≈ -0.33 (broad cone, nearly hemisphere).
-    // At dist=8: cos ≈ 0.33 (moderate cone ~70°).
-    // At dist=12+: cos ≈ 0.65 (cone ~50° full width).
-    // The max cos of 0.65 ensures the FOV is always at least ~3 tiles wide.
-    let cone_t = (dist / 12.0).min(1.0);
-    let cos_threshold = -1.0 + cone_t * 1.65;
+    // Cone narrows significantly with distance.
+    // At dist=4: cos ≈ -0.01 (broad cone, nearly hemisphere).
+    // At dist=8: cos ≈ 0.49 (moderate cone ~60°).
+    // At dist=12: cos ≈ 0.74 (cone ~42°).
+    // At dist=20+: cos ≈ 0.985 (cone ~10° — tunnel vision).
+    let cone_t = (dist / 20.0).min(1.0);
+    let cos_threshold = -1.0 + cone_t * 1.985;
 
     (range as CoordinateUnit, cos_threshold)
 }

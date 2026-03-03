@@ -288,7 +288,7 @@ fn select_desert_floor(biome: f64, detail: f64) -> Floor {
 }
 
 /// Number of distinct building types used during town generation.
-const BUILDING_TYPE_COUNT: u32 = 6;
+const BUILDING_TYPE_COUNT: u32 = 12;
 
 /// Generates deterministic building footprints for the western town.
 ///
@@ -450,7 +450,7 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
                 }
             }
         }
-        _ => {
+        5 => {
             // Post office: table (counter), crates (parcels), sign
             if iw >= 3 && ih >= 2 {
                 set_furniture(map, interior_x + 1, interior_y, Furniture::Table);
@@ -463,14 +463,90 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
                 }
             }
         }
+        6 => {
+            // Church: benches (pews) in rows, table (altar)
+            if iw >= 3 && ih >= 3 {
+                set_furniture(map, interior_x + iw / 2, interior_y, Furniture::Table);
+                for row in 1..ih.min(4) {
+                    set_furniture(map, interior_x, interior_y + row, Furniture::Bench);
+                    if iw >= 4 {
+                        set_furniture(map, interior_x + iw - 1, interior_y + row, Furniture::Bench);
+                    }
+                }
+            }
+        }
+        7 => {
+            // Bank: table (counter), barrels (vault), crates (strongboxes)
+            if iw >= 3 && ih >= 2 {
+                set_furniture(map, interior_x + 1, interior_y, Furniture::Table);
+                set_furniture(map, interior_x, interior_y + ih - 1, Furniture::Barrel);
+                if iw >= 4 {
+                    set_furniture(map, interior_x + iw - 1, interior_y + ih - 1, Furniture::Barrel);
+                    set_furniture(map, interior_x + iw - 1, interior_y, Furniture::Crate);
+                }
+            }
+        }
+        8 => {
+            // Hotel: table, chairs in rows (rooms suggested by furniture layout)
+            if iw >= 3 && ih >= 2 {
+                set_furniture(map, interior_x, interior_y, Furniture::Table);
+                set_furniture(map, interior_x + 1, interior_y, Furniture::Chair);
+                if ih >= 3 {
+                    set_furniture(map, interior_x, interior_y + 2, Furniture::Bench);
+                    if iw >= 4 {
+                        set_furniture(map, interior_x + iw - 1, interior_y + 2, Furniture::Bench);
+                    }
+                }
+                if iw >= 5 {
+                    set_furniture(map, interior_x + iw - 1, interior_y, Furniture::Barrel);
+                }
+            }
+        }
+        9 => {
+            // Jail: barrels (cells), sign (wanted poster)
+            if iw >= 3 && ih >= 2 {
+                set_furniture(map, interior_x, interior_y, Furniture::Sign);
+                set_furniture(map, interior_x + iw - 1, interior_y, Furniture::Barrel);
+                if ih >= 3 {
+                    set_furniture(map, interior_x, interior_y + ih - 1, Furniture::Barrel);
+                    set_furniture(map, interior_x + iw - 1, interior_y + ih - 1, Furniture::Barrel);
+                }
+            }
+        }
+        10 => {
+            // Undertaker: tables (slabs), crates (coffins)
+            if iw >= 3 && ih >= 2 {
+                set_furniture(map, interior_x + 1, interior_y, Furniture::Table);
+                if iw >= 4 {
+                    set_furniture(map, interior_x + 3.min(iw - 1), interior_y, Furniture::Table);
+                }
+                set_furniture(map, interior_x, interior_y + ih - 1, Furniture::Crate);
+                if iw >= 4 {
+                    set_furniture(map, interior_x + iw - 1, interior_y + ih - 1, Furniture::Crate);
+                }
+            }
+        }
+        _ => {
+            // Blacksmith: barrels (water quench), crates (supplies), hitching post (anvil stand-in)
+            if iw >= 3 && ih >= 2 {
+                set_furniture(map, interior_x, interior_y, Furniture::HitchingPost);
+                set_furniture(map, interior_x + 1, interior_y + ih - 1, Furniture::Barrel);
+                if iw >= 4 {
+                    set_furniture(map, interior_x + iw - 1, interior_y, Furniture::Crate);
+                    set_furniture(map, interior_x + iw - 1, interior_y + ih - 1, Furniture::WaterTrough);
+                }
+            }
+        }
     }
 }
 
-/// Helper: sets furniture at a position if within bounds and not occupied by a wall.
+/// Helper: sets furniture at a position if within bounds, not occupied by a wall,
+/// and not on a dirt road tile.
 fn set_furniture(map: &mut GameMap, x: CoordinateUnit, y: CoordinateUnit, furn: Furniture) {
     let pos = GridVec::new(x, y);
     if let Some(voxel) = map.get_voxel_at_mut(&pos)
-        && !matches!(voxel.furniture, Some(Furniture::Wall)) {
+        && !matches!(voxel.furniture, Some(Furniture::Wall))
+        && !matches!(voxel.floor, Some(Floor::Dirt)) {
             voxel.furniture = Some(furn);
         }
 }
@@ -535,6 +611,10 @@ fn place_desert_decorations(
                     continue;
                 }
                 if matches!(voxel.floor, Some(Floor::WoodPlanks)) {
+                    continue;
+                }
+                // Skip road tiles — no decorations on dirt roads.
+                if matches!(voxel.floor, Some(Floor::Dirt)) {
                     continue;
                 }
             } else {

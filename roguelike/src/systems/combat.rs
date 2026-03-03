@@ -310,15 +310,16 @@ pub fn ranged_attack_system(
 pub fn ai_ranged_attack_system(
     mut commands: Commands,
     mut intents: MessageReader<AiRangedAttackIntent>,
-    attacker_query: Query<(&Position, &CombatStats, Option<&Name>)>,
+    attacker_query: Query<(&Position, &CombatStats, Option<&Name>, Option<&Inventory>)>,
     target_query: Query<&Position>,
+    mut item_kind_query: Query<&mut ItemKind>,
     mut combat_log: ResMut<CombatLog>,
     mut sound_events: ResMut<SoundEvents>,
     mut game_map: ResMut<GameMapResource>,
     turn_counter: Res<TurnCounter>,
 ) {
     for intent in intents.read() {
-        let Ok((attacker_pos, attacker_stats, attacker_name)) = attacker_query.get(intent.attacker) else {
+        let Ok((attacker_pos, attacker_stats, attacker_name, inventory)) = attacker_query.get(intent.attacker) else {
             continue;
         };
         let Ok(target_pos) = target_query.get(intent.target) else {
@@ -337,7 +338,27 @@ pub fn ai_ranged_attack_system(
             continue;
         }
 
-        let damage = attacker_stats.attack;
+        // NPC consumes a loaded round from their gun, just like the player.
+        let mut damage = attacker_stats.attack;
+        if let Some(inv) = inventory {
+            let mut fired = false;
+            for &item_ent in &inv.items {
+                if let Ok(mut kind) = item_kind_query.get_mut(item_ent) {
+                    if let ItemKind::Gun { ref mut loaded, attack, .. } = *kind {
+                        if *loaded > 0 {
+                            *loaded -= 1;
+                            damage = attack;
+                            fired = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if !fired {
+                // No loaded gun — NPC can't fire this turn.
+                continue;
+            }
+        }
 
         // Compute bullet endpoint.
         let endpoint = bullet_endpoint(origin, dx, dy, intent.range);

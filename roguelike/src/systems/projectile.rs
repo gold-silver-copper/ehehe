@@ -139,7 +139,7 @@ pub fn spawn_shrapnel(
 /// or run out of penetration power.
 pub fn projectile_system(
     mut commands: Commands,
-    mut projectiles: Query<(Entity, &mut Position, &mut Projectile, &mut Renderable)>,
+    mut projectiles: Query<(Entity, &mut Position, &mut Projectile, &mut Renderable), Without<crate::components::ThrownExplosive>>,
     mut damage_events: MessageWriter<DamageEvent>,
     targets: Query<(Entity, &Position, &Health, Option<&Name>), (With<Hostile>, Without<Projectile>)>,
     player_query: Query<(Entity, &Position, &Health, Option<&Name>), (With<Player>, Without<Projectile>)>,

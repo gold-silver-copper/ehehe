@@ -262,6 +262,18 @@ impl Default for AiMemory {
     }
 }
 
+/// Marks an NPC as a group leader. When the leader dies, followers become
+/// more erratic and cowardly.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct GroupLeader;
+
+/// Marks an NPC as following a group leader entity.
+/// When the leader entity dies, the follower's courage drops significantly.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct GroupFollower {
+    pub leader: Entity,
+}
+
 /// Personality traits that modulate NPC AI behavior.
 /// Different NPCs exhibit different combat styles based on these parameters.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -297,6 +309,38 @@ pub enum Faction {
     Outlaws,
     Lawmen,
     Vaqueros,
+    /// Town civilians — shopkeepers, townsfolk. Allied with Lawmen.
+    Civilians,
+    /// Native American faction. Allied with Wildlife.
+    Indians,
+    /// Sheriff and deputies. Allied with Civilians and Lawmen.
+    Sheriff,
+}
+
+impl Faction {
+    /// Returns `true` if this faction considers `other` an ally.
+    /// Allied factions won't attack each other.
+    pub fn is_allied(&self, other: &Faction) -> bool {
+        if self == other {
+            return true;
+        }
+        matches!(
+            (self, other),
+            // Lawmen ↔ Civilians ↔ Sheriff
+            (Faction::Lawmen, Faction::Civilians)
+            | (Faction::Civilians, Faction::Lawmen)
+            | (Faction::Sheriff, Faction::Civilians)
+            | (Faction::Civilians, Faction::Sheriff)
+            | (Faction::Sheriff, Faction::Lawmen)
+            | (Faction::Lawmen, Faction::Sheriff)
+            // Indians ↔ Wildlife
+            | (Faction::Indians, Faction::Wildlife)
+            | (Faction::Wildlife, Faction::Indians)
+            // Outlaws ↔ Vaqueros
+            | (Faction::Outlaws, Faction::Vaqueros)
+            | (Faction::Vaqueros, Faction::Outlaws)
+        )
+    }
 }
 
 /// Bullet caliber for period-accurate cap-and-ball revolvers and rifles.
@@ -402,6 +446,17 @@ pub struct Projectile {
     pub penetration: i32,
     /// Entity that fired the projectile (to avoid self-damage for bullets).
     pub source: Entity,
+}
+
+/// A thrown explosive (dynamite or molotov) traveling through the air.
+/// When this projectile hits something (entity, wall) or reaches its target,
+/// it detonates, spawning the appropriate explosion/fire effect.
+#[derive(Component, Debug)]
+pub enum ThrownExplosive {
+    /// Dynamite: spawns shrapnel and environmental destruction on detonation.
+    Dynamite { damage: i32, radius: i32, grenade_index: usize },
+    /// Molotov: sets area on fire and generates smoke on detonation.
+    Molotov { damage: i32, radius: i32, item_index: usize },
 }
 
 // ─── Inventory & Item system ─────────────────────────────────────

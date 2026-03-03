@@ -91,6 +91,14 @@ pub const MONSTER_TEMPLATES: &[MonsterTemplate] = &[
     MonsterTemplate { name: "Cowboy", symbol: "C", fg: RatColor::Rgb(230, 180, 100), health: 100, attack: 6, speed: 30, sight_range: 12, faction: Faction::Lawmen, has_gun: true },
     // Tier 5: Outlaws - Gunslinger (uppercase symbols — human NPCs)
     MonsterTemplate { name: "Gunslinger", symbol: "G", fg: RatColor::Rgb(255, 80, 80), health: 100, attack: 8, speed: 38, sight_range: 14, faction: Faction::Outlaws, has_gun: true },
+    // Tier 6: Civilians — unarmed townsfolk
+    MonsterTemplate { name: "Civilian", symbol: "T", fg: RatColor::Rgb(180, 180, 220), health: 60, attack: 2, speed: 28, sight_range: 8, faction: Faction::Civilians, has_gun: false },
+    // Tier 7: Indians — native warriors
+    MonsterTemplate { name: "Indian Brave", symbol: "I", fg: RatColor::Rgb(180, 100, 60), health: 120, attack: 5, speed: 40, sight_range: 12, faction: Faction::Indians, has_gun: false },
+    MonsterTemplate { name: "Indian Scout", symbol: "i", fg: RatColor::Rgb(150, 90, 50), health: 80, attack: 4, speed: 45, sight_range: 14, faction: Faction::Indians, has_gun: false },
+    // Tier 8: Sheriff and deputies
+    MonsterTemplate { name: "Sheriff", symbol: "S", fg: RatColor::Rgb(255, 215, 0), health: 150, attack: 8, speed: 32, sight_range: 14, faction: Faction::Sheriff, has_gun: true },
+    MonsterTemplate { name: "Deputy", symbol: "D", fg: RatColor::Rgb(200, 180, 100), health: 100, attack: 6, speed: 30, sight_range: 12, faction: Faction::Sheriff, has_gun: true },
 ];
 
 /// Spawns a hostile entity from a `MonsterTemplate` at the given position,
@@ -111,7 +119,7 @@ pub fn spawn_monster(
     health_bonus: i32,
     attack_bonus: i32,
     drop_chance: f64,
-) {
+) -> Entity {
     let scaled_health = template.health + health_bonus;
     let scaled_attack = template.attack + attack_bonus;
 
@@ -259,5 +267,5 @@ pub fn spawn_monster(
             current: npc_stamina,
             max: npc_stamina,
         },
-    ));
+    )).id()
 }
