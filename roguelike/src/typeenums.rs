@@ -114,6 +114,18 @@ pub enum Props {
     Sign,
     /// A bale of hay — blocks movement but not vision, and is flammable.
     HayBale,
+    /// Stone well — blocks movement, source of water.
+    Well,
+    /// Gallows post — blocks movement and vision.
+    Gallows,
+    /// Wooden water tower leg — blocks movement and vision.
+    WaterTower,
+    /// Railroad track — passable, does not block vision.
+    RailTrack,
+    /// Windmill blade/structure — blocks movement and vision.
+    Windmill,
+    /// Iron lamp post — blocks movement but not vision.
+    LampPost,
 }
 
 impl Props {
@@ -127,7 +139,7 @@ impl Props {
     /// Most solid objects block movement; low/open objects like fences and
     /// water troughs allow passage.
     pub fn blocks_movement(&self) -> bool {
-        !matches!(self, Props::Fence | Props::WaterTrough)
+        !matches!(self, Props::Fence | Props::WaterTrough | Props::RailTrack)
     }
 
     /// Returns `true` if this prop blocks line-of-sight.
@@ -137,7 +149,7 @@ impl Props {
             // Short/open objects: you can see over/through them
             Props::Fence | Props::WaterTrough | Props::Bush
             | Props::Bench | Props::Chair | Props::HayBale
-            | Props::Sign => false,
+            | Props::Sign | Props::RailTrack | Props::LampPost => false,
             _ => true,
         }
     }
@@ -150,6 +162,7 @@ impl Props {
             | Props::Barrel | Props::Crate | Props::Table
             | Props::Chair | Props::Piano | Props::Bench
             | Props::HayBale | Props::Sign | Props::Fence
+            | Props::Gallows | Props::WaterTower | Props::Windmill
         )
     }
 }
@@ -174,6 +187,12 @@ impl std::fmt::Display for Props {
             Props::Piano => write!(f, "Piano"),
             Props::Sign => write!(f, "Sign"),
             Props::HayBale => write!(f, "Hay Bale"),
+            Props::Well => write!(f, "Well"),
+            Props::Gallows => write!(f, "Gallows"),
+            Props::WaterTower => write!(f, "Water Towr"),
+            Props::RailTrack => write!(f, "Rail Track"),
+            Props::Windmill => write!(f, "Windmill"),
+            Props::LampPost => write!(f, "Lamp Post"),
         }
     }
 }

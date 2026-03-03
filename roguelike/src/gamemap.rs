@@ -392,9 +392,20 @@ impl GameMap {
         place_cemetery(&mut map, width, height, seed);
         place_corral(&mut map, width, height, seed);
 
+        // ── Step 5c: Additional urban features ──────────────────────
+        place_town_well(&mut map, width, height, seed);
+        place_gallows(&mut map, width, height, seed);
+        place_water_tower(&mut map, width, height, seed);
+        place_railroad(&mut map, width, height, seed);
+        place_windmill(&mut map, width, height, seed);
+
         // ── Step 6: Street props along every avenue ──────────────
         for &ay in &avenue_ys {
             place_street_props(&mut map, width, ay, avenue_half_width, seed);
+        }
+        // ── Step 6b: Lamp posts along cross streets ─────────────
+        for &cx in &cross_xs {
+            place_lamp_posts(&mut map, height, cx, seed);
         }
 
         // ── Step 7: Decorative elements in open areas ───────────────
@@ -1756,6 +1767,180 @@ fn place_corral(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit
     set_prop(map, px + cw / 2, py + ch / 2, Props::WaterTrough);
     set_prop(map, px + 2, py + ch - 3, Props::HitchingPost);
     set_prop(map, px + cw - 3, py + ch - 3, Props::HitchingPost);
+}
+
+/// Places a town well — a circular stone structure with water.
+fn place_town_well(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) {
+    if width < 60 || height < 60 { return; }
+    let w_seed = seed.wrapping_add(444555);
+    // Place near the town center, offset from plaza
+    let cx = width / 2 - 10 + (value_noise(4, 4, w_seed) * 8.0) as CoordinateUnit;
+    let cy = height / 2 - 10 + (value_noise(5, 5, w_seed) * 8.0) as CoordinateUnit;
+    let wx = cx.clamp(4, width - 4);
+    let wy = cy.clamp(4, height - 4);
+
+    // 3×3 well structure: stone ring with water center
+    for dy in -1..=1i32 {
+        for dx in -1..=1i32 {
+            let pos = GridVec::new(wx + dx, wy + dy);
+            if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                if dx == 0 && dy == 0 {
+                    voxel.floor = Some(Floor::ShallowWater);
+                    voxel.props = None;
+                } else {
+                    voxel.props = Some(Props::Well);
+                    voxel.floor = Some(Floor::Sidewalk);
+                }
+            }
+        }
+    }
+}
+
+/// Places a gallows structure — wooden platform with posts.
+fn place_gallows(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) {
+    if width < 80 || height < 60 { return; }
+    let g_seed = seed.wrapping_add(555777);
+    // Place near the town center, slightly offset
+    let cx = width / 2 + 20 + (value_noise(3, 3, g_seed) * 10.0) as CoordinateUnit;
+    let cy = height / 2 - 15 + (value_noise(4, 4, g_seed) * 10.0) as CoordinateUnit;
+    let gx = cx.clamp(4, width - 8);
+    let gy = cy.clamp(4, height - 8);
+
+    // 4×4 gallows platform
+    for dy in 0..4i32 {
+        for dx in 0..4i32 {
+            let pos = GridVec::new(gx + dx, gy + dy);
+            if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                voxel.floor = Some(Floor::WoodPlanks);
+                voxel.props = None;
+            }
+        }
+    }
+    // Gallows posts at corners and crossbeam
+    set_prop(map, gx, gy, Props::Gallows);
+    set_prop(map, gx, gy + 3, Props::Gallows);
+    set_prop(map, gx + 1, gy, Props::Gallows);
+}
+
+/// Places a tall water tower near the edge of town.
+fn place_water_tower(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) {
+    if width < 80 || height < 60 { return; }
+    let wt_seed = seed.wrapping_add(666888);
+    let cx = width / 4 + (value_noise(6, 6, wt_seed) * 20.0) as CoordinateUnit;
+    let cy = height / 4 + (value_noise(7, 7, wt_seed) * 10.0) as CoordinateUnit;
+    let tx = cx.clamp(4, width - 8);
+    let ty = cy.clamp(4, height - 8);
+
+    // 5×5 water tower: 4 leg posts, tank on top (represented as tower height)
+    for dy in 0..5i32 {
+        for dx in 0..5i32 {
+            let pos = GridVec::new(tx + dx, ty + dy);
+            if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                voxel.floor = Some(Floor::Dirt);
+                voxel.props = None;
+            }
+            map.building_heights.insert(pos, HeightTier::Tower);
+        }
+    }
+    // Four corner legs
+    set_prop(map, tx, ty, Props::WaterTower);
+    set_prop(map, tx + 4, ty, Props::WaterTower);
+    set_prop(map, tx, ty + 4, Props::WaterTower);
+    set_prop(map, tx + 4, ty + 4, Props::WaterTower);
+}
+
+/// Places railroad tracks along the southern edge of the town.
+fn place_railroad(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) {
+    if width < 80 || height < 80 { return; }
+    let rail_seed = seed.wrapping_add(777999);
+    // Railroad runs horizontally near the southern third of the map
+    let rail_y = height * 3 / 4 + 15 + (value_noise(8, 8, rail_seed) * 6.0) as CoordinateUnit;
+    let rail_y = rail_y.clamp(40, height - 10);
+
+    for x in 4..width - 4 {
+        // Slight wobble for realism
+        let wobble = (value_noise(x, rail_y, rail_seed) * 1.5) as CoordinateUnit;
+        let y = rail_y + wobble;
+        if y <= 0 || y >= height - 1 { continue; }
+        let pos = GridVec::new(x, y);
+        if let Some(voxel) = map.get_voxel_at(&pos) {
+            // Don't place tracks over water or buildings
+            if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)) { continue; }
+            if matches!(voxel.props, Some(Props::Wall)) { continue; }
+        }
+        if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+            voxel.floor = Some(Floor::Gravel);
+            voxel.props = Some(Props::RailTrack);
+        }
+        // Gravel bed on either side of the track
+        for &dy in &[-1i32, 1] {
+            let side_pos = GridVec::new(x, y + dy);
+            if let Some(voxel) = map.get_voxel_at_mut(&side_pos) {
+                if voxel.props.is_none() && !matches!(voxel.floor, Some(Floor::WoodPlanks) | Some(Floor::ShallowWater) | Some(Floor::DeepWater)) {
+                    voxel.floor = Some(Floor::Gravel);
+                }
+            }
+        }
+    }
+}
+
+/// Places a windmill on the outskirts of town.
+fn place_windmill(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) {
+    if width < 80 || height < 60 { return; }
+    let wm_seed = seed.wrapping_add(888111);
+    let cx = width * 3 / 4 + (value_noise(9, 9, wm_seed) * 15.0) as CoordinateUnit;
+    let cy = height / 4 + (value_noise(10, 10, wm_seed) * 10.0) as CoordinateUnit;
+    let mx = cx.clamp(4, width - 8);
+    let my = cy.clamp(4, height - 8);
+
+    // 5×5 windmill base with stone walls
+    for dy in 0..5i32 {
+        for dx in 0..5i32 {
+            let pos = GridVec::new(mx + dx, my + dy);
+            let is_border = dx == 0 || dx == 4 || dy == 0 || dy == 4;
+            let is_door = dy == 4 && dx == 2;
+            if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                if is_border && !is_door {
+                    voxel.props = Some(Props::Wall);
+                    voxel.floor = Some(Floor::WoodPlanks);
+                    map.wall_materials.insert(pos, WallMaterial::Stone);
+                } else {
+                    voxel.props = None;
+                    voxel.floor = Some(Floor::WoodPlanks);
+                }
+            }
+            map.building_heights.insert(pos, HeightTier::Tower);
+        }
+    }
+    // Windmill blades (decorative props extending from tower)
+    set_prop(map, mx + 2, my - 1, Props::Windmill);
+    set_prop(map, mx - 1, my + 2, Props::Windmill);
+    set_prop(map, mx + 5, my + 2, Props::Windmill);
+    // Interior: grain storage
+    set_prop(map, mx + 1, my + 1, Props::Barrel);
+    set_prop(map, mx + 3, my + 1, Props::Barrel);
+    set_prop(map, mx + 2, my + 2, Props::Crate);
+}
+
+/// Places lamp posts along cross streets at regular intervals.
+fn place_lamp_posts(map: &mut GameMap, height: CoordinateUnit, street_x: CoordinateUnit, seed: NoiseSeed) {
+    let lamp_seed = seed.wrapping_add(111333);
+    for y in (40..height - 40).step_by(12) {
+        let noise = value_noise(street_x, y, lamp_seed);
+        if noise > 0.4 { continue; } // skip some positions for variety
+        // Place lamp posts on both sides of the street
+        for &dx in &[-3i32, 3] {
+            let x = street_x + dx;
+            let pos = GridVec::new(x, y);
+            if let Some(voxel) = map.get_voxel_at(&pos) {
+                if voxel.props.is_none()
+                    && matches!(voxel.floor, Some(Floor::Sidewalk) | Some(Floor::Dirt) | Some(Floor::Sand))
+                {
+                    set_prop(map, x, y, Props::LampPost);
+                }
+            }
+        }
+    }
 }
 
 /// Clears all props within a given radius of a point.
