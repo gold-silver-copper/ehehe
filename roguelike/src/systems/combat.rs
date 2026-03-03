@@ -291,6 +291,21 @@ pub fn death_system(
                 }
             }
 
+        // Spawn a corpse marker for human (non-wildlife) NPCs.
+        if !is_wildlife {
+            if let Some(p) = pos {
+                commands.spawn((
+                    Position { x: p.x, y: p.y },
+                    Name(format!("{label}'s corpse")),
+                    Renderable {
+                        symbol: "X".into(),
+                        fg: RatColor::Rgb(120, 60, 60),
+                        bg: RatColor::Black,
+                    },
+                ));
+            }
+        }
+
         commands.entity(entity).despawn();
     }
 }

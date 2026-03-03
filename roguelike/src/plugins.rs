@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 
 use crate::components::{
-    BlocksMovement, Caliber, CameraFollow, CombatStats, Energy,
+    BlocksMovement, Caliber, CameraFollow, CombatStats, Energy, Faction,
     GroupFollower, GroupLeader,
     Health, Inventory, Item, ItemKind, Stamina, Name, Player, Position,
     Renderable, Speed, Viewshed, ACTION_COST,
@@ -322,6 +322,7 @@ fn do_spawn_player(commands: &mut Commands, _seed: u64, map: &GameMapResource) {
         },
         CameraFollow,
         BlocksMovement,
+        Faction::Civilians,
         Health {
             current: 100,
             max: 100,

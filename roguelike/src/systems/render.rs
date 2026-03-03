@@ -158,7 +158,7 @@ pub fn draw_system(
         {
             let mut enemy_visible: HashSet<MyPoint> = HashSet::new();
             for (vs, faction, npc_pos) in &hostile_viewsheds {
-                if faction.is_some_and(|f| matches!(f, Faction::Wildlife)) {
+                if faction.is_some_and(|f| matches!(f, Faction::Wildlife | Faction::Civilians)) {
                     continue;
                 }
                 // Only tint FOV for NPCs that the player can currently see
@@ -449,7 +449,7 @@ pub fn draw_system(
                         if let Some(ref floor) = voxel.floor {
                             let entry: Option<(String, RatColor, String)> = match floor {
                                 crate::typeenums::Floor::SandCloud => {
-                                    Some(("░".into(), RatColor::Rgb(210, 180, 120), "Smoke Cloud".into()))
+                                    Some(("*".into(), RatColor::Rgb(210, 180, 120), "Smoke Cloud".into()))
                                 }
                                 crate::typeenums::Floor::Fire => {
                                     Some(("^".into(), RatColor::Rgb(255, 140, 0), "Fire".into()))
@@ -787,8 +787,8 @@ fn render_command_bar(frame: &mut ratatui::Frame, area: Rect, input_state: &Inpu
 fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
     let binding_count = KEYBINDINGS.len() as u16;
     let w = 62u16.min(game_area.width.saturating_sub(4));
-    // blank(1) + title(1) + blank(1) + narrative(2) + blank(1) + objective(2) + blank(1) + bindings + blank(1) + press-any(1) + border(2) = 13 + bindings
-    let h = (binding_count + 13).min(game_area.height.saturating_sub(4));
+    // Extra lines: alliances(7) + roundhouse(3) = 10 more lines
+    let h = (binding_count + 23).min(game_area.height.saturating_sub(4));
 
     if w < 20 || h < 10 {
         return;
@@ -815,6 +815,16 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
         Line::from(""),
         Line::from("  Head to the ★ at the top-right!").dark_gray(),
         Line::from("  Watch out for enemies and the river.").dark_gray(),
+        Line::from(""),
+        Line::from("  Faction Alliances:").bold().yellow(),
+        Line::from("  You are a Civilian. Allies:").white(),
+        Line::from("    Civilians <-> Lawmen <-> Sheriff").dark_gray(),
+        Line::from("    Outlaws   <-> Vaqueros").dark_gray(),
+        Line::from("    Wildlife  <-> Indians").dark_gray(),
+        Line::from(""),
+        Line::from("  Roundhouse kick (F) destroys").white(),
+        Line::from("  everything around you — props,").white(),
+        Line::from("  furniture, and all adjacent enemies!").white(),
         Line::from(""),
     ];
     for binding in KEYBINDINGS {

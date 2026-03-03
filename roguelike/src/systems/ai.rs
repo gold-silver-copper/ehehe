@@ -295,13 +295,13 @@ pub fn factions_are_hostile(a: Faction, b: Faction) -> bool {
 const DODGE_CHANCE: f64 = 0.20;
 
 /// Patrol radius: how far an NPC will wander from its spawn point.
-const PATROL_RADIUS: i32 = 8;
+const PATROL_RADIUS: i32 = 12;
 
 /// HP fraction below which an NPC considers fleeing (if courage is low enough).
 const FLEE_HP_THRESHOLD: f64 = 0.3;
 
 /// Number of turns memory persists after losing sight of a target.
-const MEMORY_DURATION: u32 = 25;
+const MEMORY_DURATION: u32 = 40;
 
 // ─────────────────────── AI Decision Helpers ───────────────────────
 
@@ -1069,6 +1069,23 @@ pub fn ai_system(
                         }
                     }
                 }
+                // Proactive reload: if not in LOS or out of range but have
+                // an empty gun, reload while closing distance.
+                if !used_gun && dist > 2 {
+                    if let Some(ref mut inv) = inventory {
+                        let empty_gun = inv.items.iter().copied().find(|&ent| {
+                            item_kinds.get(ent).ok().is_some_and(|k|
+                                matches!(k, ItemKind::Gun { loaded, capacity, .. } if *loaded == 0 && *capacity > 0)
+                            )
+                        });
+                        if let Some(gun_entity) = empty_gun
+                            && let Ok(mut kind) = item_kinds.get_mut(gun_entity)
+                                && let ItemKind::Gun { ref mut loaded, .. } = *kind {
+                                    *loaded += 1;
+                                    used_gun = true;
+                                }
+                    }
+                }
                 if used_gun {
                     energy.spend_action();
                     continue;
@@ -1136,7 +1153,18 @@ pub fn ai_system(
                 }
 
                 // A* pathfinding toward target.
-                let step = a_star_first_step(my_pos, target_vec, |pos| {
+                // Occasionally attempt to flank by adding a perpendicular
+                // offset to the goal so the NPC approaches from the side.
+                let flank_hash = (my_pos.x.wrapping_mul(31) ^ my_pos.y.wrapping_mul(17))
+                    .wrapping_add(turn_counter.0 as i32) as u32;
+                let flank_goal = if dist > 3 && flank_hash.is_multiple_of(3) {
+                    let perp = (target_vec - my_pos).rotate_90_cw().king_step();
+                    let candidate = target_vec + perp;
+                    if game_map.0.is_passable(&candidate) { candidate } else { target_vec }
+                } else {
+                    target_vec
+                };
+                let step = a_star_first_step(my_pos, flank_goal, |pos| {
                     is_walkable_for_ai(pos, entity, &game_map, &spatial, &blockers)
                 })
                 .unwrap_or_else(|| (target_vec - my_pos).king_step());
