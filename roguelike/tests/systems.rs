@@ -33,6 +33,7 @@ fn test_app() -> App {
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
+    app.init_resource::<SpectatingAfterDeath>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
     app.insert_resource(MapSeed(42));
@@ -569,6 +570,7 @@ fn test_app_with_spells() -> App {
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
+    app.init_resource::<SpectatingAfterDeath>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
     app.insert_resource(MapSeed(42));
@@ -977,6 +979,7 @@ fn test_app_with_ranged() -> App {
     app.init_resource::<DynamicRng>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
+    app.init_resource::<SpectatingAfterDeath>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
     app.insert_resource(MapSeed(42));
@@ -1443,6 +1446,7 @@ fn test_app_with_cactus() -> App {
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
+    app.init_resource::<SpectatingAfterDeath>();
     app.init_state::<GameState>();
     app.add_sub_state::<TurnState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
@@ -1810,6 +1814,7 @@ fn test_app_with_ai() -> App {
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
+    app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
     app.init_resource::<Collectibles>();
     app.init_state::<GameState>();
