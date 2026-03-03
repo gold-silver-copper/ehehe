@@ -360,33 +360,77 @@ fn do_spawn_player(commands: &mut Commands, seed: u64, map: &GameMapResource) {
     ));
 }
 
-/// Helper: spawns monsters on passable tiles using deterministic noise placement.
+/// Helper: spawns monsters in distinct faction groups across the map.
+/// Groups are placed at deterministic positions far from the player spawn,
+/// with each group containing NPCs of the same faction.
 fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) {
-    let spawn_seed = seed.wrapping_add(54321);
-    let template_seed = seed.wrapping_add(98765);
+    let group_seed = seed.wrapping_add(54321);
     let min_spawn_dist_sq = 12 * 12;
+    let group_radius = 6i32; // NPCs spawn within this radius of group center
 
-    for y in 1..map.0.height - 1 {
-        for x in 1..map.0.width - 1 {
-            let pos = GridVec::new(x, y);
+    // Faction-template pairs: each group spawns NPCs from one faction.
+    let faction_templates: &[&[usize]] = &[
+        &[0, 1],    // Wildlife: Coyote(0), Rattlesnake(1)
+        &[2, 5],    // Outlaws: Outlaw(2), Gunslinger(5)
+        &[3],       // Vaqueros: Vaquero(3)
+        &[4],       // Lawmen: Cowboy(4)
+    ];
 
-            if pos.distance_squared(SPAWN_POINT) < min_spawn_dist_sq {
+    // Generate group centers using deterministic noise-based placement.
+    // Scan coarse grid cells (every 30 tiles) and place groups where noise is low.
+    let cell_size = 30i32;
+    let mut group_idx = 0u64;
+
+    for cy in (cell_size..map.0.height - cell_size).step_by(cell_size as usize) {
+        for cx in (cell_size..map.0.width - cell_size).step_by(cell_size as usize) {
+            let center = GridVec::new(cx, cy);
+
+            if center.distance_squared(SPAWN_POINT) < min_spawn_dist_sq * 2 {
                 continue;
             }
-            if !map.0.is_passable(&pos) {
-                continue;
+
+            let noise = value_noise(cx, cy, group_seed);
+            if noise > 0.25 {
+                continue; // Only ~25% of cells get a group
             }
 
-            let noise = value_noise(x, y, spawn_seed);
-            if noise > 0.02 {
-                continue;
+            // Select faction for this group based on position hash.
+            let faction_idx = (group_idx as usize) % faction_templates.len();
+            let templates = faction_templates[faction_idx];
+            group_idx += 1;
+
+            // Spawn 3-5 NPCs per group within the radius.
+            let group_size_noise = value_noise(cx, cy, group_seed.wrapping_add(11111));
+            let group_size = 3 + (group_size_noise * 3.0) as i32; // 3-5
+
+            let mut spawned = 0;
+            for dy in -group_radius..=group_radius {
+                for dx in -group_radius..=group_radius {
+                    if spawned >= group_size {
+                        break;
+                    }
+                    let pos = GridVec::new(cx + dx, cy + dy);
+                    if pos.distance_squared(SPAWN_POINT) < min_spawn_dist_sq {
+                        continue;
+                    }
+                    if !map.0.is_passable(&pos) {
+                        continue;
+                    }
+
+                    let tile_noise = value_noise(pos.x, pos.y, group_seed.wrapping_add(22222));
+                    if tile_noise > 0.15 {
+                        continue; // Sparse placement within group
+                    }
+
+                    let template_idx = templates[(spawned as usize) % templates.len()];
+                    let template = &MONSTER_TEMPLATES[template_idx];
+                    spawn::spawn_monster(commands, template, pos.x, pos.y, 0, 0, 0, 0, 0.25);
+                    spawned += 1;
+                }
+                if spawned >= group_size {
+                    break;
+                }
             }
-
-            let template_noise = value_noise(x, y, template_seed);
-            let idx = (template_noise * MONSTER_TEMPLATES.len() as f64) as usize;
-            let template = &MONSTER_TEMPLATES[idx.min(MONSTER_TEMPLATES.len() - 1)];
-
-            spawn::spawn_monster(commands, template, x, y, 0, 0, 0, 0, 0.25);
         }
     }
 }
