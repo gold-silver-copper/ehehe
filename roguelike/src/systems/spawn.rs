@@ -29,7 +29,7 @@ const NICKNAMES: &[&str] = &[
 
 const LAST_NAMES_FIRST: &[&str] = &[
     "Red", "Black", "White", "Green", "Brown",
-    "Wor", "Win", "North", "South", "West",
+    "Wood", "Win", "North", "South", "West",
     "East", "High", "Low", "Long", "Short",
     "Stone", "Iron", "Gold", "Silver", "Ash",
 ];
