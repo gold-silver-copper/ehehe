@@ -399,7 +399,7 @@ pub fn ai_system(
         (Entity, &Position, &mut AiState, Option<&mut Viewshed>, &mut Energy, Option<&Faction>, Option<&mut AiLookDir>, Option<&PatrolOrigin>, Option<&mut Inventory>, Option<&mut Health>, Option<&mut Stamina>, Option<&CombatStats>, Option<&mut AiMemory>, Option<&AiPersonality>),
         Without<Player>,
     >,
-    player_query: Query<(Entity, &Position), With<Player>>,
+    player_query: Query<(Entity, &Position, &Health), With<Player>>,
     npc_positions: Query<(Entity, &Position, Option<&Faction>), Without<Player>>,
     floor_items: Query<(Entity, &Position), With<Item>>,
     hostile_positions: Query<(Entity, &Position), With<Hostile>>,
@@ -415,7 +415,13 @@ pub fn ai_system(
     (dynamic_rng, seed, spell_particles): (Res<crate::resources::DynamicRng>, Res<crate::resources::MapSeed>, Res<crate::resources::SpellParticles>),
 ) {
     let player_info = player_query.single().ok();
-    let player_vec = player_info.map(|(_, p)| p.as_grid_vec());
+    // When the player is dead, NPCs should no longer target them.
+    let player_alive = player_info.as_ref().is_some_and(|(_, _, hp)| !hp.is_dead());
+    let player_vec = if player_alive {
+        player_info.as_ref().map(|(_, p, _)| p.as_grid_vec())
+    } else {
+        None
+    };
 
     let sand_cloud_tiles: HashSet<GridVec> = spell_particles.particles.iter()
         .filter(|(_, life, delay, _)| *delay == 0 && *life > 0)
@@ -463,7 +469,7 @@ pub fn ai_system(
         // Faction targets are preferred only when strictly closer than the player.
         let chase_target: Option<(Entity, GridVec)> = {
             let player_option = if player_visible {
-                player_info.map(|(e, p)| (e, p.as_grid_vec()))
+                player_info.map(|(e, p, _)| (e, p.as_grid_vec()))
             } else {
                 None
             };
@@ -760,13 +766,12 @@ pub fn ai_system(
                 energy.spend_action();
             }
             AiState::Chasing => {
-                let sight_range = viewshed.as_ref().map(|vs| vs.range).unwrap_or(8);
-                let player_in_range = player_vec.is_some_and(|pv|
-                    my_pos.chebyshev_distance(pv) <= sight_range
-                );
                 // Pick the closest hostile target (player or faction enemy).
-                let player_option = if player_visible || player_in_range {
-                    player_info.map(|(e, p)| (e, p.as_grid_vec()))
+                // Only use viewshed-based visibility (which respects walls via
+                // shadowcasting) — never raw distance alone. This prevents
+                // NPC line-of-sight from bleeding through walls.
+                let player_option = if player_visible {
+                    player_info.map(|(e, p, _)| (e, p.as_grid_vec()))
                 } else {
                     None
                 };

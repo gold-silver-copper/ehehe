@@ -1968,11 +1968,19 @@ fn ai_chasing_npc_moves_toward_player() {
     app.world_mut().get_mut::<AiState>(npc).unwrap().clone_from(&AiState::Chasing);
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
 
+    // Pre-populate NPC viewshed with player position so it can see the player.
+    // The AI system now requires viewshed-based visibility (not raw distance).
+    app.world_mut().get_mut::<Viewshed>(npc).unwrap()
+        .visible_tiles.insert(GridVec::new(60, 40));
+
     let initial_pos = *app.world().get::<Position>(npc).unwrap();
 
     // Run a few ticks for AI to process
     for _ in 0..5 {
         app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+        // Re-populate viewshed each tick since visibility_system may clear it
+        app.world_mut().get_mut::<Viewshed>(npc).unwrap()
+            .visible_tiles.insert(GridVec::new(60, 40));
         app.update();
     }
 
