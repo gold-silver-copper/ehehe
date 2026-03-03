@@ -231,7 +231,9 @@ impl GameMap {
 
         // ── Step 3: Curved street grid with sidewalks ────────────────
         // Horizontal avenues: wide dirt carriage roads flanked by sidewalks
-        let avenue_spacing = 36; // more space between avenues for bigger blocks
+        // Avenue spacing varies per seed for unique city feel.
+        let spacing_noise = value_noise(0, 0, seed.wrapping_add(99900));
+        let avenue_spacing = 32 + (spacing_noise * 12.0) as CoordinateUnit; // 32-44
         let avenue_half_width = 3; // carriage road half-width (7 tiles total)
         let sidewalk_width = 2; // sidewalk on each side of the road
         let mut avenue_ys: Vec<CoordinateUnit> = Vec::new();
@@ -281,7 +283,9 @@ impl GameMap {
 
         // Vertical cross streets with sinusoidal curvature and sidewalks
         let cross_seed = seed.wrapping_add(66666);
-        let cross_spacing = 32; // wider spacing for bigger lots
+        // Cross street spacing varies per seed.
+        let cross_noise = value_noise(1, 1, seed.wrapping_add(99901));
+        let cross_spacing = 28 + (cross_noise * 14.0) as CoordinateUnit; // 28-42
         let cross_half_width = 2; // narrower than avenues
         let cross_sidewalk_width = 1;
         let mut cross_xs: Vec<CoordinateUnit> = Vec::new();
@@ -289,7 +293,7 @@ impl GameMap {
             let mut cx = 40i32;
             let mut ci = 0i32;
             while cx < width - 40 {
-                let jitter = (value_noise(ci, 0, cross_seed) * 6.0) as CoordinateUnit - 3;
+                let jitter = (value_noise(ci, 0, cross_seed) * 10.0) as CoordinateUnit - 5;
                 let actual_cx = (cx + jitter).clamp(2, width - 3);
                 cross_xs.push(actual_cx);
                 let curve_amp = 2.0 + value_noise(ci, 1, cross_seed) * 3.0;
@@ -753,10 +757,10 @@ fn generate_buildings(
                 });
             }
 
-            // Gap between buildings: narrow (0-2 tiles) to encourage shared
-            // walls and narrow alleys within the same block.
+            // Gap between buildings: wider gaps (2-6 tiles) to create open
+            // spaces and breathing room between structures.
             let gap_noise = value_noise(cx + 1, bldg_index as i32, bldg_seed.wrapping_add(4444));
-            cx += bw + (gap_noise * 3.0) as CoordinateUnit;
+            cx += bw + 2 + (gap_noise * 5.0) as CoordinateUnit;
             bldg_index += 1;
         }
     }

@@ -3288,8 +3288,8 @@ fn ai_memory_expires_after_duration() {
     }
     app.world_mut().get_mut::<AiState>(npc).unwrap().clone_from(&AiState::Chasing);
 
-    // Advance turn counter well past MEMORY_DURATION (25)
-    app.world_mut().resource_mut::<TurnCounter>().0 = 30;
+    // Advance turn counter well past MEMORY_DURATION (40)
+    app.world_mut().resource_mut::<TurnCounter>().0 = 45;
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
 
     app.update();

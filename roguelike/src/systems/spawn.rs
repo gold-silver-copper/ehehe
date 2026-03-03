@@ -170,8 +170,8 @@ pub const MONSTER_TEMPLATES: &[MonsterTemplate] = &[
     MonsterTemplate { name: "Cowboy", symbol: "@", fg: RatColor::Rgb(100, 180, 255), health: 100, attack: 6, speed: 30, sight_range: 12, faction: Faction::Lawmen, has_gun: true },
     // Tier 5: Outlaws - Gunslinger — same faction color as Outlaws (red-orange)
     MonsterTemplate { name: "Gunslinger", symbol: "@", fg: RatColor::Rgb(255, 100, 50), health: 100, attack: 8, speed: 38, sight_range: 14, faction: Faction::Outlaws, has_gun: true },
-    // Tier 6: Civilians — faction color: light purple
-    MonsterTemplate { name: "Civilian", symbol: "@", fg: RatColor::Rgb(180, 160, 240), health: 60, attack: 2, speed: 28, sight_range: 8, faction: Faction::Civilians, has_gun: false },
+    // Tier 6: Civilians — faction color: off-white/off-gray (player is pure white)
+    MonsterTemplate { name: "Civilian", symbol: "@", fg: RatColor::Rgb(200, 195, 185), health: 60, attack: 2, speed: 28, sight_range: 8, faction: Faction::Civilians, has_gun: false },
     // Tier 7: Indians — faction color: warm brown
     MonsterTemplate { name: "Indian Brave", symbol: "@", fg: RatColor::Rgb(200, 120, 60), health: 120, attack: 5, speed: 40, sight_range: 12, faction: Faction::Indians, has_gun: false },
     MonsterTemplate { name: "Indian Scout", symbol: "@", fg: RatColor::Rgb(200, 120, 60), health: 80, attack: 4, speed: 45, sight_range: 14, faction: Faction::Indians, has_gun: false },
