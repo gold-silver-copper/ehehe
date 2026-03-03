@@ -515,6 +515,20 @@ impl ItemKind {
             ItemKind::WaterBucket { blunt_damage, .. } => *blunt_damage,
         }
     }
+
+    /// Returns a human-readable display name for this item kind.
+    pub fn display_name(&self) -> String {
+        match self {
+            ItemKind::Gun { name, .. } => name.clone(),
+            ItemKind::Knife { .. } => "Knife".into(),
+            ItemKind::Tomahawk { .. } => "Tomahawk".into(),
+            ItemKind::Grenade { .. } => "Dynamite".into(),
+            ItemKind::Whiskey { .. } => "Whiskey Bottle".into(),
+            ItemKind::Molotov { .. } => "Molotov".into(),
+            ItemKind::Bow { .. } => "Bow".into(),
+            ItemKind::WaterBucket { .. } => "Water Bucket".into(),
+        }
+    }
 }
 
 /// Marker component for a thrown item (knife/tomahawk) that has landed
@@ -526,6 +540,18 @@ pub struct Thrown;
 #[derive(Component, Debug, Default)]
 pub struct Inventory {
     pub items: Vec<Entity>,
+}
+
+impl Inventory {
+    /// Removes and returns the item at `index`, or `None` if out of bounds.
+    #[inline]
+    pub fn remove_at(&mut self, index: usize) -> Option<Entity> {
+        if index < self.items.len() {
+            Some(self.items.remove(index))
+        } else {
+            None
+        }
+    }
 }
 
 /// Loot table component: when this entity dies, it may drop items.

@@ -101,16 +101,12 @@ pub fn use_item_system(
                     let healed = hp.heal(heal);
                     combat_log.push(format!("Used {item_name}, healed {healed} HP"));
                 }
-                if intent.item_index < inv.items.len() {
-                    inv.items.remove(intent.item_index);
-                }
+                inv.remove_at(intent.item_index);
                 commands.entity(item_entity).despawn();
             }
             ItemKind::Grenade { .. } => {
                 combat_log.push(format!("Used {item_name}!"));
-                if intent.item_index < inv.items.len() {
-                    inv.items.remove(intent.item_index);
-                }
+                inv.remove_at(intent.item_index);
                 commands.entity(item_entity).despawn();
             }
             ItemKind::Gun { loaded, capacity, caliber, name: gun_name, .. } => {
@@ -280,12 +276,11 @@ pub fn drop_item_system(
             continue;
         };
 
-        if intent.item_index >= inv.items.len() {
+        let Some(item_entity) = inv.remove_at(intent.item_index) else {
             combat_log.push("No item in that slot.".into());
             continue;
-        }
+        };
 
-        let item_entity = inv.items.remove(intent.item_index);
         let item_name = name_query
             .get(item_entity)
             .ok()

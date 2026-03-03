@@ -10,11 +10,6 @@ use crate::voxel::Voxel;
 /// Side length of a map chunk (tiles). Used for chunk-based spatial queries.
 pub const CHUNK_SIZE: CoordinateUnit = 16;
 
-/// Returns the chunk coordinates for a given world position.
-pub fn chunk_coords(pos: &GridVec) -> (CoordinateUnit, CoordinateUnit) {
-    (pos.x.div_euclid(CHUNK_SIZE), pos.y.div_euclid(CHUNK_SIZE))
-}
-
 /// The game map: a simple 2D grid of voxels.
 pub struct GameMap {
     pub width: CoordinateUnit,

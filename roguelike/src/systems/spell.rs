@@ -93,8 +93,7 @@ pub fn spell_system(
 
         // Consume the grenade item from inventory.
         if let Some(mut inv) = inventory
-            && intent.grenade_index < inv.items.len() {
-                let grenade_entity = inv.items.remove(intent.grenade_index);
+            && let Some(grenade_entity) = inv.remove_at(intent.grenade_index) {
                 commands.entity(grenade_entity).despawn();
             }
 
@@ -140,8 +139,7 @@ pub fn molotov_system(
 
         // Consume the molotov item from inventory.
         if let Some(mut inv) = inventory
-            && intent.item_index < inv.items.len() {
-                let molotov_entity = inv.items.remove(intent.item_index);
+            && let Some(molotov_entity) = inv.remove_at(intent.item_index) {
                 commands.entity(molotov_entity).despawn();
             }
 

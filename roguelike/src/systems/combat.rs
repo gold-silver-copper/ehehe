@@ -109,16 +109,7 @@ pub fn combat_system(
                     let bd = kind.blunt_damage();
                     if bd > 0 {
                         bonus = bd;
-                        bonus_item_name = Some(match kind {
-                            ItemKind::Gun { name, .. } => name.clone(),
-                            ItemKind::Knife { .. } => "Knife".into(),
-                            ItemKind::Tomahawk { .. } => "Tomahawk".into(),
-                            ItemKind::Grenade { .. } => "Dynamite".into(),
-                            ItemKind::Whiskey { .. } => "Whiskey Bottle".into(),
-                            ItemKind::Molotov { .. } => "Molotov".into(),
-                            ItemKind::Bow { .. } => "Bow".into(),
-                            ItemKind::WaterBucket { .. } => "Water Bucket".into(),
-                        });
+                        bonus_item_name = Some(kind.display_name());
                     }
                 }
             }
