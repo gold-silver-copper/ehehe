@@ -800,7 +800,10 @@ pub fn ai_system(
             let mut best_score = (0i32, i32::MAX); // (particle_dist, -tile_cost)
             for dir in GridVec::DIRECTIONS_8 {
                 let target = my_pos + dir;
-                let Some(tc) = tile_cost_for_ai(target, entity, &game_map, &spatial, &blockers) else { continue; };
+                let tc = match tile_cost_for_ai(target, entity, &game_map, &spatial, &blockers) {
+                    Some(c) => c,
+                    None => continue,
+                };
                 let min_particle_dist = spell_particles.particles.iter()
                     .filter(|(_, life, delay, _, _, _)| *delay == 0 && *life > 0)
                     .map(|(p, _, _, _, _, _)| target.chebyshev_distance(*p))
@@ -968,7 +971,10 @@ pub fn ai_system(
                     let mut best_score = i32::MIN;
                     for dir in GridVec::DIRECTIONS_8 {
                         let candidate = my_pos + dir;
-                        let Some(tc) = tile_cost_for_ai(candidate, entity, &game_map, &spatial, &blockers) else { continue; };
+                        let tc = match tile_cost_for_ai(candidate, entity, &game_map, &spatial, &blockers) {
+                            Some(c) => c,
+                            None => continue,
+                        };
                         // Heading alignment bonus: dot product with heading.
                         let alignment = dir.x * heading.x + dir.y * heading.y;
                         let score = alignment * cost::BASE - tc;
@@ -1448,8 +1454,9 @@ mod tests {
         let start = GridVec::new(0, 0);
         let goal = GridVec::new(10, 10);
         let step = a_star_first_step(start, goal, |pos| {
+            // Block exactly the ring at Chebyshev distance 1 from goal.
             let d = pos.chebyshev_distance(goal);
-            if d == 0 || d > 1 { None } else { Some(cost::BASE) }
+            if d == 1 { None } else { Some(cost::BASE) }
         });
         assert!(step.is_none(), "Should return None when goal is surrounded");
     }
@@ -1466,9 +1473,9 @@ mod tests {
     #[test]
     fn a_star_prefers_low_cost_path() {
         // Two paths from (0,0) to (4,0):
-        //   Path A (y=0): tiles cost 50 each (expensive / hazardous)
-        //   Path B (y=1): tiles cost 10 each (safe / covered)
-        // A* should route through the cheaper path B.
+        //   Direct (y=0): interior tiles cost 50 each (expensive / hazardous)
+        //   Detour (y≠0): tiles cost BASE each (safe / covered)
+        // A* should route through the cheaper detour.
         let start = GridVec::new(0, 0);
         let goal = GridVec::new(4, 0);
         let step = a_star_first_step(start, goal, |pos| {
@@ -1480,14 +1487,13 @@ mod tests {
         });
         assert!(step.is_some());
         let s = step.unwrap();
-        // Should step diagonally (toward y=1) to avoid the expensive corridor.
-        assert_ne!(s.y, 0, "Should detour around the hazardous corridor");
+        // Should step off the y=0 line to avoid the expensive corridor.
+        assert_ne!(s.y, 0, "Should detour around the hazardous corridor, got ({}, {})", s.x, s.y);
     }
 
     #[test]
     fn a_star_uses_cover_bonus() {
-        // Path through y=0 has base cost (exposed).
-        // Path through y=2 has lower cost (simulating cover near walls).
+        // y=2 has low cost (simulating cover near walls), y=0 has high cost.
         let start = GridVec::new(0, 1);
         let goal = GridVec::new(5, 1);
         let step = a_star_first_step(start, goal, |pos| {
@@ -1498,7 +1504,7 @@ mod tests {
         assert!(step.is_some());
         let s = step.unwrap();
         // Should prefer moving toward the cheaper (covered) y=2 row.
-        assert!(s.y >= 0, "Should prefer moving toward cover (y=2)");
+        assert!(s.y > 0, "Should prefer moving toward cover (y=2), got y={}", s.y);
     }
 
     // ── Dijkstra map tests ────────────────────────────────────────
