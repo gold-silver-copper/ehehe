@@ -69,13 +69,20 @@ fn spawn_gun_smoke(game_map: &mut GameMapResource, origin: GridVec, turn: u32, f
 
 /// Resolves attack intents into damage events.
 ///
-/// Damage = attacker.attack.
-/// Uses `CombatStats::damage_against` for the formal damage model.
+/// Damage = attacker.attack + bonus from a random inventory item's blunt_damage.
+/// When an entity melee attacks (bump attack), a random item in their inventory
+/// provides bonus blunt damage (e.g., pistol-whipping with a gun, smashing with
+/// a bottle). Both players and NPCs use this system.
+/// Uses `CombatStats::damage_against` for the base damage model.
 /// Emits a `DamageEvent` for each successful hit and logs combat messages.
 pub fn combat_system(
     mut intents: MessageReader<AttackIntent>,
     mut damage_events: MessageWriter<DamageEvent>,
     stats_query: Query<(&CombatStats, Option<&Name>, Option<&Position>)>,
+    inventory_query: Query<&Inventory>,
+    item_kind_query: Query<&ItemKind>,
+    dynamic_rng: Res<crate::resources::DynamicRng>,
+    seed: Res<crate::resources::MapSeed>,
     mut combat_log: ResMut<CombatLog>,
 ) {
     for intent in intents.read() {
@@ -86,13 +93,47 @@ pub fn combat_system(
             continue;
         };
 
-        let damage = attacker_stats.damage_against();
+        let base_damage = attacker_stats.damage_against();
         let a_name = display_name(attacker_name);
         let t_name = display_name(target_name);
         let pos = attacker_pos.map(|p| p.as_grid_vec());
 
+        // Add bonus damage from a random inventory item's blunt_damage.
+        let mut bonus = 0;
+        let mut bonus_item_name: Option<String> = None;
+        if let Ok(inv) = inventory_query.get(intent.attacker) {
+            if !inv.items.is_empty() {
+                let idx = dynamic_rng.random_index(
+                    seed.0,
+                    intent.attacker.to_bits() ^ 0xB1A7,
+                    inv.items.len(),
+                );
+                if let Ok(kind) = item_kind_query.get(inv.items[idx]) {
+                    let bd = kind.blunt_damage();
+                    if bd > 0 {
+                        bonus = bd;
+                        bonus_item_name = Some(match kind {
+                            ItemKind::Gun { name, .. } => name.clone(),
+                            ItemKind::Knife { .. } => "Knife".into(),
+                            ItemKind::Tomahawk { .. } => "Tomahawk".into(),
+                            ItemKind::Grenade { .. } => "Dynamite".into(),
+                            ItemKind::Whiskey { .. } => "Whiskey Bottle".into(),
+                            ItemKind::Molotov { .. } => "Molotov".into(),
+                            ItemKind::Bow { .. } => "Bow".into(),
+                        });
+                    }
+                }
+            }
+        }
+
+        let damage = base_damage + bonus;
+
         if damage > 0 {
-            combat_log.push_opt(format!("{a_name} hits {t_name} for {damage} damage"), pos);
+            if let Some(item_name) = bonus_item_name {
+                combat_log.push_opt(format!("{a_name} hits {t_name} with {item_name} for {damage} damage"), pos);
+            } else {
+                combat_log.push_opt(format!("{a_name} hits {t_name} for {damage} damage"), pos);
+            }
             damage_events.write(DamageEvent {
                 target: intent.target,
                 amount: damage,

@@ -903,6 +903,7 @@ mod tests {
             caliber: Caliber::Cal36,
             attack: 5,
             name: "Test Gun".into(),
+            blunt_damage: 5,
         };
         if let ItemKind::Gun { ref mut loaded, .. } = gun {
             *loaded -= 1;
@@ -918,6 +919,7 @@ mod tests {
             caliber: Caliber::Cal36,
             attack: 5,
             name: "Test Gun".into(),
+            blunt_damage: 5,
         };
         if let ItemKind::Gun { loaded, .. } = gun {
             assert_eq!(loaded, 0);
