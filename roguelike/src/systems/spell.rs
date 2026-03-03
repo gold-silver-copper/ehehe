@@ -245,12 +245,13 @@ fn spawn_explosive_projectile(
     source: Entity,
 ) {
     let path = origin.bresenham_line(target);
-    // Even if target == origin, create a 1-tile path so the explosive
-    // detonates at the origin on the next tick.
+    // Bresenham always returns at least the origin point, so path is never empty.
+    // If target == origin, path = [origin] and we start at index 0.
+    // If target != origin, path = [origin, ..., target] and we skip the origin.
     let (start_pos, start_index) = if path.len() <= 1 {
         (origin, 0)
     } else {
-        (path.get(1).copied().unwrap_or(origin), 1)
+        (path[1], 1)
     };
     let (symbol, fg) = match &explosive {
         ThrownExplosive::Dynamite { .. } => ("*", RatColor::Rgb(255, 165, 0)),

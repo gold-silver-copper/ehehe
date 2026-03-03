@@ -1054,12 +1054,15 @@ pub fn leader_death_system(
     mut followers: Query<(Entity, &crate::components::GroupFollower, &mut AiPersonality, &mut AiState)>,
     leaders: Query<Entity, bevy::prelude::With<crate::components::GroupLeader>>,
 ) {
+    /// Aggression multiplier when the group leader dies (50% reduction).
+    const LEADERLESS_AGGRESSION_MULTIPLIER: f64 = 0.5;
+
     for (entity, follower, mut personality, mut ai_state) in &mut followers {
         // Check if the leader entity still exists
         if leaders.get(follower.leader).is_err() {
             // Leader is dead — reduce courage and become erratic
             personality.courage = 0.1;
-            personality.aggression *= 0.5;
+            personality.aggression *= LEADERLESS_AGGRESSION_MULTIPLIER;
             *ai_state = AiState::Fleeing;
             commands.entity(entity).remove::<crate::components::GroupFollower>();
         }

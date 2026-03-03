@@ -288,6 +288,8 @@ fn select_desert_floor(biome: f64, detail: f64) -> Floor {
 }
 
 /// Number of distinct building types used during town generation.
+/// Types 0-11: House, Saloon, Stable, General Store, Sheriff's Office,
+/// Post Office, Church, Bank, Hotel, Jail, Undertaker, Blacksmith.
 const BUILDING_TYPE_COUNT: u32 = 12;
 
 /// Generates deterministic building footprints for the western town.
