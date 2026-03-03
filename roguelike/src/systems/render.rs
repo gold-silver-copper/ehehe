@@ -456,11 +456,10 @@ pub fn draw_system(
                                 }
                                 _ => None,
                             };
-                            if let Some((sym, fg, name)) = entry {
-                                if seen.insert(name.clone()) {
+                            if let Some((sym, fg, name)) = entry
+                                && seen.insert(name.clone()) {
                                     items.push((sym, fg, name));
                                 }
-                            }
                         }
                     }
                 }

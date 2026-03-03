@@ -246,6 +246,7 @@ pub struct PatrolOrigin(pub GridVec);
 /// When an NPC loses sight of its target, it navigates to the remembered
 /// position before returning to patrol/idle.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[derive(Default)]
 pub struct AiMemory {
     /// Last known position of the chase target.
     pub last_known_pos: Option<GridVec>,
@@ -253,14 +254,6 @@ pub struct AiMemory {
     pub last_seen_turn: u32,
 }
 
-impl Default for AiMemory {
-    fn default() -> Self {
-        Self {
-            last_known_pos: None,
-            last_seen_turn: 0,
-        }
-    }
-}
 
 /// Marks an NPC as a group leader. When the leader dies, followers become
 /// more erratic and cowardly.
