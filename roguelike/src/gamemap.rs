@@ -927,6 +927,7 @@ fn assign_faction_anchors(map: &mut GameMap, buildings: &[Building]) {
     // 1=Saloon → Outlaws, 2=Stable → Vaqueros, 4=Sheriff → Sheriff,
     // 7=Bank → Lawmen, 8=Hotel → Civilians, 0=House → Indians (outskirts)
     let mut used_kinds: HashSet<u32> = HashSet::new();
+    let mut indians_anchor_assigned = false;
 
     for b in buildings {
         let center = GridVec::new(b.x + b.w / 2, b.y + b.h / 2);
@@ -951,13 +952,13 @@ fn assign_faction_anchors(map: &mut GameMap, buildings: &[Building]) {
                 used_kinds.insert(8);
                 (Faction::Civilians, "Hotel".to_string())
             }
-            0 if !used_kinds.contains(&100) => {
+            0 if !indians_anchor_assigned => {
                 // Use first house on outskirts for Indians
                 let dist_to_center = center.distance_squared(GridVec::new(
                     map.width / 2, map.height / 2
                 ));
                 if dist_to_center > (map.width / 4) * (map.width / 4) {
-                    used_kinds.insert(100);
+                    indians_anchor_assigned = true;
                     (Faction::Indians, "Hacienda".to_string())
                 } else {
                     continue;
