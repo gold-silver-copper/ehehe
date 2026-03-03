@@ -432,6 +432,7 @@ impl GameMap {
     }
 
     /// Get a reference to the voxel at the given map coordinate.
+    #[inline]
     pub fn get_voxel_at(&self, point: &MyPoint) -> Option<&Voxel> {
         let GridVec { x, y } = *point;
         if x >= 0 && x < self.width && y >= 0 && y < self.height {
@@ -442,6 +443,7 @@ impl GameMap {
     }
 
     /// Get a mutable reference to the voxel at the given map coordinate.
+    #[inline]
     pub fn get_voxel_at_mut(&mut self, point: &MyPoint) -> Option<&mut Voxel> {
         let GridVec { x, y } = *point;
         if x >= 0 && x < self.width && y >= 0 && y < self.height {
@@ -452,6 +454,7 @@ impl GameMap {
     }
 
     /// Returns `true` if the tile at `point` is passable (no blocking props).
+    #[inline]
     pub fn is_passable(&self, point: &MyPoint) -> bool {
         self.get_voxel_at(point)
             .is_some_and(|v| match &v.props {
