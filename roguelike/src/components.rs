@@ -261,7 +261,6 @@ pub struct AiMemory {
     pub last_seen_turn: u32,
 }
 
-
 /// Marks an NPC as a group leader. When the leader dies, followers become
 /// more erratic and cowardly.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -300,7 +299,6 @@ impl Default for AiPersonality {
 /// Used by bump-to-attack: moving into a hostile entity's tile triggers combat.
 #[derive(Component, Debug)]
 pub struct Hostile;
-
 
 /// Faction affiliation for group-based spawning.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -586,11 +584,6 @@ pub enum CollectibleKind {
 /// Used to attribute the killing blow for kill counting.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct LastDamageSource(pub Entity);
-
-/// Procedurally generated outfit description for an entity.
-/// Used for flavour text in the UI instead of discrete equipment items.
-#[derive(Component, Clone, Debug)]
-pub struct Outfit(pub String);
 
 #[cfg(test)]
 mod tests {

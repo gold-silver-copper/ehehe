@@ -27,7 +27,6 @@ const SMOKE_PARTICLE_MAX_LIFETIME: f32 = 10.0;
 /// Minimum intensity for explosion particles so they remain visible.
 const MIN_EXPLOSION_INTENSITY: f32 = 0.15;
 
-
 /// Ticks and renders combat particles each frame. Also computes which
 /// sound indicators should be visible on the map from `SoundEvents`.
 pub fn particle_tick_system(
