@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::{CollectibleKind, CombatStats, ExpReward, Experience, Faction, Health, HellGate, Hostile, Inventory, Item, ItemKind, LastDamageSource, Level, LootTable, Stamina, Ammo, Name, Player, Position, Renderable, display_name};
+use crate::components::{CollectibleKind, CombatStats, ExpReward, Experience, Faction, Health, Hostile, Inventory, Item, ItemKind, LastDamageSource, Level, LootTable, Stamina, Name, Player, Position, Renderable, display_name};
 use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, RangedAttackIntent};
 use crate::noise::value_noise;
 use crate::resources::{CombatLog, DynamicRng, GameMapResource, GameState, KillCount, MapSeed, PendingExp, PendingNpcExp, SoundEvents, TurnCounter};
@@ -69,7 +69,7 @@ fn spawn_gun_smoke(game_map: &mut GameMapResource, origin: GridVec, turn: u32, f
 
 /// Resolves attack intents into damage events.
 ///
-/// Damage = attacker.attack (defense has been removed).
+/// Damage = attacker.attack.
 /// Uses `CombatStats::damage_against` for the formal damage model.
 /// Emits a `DamageEvent` for each successful hit and logs combat messages.
 pub fn combat_system(
@@ -82,11 +82,11 @@ pub fn combat_system(
         let Ok((attacker_stats, attacker_name, attacker_pos)) = stats_query.get(intent.attacker) else {
             continue;
         };
-        let Ok((target_stats, target_name, _)) = stats_query.get(intent.target) else {
+        let Ok((_target_stats, target_name, _)) = stats_query.get(intent.target) else {
             continue;
         };
 
-        let damage = attacker_stats.damage_against(target_stats);
+        let damage = attacker_stats.damage_against();
         let a_name = display_name(attacker_name);
         let t_name = display_name(target_name);
         let pos = attacker_pos.map(|p| p.as_grid_vec());
@@ -135,12 +135,11 @@ pub fn apply_damage_system(
 /// blow, drops the entity's entire inventory on the ground, and removes the entity.
 /// Animals (Wildlife faction) drop nothing. Non-wildlife NPCs drop their full
 /// inventory including guns with ammo.
-/// If the Hell Gate is destroyed, transitions to the Victory state.
 /// If the player dies, transitions to the Dead state.
 /// NPCs that kill other entities also gain stat bonuses (enemy level-up).
 pub fn death_system(
     mut commands: Commands,
-    query: Query<(Entity, &Health, Option<&Name>, Option<&Hostile>, Option<&HellGate>, Option<&Position>, Option<&LootTable>, Option<&Player>, Option<&ExpReward>, Option<&LastDamageSource>, Option<&Inventory>, Option<&Faction>)>,
+    query: Query<(Entity, &Health, Option<&Name>, Option<&Hostile>, Option<&Position>, Option<&LootTable>, Option<&Player>, Option<&ExpReward>, Option<&LastDamageSource>, Option<&Inventory>, Option<&Faction>)>,
     player_entities: Query<Entity, With<Player>>,
     mut combat_log: ResMut<CombatLog>,
     mut kill_count: ResMut<KillCount>,
@@ -151,7 +150,7 @@ pub fn death_system(
 ) {
     let player_entity = player_entities.single().ok();
 
-    for (entity, health, name, hostile, hell_gate, pos, loot_table, is_player, exp_reward, last_damage_source, inventory, faction) in &query {
+    for (entity, health, name, hostile, pos, loot_table, is_player, exp_reward, last_damage_source, inventory, faction) in &query {
         if !health.is_dead() {
             continue;
         }
@@ -181,11 +180,6 @@ pub fn death_system(
                 pending_npc_exp.entries.push((lds.0, reward));
             }
         }
-        if hell_gate.is_some() {
-            combat_log.push("The Enemy Stronghold crumbles! You are victorious!".into());
-            next_game_state.set(GameState::Victory);
-        }
-
         let is_wildlife = faction.is_some_and(|f| matches!(f, Faction::Wildlife));
 
         // Drop entire NPC inventory on the ground (animals drop nothing).
@@ -300,12 +294,12 @@ const MISFIRE_CHANCE: f64 = 0.05;
 /// multiple ticks. Damage is applied when the projectile reaches a hostile.
 ///
 /// Works for both the player and NPCs — the attacker entity is taken from the
-/// intent. Consumes 1 ammo per shot from the gun item or global Ammo pool.
+/// intent. Consumes 1 loaded round from the gun item.
 /// There is a small chance for the gun to misfire.
 pub fn ranged_attack_system(
     mut commands: Commands,
     mut intents: MessageReader<RangedAttackIntent>,
-    mut caster_query: Query<(&Position, Option<&mut Ammo>, &CombatStats, Option<&Name>)>,
+    mut caster_query: Query<(&Position, Option<&Name>)>,
     mut combat_log: ResMut<CombatLog>,
     mut item_kind_query: Query<&mut ItemKind>,
     mut sound_events: ResMut<SoundEvents>,
@@ -315,13 +309,13 @@ pub fn ranged_attack_system(
     turn_counter: Res<TurnCounter>,
 ) {
     for intent in intents.read() {
-        let Ok((caster_pos, ammo, caster_stats, caster_name)) = caster_query.get_mut(intent.attacker) else {
+        let Ok((caster_pos, caster_name)) = caster_query.get_mut(intent.attacker) else {
             continue;
         };
         let origin = caster_pos.as_grid_vec();
         let c_name = display_name(caster_name);
 
-        // Determine damage and consume ammo from either a gun item or the global Ammo pool.
+        // Determine damage and consume a loaded round from the gun item.
         let damage;
         if let Some(gun_entity) = intent.gun_item {
             if let Ok(mut kind) = item_kind_query.get_mut(gun_entity) {
@@ -338,14 +332,6 @@ pub fn ranged_attack_system(
             } else {
                 continue;
             }
-        } else if let Some(mut ammo_pool) = ammo {
-            // Legacy path: use global Ammo pool.
-            if ammo_pool.is_empty() {
-                combat_log.push("Out of ammo!".into());
-                continue;
-            }
-            ammo_pool.spend_one();
-            damage = caster_stats.attack;
         } else {
             combat_log.push("No weapon available!".into());
             continue;
@@ -449,7 +435,7 @@ pub fn melee_wide_system(
     mut intents: MessageReader<MeleeWideIntent>,
     mut damage_events: MessageWriter<DamageEvent>,
     attacker_query: Query<(&Position, &CombatStats, Option<&Name>)>,
-    targets: Query<(Entity, &Position, &CombatStats, Option<&Name>), With<Hostile>>,
+    targets: Query<(Entity, &Position, Option<&Name>), With<Hostile>>,
     mut combat_log: ResMut<CombatLog>,
     mut game_map: ResMut<GameMapResource>,
 ) {
@@ -461,10 +447,10 @@ pub fn melee_wide_system(
         let a_name = display_name(attacker_name);
         let mut hit_count = 0;
 
-        for (target_entity, target_pos, target_stats, target_name) in &targets {
+        for (target_entity, target_pos, target_name) in &targets {
             let dist = origin.chebyshev_distance(target_pos.as_grid_vec());
             if dist == 1 {
-                let damage = attacker_stats.damage_against(target_stats);
+                let damage = attacker_stats.damage_against();
                 let t_name = display_name(target_name);
                 if damage > 0 {
                     damage_events.write(DamageEvent {

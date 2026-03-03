@@ -61,7 +61,7 @@ fn spawn_test_player(app: &mut App, x: i32, y: i32) -> Entity {
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
     )).id()
 }
 
@@ -73,7 +73,7 @@ fn spawn_test_monster(app: &mut App, x: i32, y: i32, name: &str) -> Entity {
         BlocksMovement,
         Name(name.into()),
         Health { current: 10, max: 10 },
-        CombatStats { attack: 3, defense: 1 },
+        CombatStats { attack: 3 },
     )).id()
 }
 
@@ -203,7 +203,7 @@ fn player_bump_attack_damages_monster() {
     });
     app.update();
 
-    // Player attack=5, defense ignored → damage=5
+    // Player attack=5 → damage=5
     let monster_health = app.world().get::<Health>(monster).unwrap();
     assert_eq!(monster_health.current, 5, "Monster should have taken 5 damage");
 }
@@ -224,7 +224,7 @@ fn monster_bump_attack_damages_player() {
     });
     app.update();
 
-    // Monster attack=3, defense ignored → damage=3
+    // Monster attack=3 → damage=3
     let player_health = app.world().get::<Health>(player).unwrap();
     assert_eq!(player_health.current, 27, "Player should have taken 3 damage");
 }
@@ -232,14 +232,14 @@ fn monster_bump_attack_damages_player() {
 #[test]
 fn low_attack_still_deals_damage() {
     let mut app = test_app();
-    // Spawn player with high defense (ignored in damage model)
+    // Spawn player
     let player = app.world_mut().spawn((
         Position { x: 60, y: 40 },
         Player,
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 10 },
+        CombatStats { attack: 5 },
     )).id();
 
     // Spawn weak monster
@@ -249,12 +249,12 @@ fn low_attack_still_deals_damage() {
         BlocksMovement,
         Name("Rat".into()),
         Health { current: 5, max: 5 },
-        CombatStats { attack: 2, defense: 0 },
+        CombatStats { attack: 2 },
     )).id();
 
     app.update();
 
-    // Monster attacks player: attack=2, defense ignored → damage=2
+    // Monster attacks player: attack=2 → damage=2
     app.world_mut().write_message(MoveIntent {
         entity: monster,
         dx: -1,
@@ -271,7 +271,7 @@ fn low_attack_still_deals_damage() {
 #[test]
 fn monster_dies_at_zero_health() {
     let mut app = test_app();
-    // Spawn a monster with 1 HP and 0 defense
+    // Spawn a monster with 1 HP
     let player = spawn_test_player(&mut app, 60, 40);
     let monster = app.world_mut().spawn((
         Position { x: 61, y: 40 },
@@ -279,12 +279,12 @@ fn monster_dies_at_zero_health() {
         BlocksMovement,
         Name("Weakling".into()),
         Health { current: 1, max: 1 },
-        CombatStats { attack: 1, defense: 0 },
+        CombatStats { attack: 1 },
     )).id();
 
     app.update();
 
-    // Player attacks monster: attack=5, defense=0 → damage=5, kills the 1HP monster
+    // Player attacks monster: attack=5 → damage=5, kills the 1HP monster
     app.world_mut().write_message(MoveIntent {
         entity: player,
         dx: 1,
@@ -354,7 +354,7 @@ fn combat_log_records_death_message() {
         BlocksMovement,
         Name("Weakling".into()),
         Health { current: 1, max: 1 },
-        CombatStats { attack: 1, defense: 0 },
+        CombatStats { attack: 1 },
     )).id();
 
     app.update();
@@ -413,17 +413,17 @@ fn combat_log_no_damage_message() {
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 0, defense: 0 },
+        CombatStats { attack: 0 },
     )).id();
 
-    // Monster (defense irrelevant; player attack is 0 so no damage)
+    // Monster (player attack is 0 so no damage)
     let _monster = app.world_mut().spawn((
         Position { x: 61, y: 40 },
         Hostile,
         BlocksMovement,
         Name("IronGolem".into()),
         Health { current: 50, max: 50 },
-        CombatStats { attack: 1, defense: 10 },
+        CombatStats { attack: 1 },
     )).id();
 
     app.update();
@@ -438,7 +438,7 @@ fn combat_log_no_damage_message() {
     let log = app.world().resource::<CombatLog>();
     assert!(
         log.messages.iter().any(|m| m.contains("no damage")),
-        "Combat log should record 'no damage' message when attack <= defense"
+        "Combat log should record 'no damage' message when attack is 0"
     );
 }
 
@@ -497,7 +497,7 @@ fn multiple_attacks_accumulate_damage() {
 
     app.update();
 
-    // First attack: 5 damage (defense ignored) → 10 - 5 = 5 HP
+    // First attack: 5 damage → 10 - 5 = 5 HP
     app.world_mut().write_message(MoveIntent {
         entity: player,
         dx: 1,
@@ -603,7 +603,7 @@ fn spell_damages_nearby_enemies() {
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
     )).id();
 
     // Monster within spell radius (2 tiles away, radius=3)
@@ -613,7 +613,7 @@ fn spell_damages_nearby_enemies() {
         BlocksMovement,
         Name("Goblin".into()),
         Health { current: 10, max: 10 },
-        CombatStats { attack: 3, defense: 1 },
+        CombatStats { attack: 3 },
     )).id();
 
     app.update();
@@ -644,7 +644,7 @@ fn spell_does_not_damage_distant_enemies() {
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
     )).id();
 
     // Monster far outside spell radius
@@ -654,7 +654,7 @@ fn spell_does_not_damage_distant_enemies() {
         BlocksMovement,
         Name("FarGoblin".into()),
         Health { current: 10, max: 10 },
-        CombatStats { attack: 3, defense: 1 },
+        CombatStats { attack: 3 },
     )).id();
 
     app.update();
@@ -681,7 +681,7 @@ fn spell_hits_multiple_enemies() {
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
     )).id();
 
     // Two monsters within radius
@@ -691,7 +691,7 @@ fn spell_hits_multiple_enemies() {
         BlocksMovement,
         Name("Goblin1".into()),
         Health { current: 10, max: 10 },
-        CombatStats { attack: 3, defense: 1 },
+        CombatStats { attack: 3 },
     )).id();
 
     let m2 = app.world_mut().spawn((
@@ -700,7 +700,7 @@ fn spell_hits_multiple_enemies() {
         BlocksMovement,
         Name("Goblin2".into()),
         Health { current: 10, max: 10 },
-        CombatStats { attack: 3, defense: 1 },
+        CombatStats { attack: 3 },
     )).id();
 
     app.update();
@@ -736,7 +736,7 @@ fn spell_kills_weak_enemy_and_increments_kill_count() {
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
     )).id();
 
     // Weak monster that will die from shrapnel damage
@@ -746,7 +746,7 @@ fn spell_kills_weak_enemy_and_increments_kill_count() {
         BlocksMovement,
         Name("Weakling".into()),
         Health { current: 3, max: 3 },
-        CombatStats { attack: 1, defense: 0 },
+        CombatStats { attack: 1 },
     )).id();
 
     app.update();
@@ -783,7 +783,7 @@ fn kill_count_increments_on_hostile_death() {
         BlocksMovement,
         Name("Weakling".into()),
         Health { current: 1, max: 1 },
-        CombatStats { attack: 1, defense: 0 },
+        CombatStats { attack: 1 },
     )).id();
 
     app.update();
@@ -809,7 +809,7 @@ fn spell_no_hit_logs_message() {
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
     )).id();
 
     // No enemies nearby
@@ -830,22 +830,21 @@ fn spell_no_hit_logs_message() {
     );
 }
 
-// ─── Hell Gate tests ─────────────────────────────────────────────
+// ─── Hostile entity combat tests ─────────────────────────────────
 
 #[test]
-fn player_can_bump_attack_hell_gate() {
+fn player_can_bump_attack_hostile_entity() {
     let mut app = test_app();
     let player = spawn_test_player(&mut app, 60, 40);
 
-    // Spawn a hell gate adjacent to the player
+    // Spawn a hostile entity adjacent to the player
     let gate = app.world_mut().spawn((
         Position { x: 61, y: 40 },
-        HellGate,
         Hostile,
         BlocksMovement,
         Name("Gate of Hell".into()),
         Health { current: 100, max: 100 },
-        CombatStats { attack: 0, defense: 3 },
+        CombatStats { attack: 0 },
     )).id();
 
     app.update();
@@ -858,53 +857,13 @@ fn player_can_bump_attack_hell_gate() {
     });
     app.update();
 
-    // Player attack=5, defense ignored → damage=5
+    // Player attack=5 → damage=5
     let gate_health = app.world().get::<Health>(gate).unwrap();
     assert_eq!(gate_health.current, 95, "Gate should have taken 5 damage");
 }
 
 #[test]
-fn gate_destruction_triggers_victory() {
-    let mut app = test_app();
-    let player = spawn_test_player(&mut app, 60, 40);
-
-    // Spawn a gate with just 1 HP so it dies in one hit
-    let gate = app.world_mut().spawn((
-        Position { x: 61, y: 40 },
-        HellGate,
-        Hostile,
-        BlocksMovement,
-        Name("Gate of Hell".into()),
-        Health { current: 1, max: 100 },
-        CombatStats { attack: 0, defense: 0 },
-    )).id();
-
-    app.update();
-
-    // Player attacks the gate
-    app.world_mut().write_message(MoveIntent {
-        entity: player,
-        dx: 1,
-        dy: 0,
-    });
-    app.update();
-
-    // Gate should be despawned
-    assert!(
-        app.world().get::<Health>(gate).is_none(),
-        "Gate should be despawned after reaching 0 HP"
-    );
-
-    // Victory message should be in the combat log
-    let log = app.world().resource::<CombatLog>();
-    assert!(
-        log.messages.iter().any(|m| m.contains("Enemy Stronghold crumbles")),
-        "Combat log should contain victory message"
-    );
-}
-
-#[test]
-fn spell_damages_hell_gate() {
+fn spell_damages_hostile_entity() {
     let mut app = test_app_with_spells();
     let player = app.world_mut().spawn((
         Position { x: 60, y: 40 },
@@ -912,18 +871,17 @@ fn spell_damages_hell_gate() {
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
     )).id();
 
-    // Gate within spell radius
+    // Hostile entity within spell radius
     let gate = app.world_mut().spawn((
         Position { x: 62, y: 40 },
-        HellGate,
         Hostile,
         BlocksMovement,
         Name("Gate of Hell".into()),
         Health { current: 100, max: 100 },
-        CombatStats { attack: 0, defense: 3 },
+        CombatStats { attack: 0 },
     )).id();
 
     app.update();
@@ -958,7 +916,7 @@ fn two_blockers_cannot_overlap_on_simultaneous_move() {
         BlocksMovement,
         Name("E1".into()),
         Health { current: 10, max: 10 },
-        CombatStats { attack: 1, defense: 0 },
+        CombatStats { attack: 1 },
     )).id();
 
     let e2 = app.world_mut().spawn((
@@ -966,7 +924,7 @@ fn two_blockers_cannot_overlap_on_simultaneous_move() {
         BlocksMovement,
         Name("E2".into()),
         Health { current: 10, max: 10 },
-        CombatStats { attack: 1, defense: 0 },
+        CombatStats { attack: 1 },
     )).id();
 
     app.update(); // Build spatial index
@@ -1042,73 +1000,35 @@ fn test_app_with_ranged() -> App {
     app
 }
 
-/// Spawns a player with ammo at the given position.
-fn spawn_test_player_with_ammo(app: &mut App, x: i32, y: i32, ammo: i32) -> Entity {
-    app.world_mut().spawn((
+/// Spawns a player with a gun item at the given position. Returns (player, gun).
+fn spawn_test_player_with_gun(app: &mut App, x: i32, y: i32, attack: i32) -> (Entity, Entity) {
+    let gun = app.world_mut().spawn((
+        Item,
+        Name("Test Gun".into()),
+        ItemKind::Gun {
+            loaded: 10,
+            capacity: 10,
+            caliber: Caliber::Cal36,
+            attack,
+            name: "Test Gun".into(),
+        },
+    )).id();
+    let player = app.world_mut().spawn((
         Position { x, y },
         Player,
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 2 },
-        Ammo { current: ammo, max: 30 },
-    )).id()
-}
-
-#[test]
-fn ranged_attack_consumes_ammo() {
-    let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
-    let _monster = spawn_test_monster(&mut app, 64, 40, "Bandit");
-
-    app.update();
-
-    app.world_mut().write_message(RangedAttackIntent {
-        attacker: player,
-        range: 8,
-        dx: 1,
-        dy: 0,
-        gun_item: None,
-    });
-    app.update();
-
-    let ammo = app.world().get::<Ammo>(player).unwrap();
-    assert_eq!(ammo.current, 9, "Ranged attack should consume 1 ammo");
-}
-
-#[test]
-fn ranged_attack_no_ammo_does_not_fire() {
-    let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 0);
-    let monster = spawn_test_monster(&mut app, 64, 40, "Bandit");
-
-    app.update();
-
-    app.world_mut().write_message(RangedAttackIntent {
-        attacker: player,
-        range: 8,
-        dx: 1,
-        dy: 0,
-        gun_item: None,
-    });
-    app.update();
-
-    // Monster should not be damaged.
-    let monster_hp = app.world().get::<Health>(monster).unwrap();
-    assert_eq!(monster_hp.current, 10, "Monster should not be damaged when player has no ammo");
-
-    // Combat log should contain ammo message.
-    let log = app.world().resource::<CombatLog>();
-    assert!(
-        log.messages.iter().any(|m| m.contains("ammo")),
-        "Combat log should mention ammo shortage"
-    );
+        CombatStats { attack },
+        Inventory { items: vec![gun] },
+    )).id();
+    (player, gun)
 }
 
 #[test]
 fn ranged_attack_damages_nearest_enemy() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    let (player, gun) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
     // Monster at distance 4 (within range 8).
     let monster = app.world_mut().spawn((
         Position { x: 64, y: 40 },
@@ -1116,7 +1036,7 @@ fn ranged_attack_damages_nearest_enemy() {
         BlocksMovement,
         Name("Bandit".into()),
         Health { current: 20, max: 20 },
-        CombatStats { attack: 3, defense: 1 },
+        CombatStats { attack: 3 },
     )).id();
 
     app.update();
@@ -1126,7 +1046,7 @@ fn ranged_attack_damages_nearest_enemy() {
         range: 8,
         dx: 1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update(); // ranged_attack_system spawns bullet entity
     app.update(); // projectile_system advances bullet and applies damage
@@ -1138,7 +1058,7 @@ fn ranged_attack_damages_nearest_enemy() {
 #[test]
 fn ranged_attack_no_target_in_range() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    let (player, gun) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
     // Monster far away (distance 20, beyond range 8).
     let _monster = app.world_mut().spawn((
         Position { x: 80, y: 40 },
@@ -1146,7 +1066,7 @@ fn ranged_attack_no_target_in_range() {
         BlocksMovement,
         Name("FarBandit".into()),
         Health { current: 20, max: 20 },
-        CombatStats { attack: 3, defense: 1 },
+        CombatStats { attack: 3 },
     )).id();
 
     app.update();
@@ -1156,14 +1076,10 @@ fn ranged_attack_no_target_in_range() {
         range: 8,
         dx: 1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update(); // ranged_attack_system spawns bullet entity
     app.update(); // projectile_system advances bullet (misses - out of range)
-
-    // Ammo should still be consumed (shot fired but missed).
-    let ammo = app.world().get::<Ammo>(player).unwrap();
-    assert_eq!(ammo.current, 9, "Ammo should be consumed even if no target in range");
 
     let log = app.world().resource::<CombatLog>();
     assert!(
@@ -1176,24 +1092,35 @@ fn ranged_attack_no_target_in_range() {
 fn ranged_bullet_penetrates_multiple_enemies() {
     let mut app = test_app_with_ranged();
     // Player with attack=10 so bullet has high penetration.
+    let gun = app.world_mut().spawn((
+        Item,
+        Name("Test Gun".into()),
+        ItemKind::Gun {
+            loaded: 10,
+            capacity: 10,
+            caliber: Caliber::Cal36,
+            attack: 10,
+            name: "Test Gun".into(),
+        },
+    )).id();
     let player = app.world_mut().spawn((
         Position { x: 60, y: 40 },
         Player,
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 10, defense: 2 },
-        Ammo { current: 10, max: 30 },
+        CombatStats { attack: 10 },
+        Inventory { items: vec![gun] },
     )).id();
 
-    // Two enemies in a line east of player with low defense.
+    // Two enemies in a line east of player.
     let m1 = app.world_mut().spawn((
         Position { x: 62, y: 40 },
         Hostile,
         BlocksMovement,
         Name("Bandit1".into()),
         Health { current: 20, max: 20 },
-        CombatStats { attack: 3, defense: 2 },
+        CombatStats { attack: 3 },
     )).id();
 
     let m2 = app.world_mut().spawn((
@@ -1202,7 +1129,7 @@ fn ranged_bullet_penetrates_multiple_enemies() {
         BlocksMovement,
         Name("Bandit2".into()),
         Health { current: 20, max: 20 },
-        CombatStats { attack: 3, defense: 2 },
+        CombatStats { attack: 3 },
     )).id();
 
     app.update();
@@ -1212,7 +1139,7 @@ fn ranged_bullet_penetrates_multiple_enemies() {
         range: 8,
         dx: 1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update(); // ranged_attack_system spawns bullet entity
     app.update(); // projectile_system advances bullet through both enemies
@@ -1225,64 +1152,9 @@ fn ranged_bullet_penetrates_multiple_enemies() {
 }
 
 #[test]
-fn ranged_bullet_stops_when_penetration_exhausted() {
-    let mut app = test_app_with_ranged();
-    // Player with attack=3, low penetration.
-    let player = app.world_mut().spawn((
-        Position { x: 60, y: 40 },
-        Player,
-        BlocksMovement,
-        Name("Player".into()),
-        Health { current: 30, max: 30 },
-        CombatStats { attack: 3, defense: 2 },
-        Ammo { current: 10, max: 30 },
-    )).id();
-
-    // First enemy with defense=5 (exceeds penetration after first hit).
-    let m1 = app.world_mut().spawn((
-        Position { x: 62, y: 40 },
-        Hostile,
-        BlocksMovement,
-        Name("TankSoldier".into()),
-        Health { current: 20, max: 20 },
-        CombatStats { attack: 3, defense: 5 },
-    )).id();
-
-    // Second enemy behind the tank.
-    let m2 = app.world_mut().spawn((
-        Position { x: 64, y: 40 },
-        Hostile,
-        BlocksMovement,
-        Name("Bandit".into()),
-        Health { current: 20, max: 20 },
-        CombatStats { attack: 3, defense: 1 },
-    )).id();
-
-    app.update();
-
-    app.world_mut().write_message(RangedAttackIntent {
-        attacker: player,
-        range: 8,
-        dx: 1,
-        dy: 0,
-        gun_item: None,
-    });
-    app.update(); // ranged_attack_system spawns bullet entity
-    app.update(); // projectile_system advances bullet
-
-    // First enemy should be hit.
-    let m1_hp = app.world().get::<Health>(m1).unwrap();
-    assert!(m1_hp.current < 20, "First enemy should be hit");
-
-    // Second enemy should NOT be hit — bullet penetration exhausted after high defense target.
-    let m2_hp = app.world().get::<Health>(m2).unwrap();
-    assert_eq!(m2_hp.current, 20, "Second enemy should not be hit after penetration exhausted by high-defense target");
-}
-
-#[test]
 fn ranged_attack_logs_shoot_message() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    let (player, gun) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
     let _monster = spawn_test_monster(&mut app, 64, 40, "Bandit");
 
     app.update();
@@ -1292,7 +1164,7 @@ fn ranged_attack_logs_shoot_message() {
         range: 8,
         dx: 1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update(); // ranged_attack_system spawns bullet and logs "fires!"
     app.update(); // projectile_system advances bullet and logs hits
@@ -1307,9 +1179,7 @@ fn ranged_attack_logs_shoot_message() {
 #[test]
 fn roundhouse_kick_hits_adjacent_enemies() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
-
-    // Adjacent enemies (distance 1).
+    let (player, _) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
     let m1 = spawn_test_monster(&mut app, 61, 40, "Bandit1");
     let m2 = spawn_test_monster(&mut app, 60, 41, "Bandit2");
 
@@ -1335,9 +1205,7 @@ fn roundhouse_kick_hits_adjacent_enemies() {
 #[test]
 fn roundhouse_kick_misses_distant_enemies() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
-
-    // Enemy at distance 3 (not adjacent).
+    let (player, _) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
     let monster = spawn_test_monster(&mut app, 63, 40, "FarBandit");
 
     app.update();
@@ -1888,7 +1756,7 @@ fn spell_sand_throw_creates_sand_particles() {
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
         Stamina { current: 50, max: 50 },
     )).id();
 
@@ -1989,7 +1857,7 @@ fn spawn_ai_npc(app: &mut App, x: i32, y: i32, name: &str, faction: Faction) -> 
         BlocksMovement,
         Name(name.into()),
         Health { current: 20, max: 20 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
         Speed(ACTION_COST),
         Energy(0),
         AiState::Idle,
@@ -2415,7 +2283,7 @@ fn fast_npc_acts_more_frequently() {
         BlocksMovement,
         Name("FastNPC".into()),
         Health { current: 20, max: 20 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
         Speed(200),
         Energy(0),
         AiState::Idle,
@@ -2442,7 +2310,7 @@ fn slow_npc_acts_less_frequently() {
         BlocksMovement,
         Name("SlowNPC".into()),
         Health { current: 20, max: 20 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
         Speed(50),
         Energy(0),
         AiState::Idle,
@@ -2483,7 +2351,7 @@ fn multiple_monsters_can_attack_player_in_sequence() {
     app.update();
 
     let hp = app.world().get::<Health>(player).unwrap();
-    // Monster attack=3, defense ignored → 3 damage each = 6 total
+    // Monster attack=3 → 3 damage each = 6 total
     assert_eq!(hp.current, 24,
         "Player should take damage from both monsters, HP is {}", hp.current);
 }
@@ -2497,7 +2365,7 @@ fn kill_awards_kill_count_with_damage_source() {
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 20, defense: 2 },
+        CombatStats { attack: 20 },
         Level(1),
         Experience { current: 0, next_level: 100 },
     )).id();
@@ -2508,7 +2376,7 @@ fn kill_awards_kill_count_with_damage_source() {
         BlocksMovement,
         Name("Weakling".into()),
         Health { current: 1, max: 1 },
-        CombatStats { attack: 1, defense: 0 },
+        CombatStats { attack: 1 },
     )).id();
 
     app.update();
@@ -2557,7 +2425,7 @@ fn god_mode_prevents_player_damage() {
 #[test]
 fn projectile_despawns_on_wall_collision() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    let (player, gun) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
 
     app.update();
 
@@ -2567,7 +2435,7 @@ fn projectile_despawns_on_wall_collision() {
         range: 100,
         dx: -1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update(); // Spawn projectile
     app.update(); // Advance projectile
@@ -2584,7 +2452,7 @@ fn projectile_despawns_on_wall_collision() {
 #[test]
 fn ranged_attack_preserves_player_position() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    let (player, gun) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
 
     app.update();
 
@@ -2593,7 +2461,7 @@ fn ranged_attack_preserves_player_position() {
         range: 8,
         dx: 1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update();
 
@@ -2614,7 +2482,7 @@ fn spell_consumes_stamina() {
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
         Stamina { current: 50, max: 50 },
         Inventory { items: vec![] },
     )).id();
@@ -2647,7 +2515,7 @@ fn sand_throw_costs_less_stamina_than_grenade() {
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 2 },
+        CombatStats { attack: 5 },
         Stamina { current: 50, max: 50 },
     )).id();
 
@@ -2835,14 +2703,13 @@ fn health_heal_from_zero() {
 
 #[test]
 fn compute_damage_large_values() {
-    assert_eq!(compute_damage(1000, 999), 1000);
-    assert_eq!(compute_damage(1000, 0), 1000);
-    assert_eq!(compute_damage(0, 1000), 0);
+    assert_eq!(compute_damage(1000), 1000);
+    assert_eq!(compute_damage(0), 0);
 }
 
 #[test]
 fn compute_damage_equal_zero() {
-    assert_eq!(compute_damage(0, 0), 0);
+    assert_eq!(compute_damage(0), 0);
 }
 
 // ─── Stamina Edge Cases ──────────────────────────────────────────
@@ -2859,16 +2726,6 @@ fn stamina_recover_from_zero() {
     let mut s = Stamina { current: 0, max: 50 };
     s.recover(25);
     assert_eq!(s.current, 25);
-}
-
-// ─── Ammo Edge Cases ────────────────────────────────────────────
-
-#[test]
-fn ammo_spend_one_at_one_succeeds() {
-    let mut a = Ammo { current: 1, max: 10 };
-    assert!(a.spend_one());
-    assert_eq!(a.current, 0);
-    assert!(a.is_empty());
 }
 
 // ─── SpellParticles Stress Tests ─────────────────────────────────
@@ -3032,7 +2889,7 @@ fn multiple_kills_increment_count() {
         BlocksMovement,
         Name("Weak1".into()),
         Health { current: 1, max: 1 },
-        CombatStats { attack: 1, defense: 0 },
+        CombatStats { attack: 1 },
     )).id();
 
     let _m2 = app.world_mut().spawn((
@@ -3041,7 +2898,7 @@ fn multiple_kills_increment_count() {
         BlocksMovement,
         Name("Weak2".into()),
         Health { current: 1, max: 1 },
-        CombatStats { attack: 1, defense: 0 },
+        CombatStats { attack: 1 },
     )).id();
 
     app.update();

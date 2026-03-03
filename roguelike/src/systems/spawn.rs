@@ -66,13 +66,12 @@ pub struct MonsterTemplate {
     pub fg: RatColor,
     pub health: i32,
     pub attack: i32,
-    pub defense: i32,
     pub speed: i32,
     pub sight_range: i32,
     pub exp_reward: i32,
     pub faction: Faction,
-    /// Ammo supply for ranged attacks. 0 means melee only.
-    pub ammo: i32,
+    /// Whether this NPC carries a gun in inventory.
+    pub has_gun: bool,
 }
 
 /// Shared monster templates used by both initial and wave spawning.
@@ -83,22 +82,22 @@ pub struct MonsterTemplate {
 /// - Outlaw: 34, Vaquero: 32, Cowboy: 30, Gunslinger: 38
 pub const MONSTER_TEMPLATES: &[MonsterTemplate] = &[
     // Tier 1: Wildlife (lowercase symbols — animals)
-    MonsterTemplate { name: "Coyote", symbol: "c", fg: RatColor::Rgb(220, 170, 100), health: 100, attack: 2, defense: 0, speed: 50, sight_range: 6, exp_reward: 3, faction: Faction::Wildlife, ammo: 0 },
-    MonsterTemplate { name: "Rattlesnake", symbol: "s", fg: RatColor::Rgb(100, 200, 60), health: 100, attack: 3, defense: 0, speed: 20, sight_range: 8, exp_reward: 5, faction: Faction::Wildlife, ammo: 0 },
+    MonsterTemplate { name: "Coyote", symbol: "c", fg: RatColor::Rgb(220, 170, 100), health: 100, attack: 2, speed: 50, sight_range: 6, exp_reward: 3, faction: Faction::Wildlife, has_gun: false },
+    MonsterTemplate { name: "Rattlesnake", symbol: "s", fg: RatColor::Rgb(100, 200, 60), health: 100, attack: 3, speed: 20, sight_range: 8, exp_reward: 5, faction: Faction::Wildlife, has_gun: false },
     // Tier 2: Outlaws (uppercase symbols — human NPCs)
-    MonsterTemplate { name: "Outlaw", symbol: "O", fg: RatColor::Rgb(240, 200, 130), health: 100, attack: 4, defense: 0, speed: 34, sight_range: 8, exp_reward: 8, faction: Faction::Outlaws, ammo: 0 },
+    MonsterTemplate { name: "Outlaw", symbol: "O", fg: RatColor::Rgb(240, 200, 130), health: 100, attack: 4, speed: 34, sight_range: 8, exp_reward: 8, faction: Faction::Outlaws, has_gun: false },
     // Tier 3: Vaqueros (uppercase symbols — human NPCs)
-    MonsterTemplate { name: "Vaquero", symbol: "V", fg: RatColor::Rgb(180, 200, 80), health: 100, attack: 5, defense: 0, speed: 32, sight_range: 10, exp_reward: 12, faction: Faction::Vaqueros, ammo: 0 },
+    MonsterTemplate { name: "Vaquero", symbol: "V", fg: RatColor::Rgb(180, 200, 80), health: 100, attack: 5, speed: 32, sight_range: 10, exp_reward: 12, faction: Faction::Vaqueros, has_gun: false },
     // Tier 4: Lawmen (uppercase symbols — human NPCs)
-    MonsterTemplate { name: "Cowboy", symbol: "C", fg: RatColor::Rgb(230, 180, 100), health: 100, attack: 6, defense: 0, speed: 30, sight_range: 12, exp_reward: 18, faction: Faction::Lawmen, ammo: 10 },
+    MonsterTemplate { name: "Cowboy", symbol: "C", fg: RatColor::Rgb(230, 180, 100), health: 100, attack: 6, speed: 30, sight_range: 12, exp_reward: 18, faction: Faction::Lawmen, has_gun: true },
     // Tier 5: Outlaws - Gunslinger (uppercase symbols — human NPCs)
-    MonsterTemplate { name: "Gunslinger", symbol: "G", fg: RatColor::Rgb(255, 80, 80), health: 100, attack: 8, defense: 0, speed: 38, sight_range: 14, exp_reward: 30, faction: Faction::Outlaws, ammo: 15 },
+    MonsterTemplate { name: "Gunslinger", symbol: "G", fg: RatColor::Rgb(255, 80, 80), health: 100, attack: 8, speed: 38, sight_range: 14, exp_reward: 30, faction: Faction::Outlaws, has_gun: true },
 ];
 
 /// Spawns a hostile entity from a `MonsterTemplate` at the given position,
 /// with optional stat bonuses for wave scaling.
 ///
-/// NPCs with ammo > 0 get an Inventory containing a gun item matching
+/// NPCs with `has_gun` set get an Inventory containing a gun item matching
 /// their faction, making their inventory structure identical to the player's.
 /// Some NPCs also receive throwable items (dynamite, molotovs).
 ///
@@ -112,13 +111,11 @@ pub fn spawn_monster(
     y: i32,
     health_bonus: i32,
     attack_bonus: i32,
-    defense_bonus: i32,
     exp_bonus: i32,
     drop_chance: f64,
 ) {
     let scaled_health = template.health + health_bonus;
     let scaled_attack = template.attack + attack_bonus;
-    let scaled_defense = template.defense + defense_bonus;
 
     // Build NPC inventory items.
     let mut inv_items: Vec<Entity> = Vec::new();
@@ -126,8 +123,8 @@ pub fn spawn_monster(
     // Deterministic hash based on position for weapon/item assignment.
     let item_hash = (x.wrapping_mul(31) ^ y.wrapping_mul(17)).unsigned_abs();
 
-    // NPCs with ammo get a gun in their inventory (same structure as player).
-    if template.ammo > 0 {
+    // NPCs with a gun get one in their inventory (same structure as player).
+    if template.has_gun {
         // Use position-based hash to deterministically assign varied weapons.
         // Some NPCs get rifles, some revolvers, from the full period-accurate pool.
         // Weapon damage is equivalent to caliber (.31 = 31 damage, etc.)
@@ -156,7 +153,7 @@ pub fn spawn_monster(
                 bg: RatColor::Black,
             },
             ItemKind::Gun {
-                loaded: template.ammo.min(capacity),
+                loaded: capacity,
                 capacity,
                 caliber,
                 attack: caliber.damage(),
@@ -205,7 +202,7 @@ pub fn spawn_monster(
     };
 
     // Compute personality based on faction and position hash.
-    let is_ranged = template.ammo > 0;
+    let is_ranged = template.has_gun;
     let personality_hash = item_hash.wrapping_mul(7) ^ (x.wrapping_add(y)).unsigned_abs();
     let aggression = 0.3 + (personality_hash % 7) as f64 * 0.1; // 0.3 – 0.9
     let courage = if matches!(template.faction, Faction::Wildlife) {
@@ -239,7 +236,6 @@ pub fn spawn_monster(
         },
         CombatStats {
             attack: scaled_attack,
-            defense: scaled_defense,
         },
         Speed(template.speed),
         Energy(0),

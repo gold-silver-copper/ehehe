@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::{CombatStats, Health, Hostile, Name, Player, Position, Projectile, Renderable, display_name};
+use crate::components::{Health, Hostile, Name, Player, Position, Projectile, Renderable, display_name};
 use crate::events::DamageEvent;
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
@@ -141,22 +141,22 @@ pub fn projectile_system(
     mut commands: Commands,
     mut projectiles: Query<(Entity, &mut Position, &mut Projectile, &mut Renderable)>,
     mut damage_events: MessageWriter<DamageEvent>,
-    targets: Query<(Entity, &Position, &CombatStats, &Health, Option<&Name>), (With<Hostile>, Without<Projectile>)>,
-    player_query: Query<(Entity, &Position, &CombatStats, &Health, Option<&Name>), (With<Player>, Without<Projectile>)>,
+    targets: Query<(Entity, &Position, &Health, Option<&Name>), (With<Hostile>, Without<Projectile>)>,
+    player_query: Query<(Entity, &Position, &Health, Option<&Name>), (With<Player>, Without<Projectile>)>,
     source_names: Query<Option<&Name>>,
     game_map: Res<GameMapResource>,
     mut combat_log: ResMut<CombatLog>,
     mut sound_events: ResMut<SoundEvents>,
 ) {
     // Build a lookup of hostile entities by position for O(1) hit detection.
-    let mut target_by_pos: std::collections::HashMap<GridVec, Vec<(Entity, i32, String, i32)>> =
+    let mut target_by_pos: std::collections::HashMap<GridVec, Vec<(Entity, String, i32)>> =
         std::collections::HashMap::new();
-    for (target_entity, target_pos, target_stats, target_health, target_name) in &targets {
+    for (target_entity, target_pos, target_health, target_name) in &targets {
         let t_name = display_name(target_name).to_string();
         target_by_pos
             .entry(target_pos.as_grid_vec())
             .or_default()
-            .push((target_entity, target_stats.defense, t_name, target_health.max));
+            .push((target_entity, t_name, target_health.max));
     }
 
     // Player position for NPC bullet hits and shrapnel self-damage.
@@ -184,9 +184,9 @@ pub fn projectile_system(
 
             // Check for hostile entities at this tile.
             // Penetration model: the first hit deals full penetration damage.
-            // Defense has been removed, so penetration is not reduced on hit.
+            // Penetration is not reduced on hit.
             if let Some(entities_here) = target_by_pos.get(&tile) {
-                for (target_entity, target_def, t_name, t_max_hp) in entities_here {
+                for (target_entity, t_name, t_max_hp) in entities_here {
                     if proj.penetration <= 0 {
                         break;
                     }
@@ -214,7 +214,6 @@ pub fn projectile_system(
                                     tile,
                                 );
                                 sound_events.add(tile);
-                                proj.penetration -= target_def;
                                 continue;
                             }
                             BulletHitResult::Hit { .. } => {
@@ -235,7 +234,6 @@ pub fn projectile_system(
                         tile,
                     );
                     sound_events.add(tile);
-                    proj.penetration -= target_def;
                 }
                 if proj.penetration <= 0 {
                     despawn = true;
@@ -247,7 +245,7 @@ pub fn projectile_system(
             // is NOT the player and it landed on the player's tile.
             // Always stop the bullet after hitting the player to prevent
             // any possibility of double damage.
-            if let Some((player_entity, player_pos, player_stats, player_health, player_name)) = &player_info
+            if let Some((player_entity, player_pos, player_health, player_name)) = &player_info
                 && proj.source != *player_entity
                 && tile == player_pos.as_grid_vec()
                 && proj.penetration > 0
@@ -270,7 +268,6 @@ pub fn projectile_system(
                             });
                             combat_log.push(format!("{source_name} headshots {p_name}!"));
                             sound_events.add(tile);
-                            proj.penetration -= player_stats.defense;
                             despawn = true;
                             break;
                         }
@@ -282,7 +279,6 @@ pub fn projectile_system(
                             });
                             combat_log.push(format!("{source_name}'s bullet hits {p_name} for {hit_damage} damage!"));
                             sound_events.add(tile);
-                            proj.penetration -= player_stats.defense;
                             despawn = true;
                             break;
                         }
@@ -298,7 +294,6 @@ pub fn projectile_system(
                     let p_name = display_name(*player_name);
                     combat_log.push(format!("Shrapnel hits {p_name} for {hit_damage} damage!"));
                     sound_events.add(tile);
-                    proj.penetration -= player_stats.defense;
                     despawn = true;
                     break;
                 }
@@ -306,7 +301,7 @@ pub fn projectile_system(
 
             // Shrapnel self-damage: if the projectile's source is the player
             // and the projectile lands on the player's tile.
-            if let Some((player_entity, player_pos, _, _, _)) = &player_info
+            if let Some((player_entity, player_pos, _, _)) = &player_info
                 && proj.source == *player_entity && tile == player_pos.as_grid_vec() {
                     let self_damage = (proj.damage / SELF_DAMAGE_DIVISOR).max(1);
                     damage_events.write(DamageEvent {

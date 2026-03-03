@@ -175,26 +175,24 @@ damage(atk, def) = max(0, atk − def)
 
 This function is used by melee bump attacks (`combat_system`), roundhouse kicks
 (`melee_wide_system`), thrown weapons (`throw_system`), and any other damage
-source that uses attack vs. defense. Having a single canonical formula
+source that uses attack power. Having a single canonical formula
 eliminates divergence between systems.
 
 **Mathematical properties** (verified by property tests):
 
 | Property | Statement |
 |---|---|
-| **Non-negative** | ∀ atk, def: `damage(atk, def) ≥ 0` |
-| **Monotone ↑ in attack** | `atk₁ ≤ atk₂ ⟹ damage(atk₁, def) ≤ damage(atk₂, def)` |
-| **Monotone ↓ in defense** | `def₁ ≤ def₂ ⟹ damage(atk, def₁) ≥ damage(atk, def₂)` |
-| **Zero threshold** | `damage(atk, def) = 0 ⟺ atk ≤ def` |
-| **Linearity above threshold** | For `atk > def`: `damage(atk, def) = atk − def` |
+| **Non-negative** | ∀ atk: `damage(atk) ≥ 0` |
+| **Monotone ↑ in attack** | `atk₁ ≤ atk₂ ⟹ damage(atk₁) ≤ damage(atk₂)` |
+| **Linearity** | `damage(atk) = max(0, atk)` |
 | **Idempotent clamping** | `max(0, max(0, x)) = max(0, x)` |
 
 The `CombatStats` component provides a convenience method `damage_against(&defender)`
-that calls `compute_damage(self.attack, defender.defense)`.
+that calls `compute_damage(self.attack)`.
 
-### Pool Invariants — Health, Stamina, Ammo
+### Pool Invariants — Health, Stamina
 
-The `Health`, `Stamina`, and `Ammo` components represent **clamped integer pools**
+The `Health` and `Stamina` components represent **clamped integer pools**
 with the fundamental invariant:
 
 ```
@@ -212,8 +210,6 @@ Each pool provides methods that maintain this invariant:
 | `Health` | `fraction() → f64` | Returns `current / max ∈ [0, 1]` (0 if max = 0) |
 | `Stamina` | `spend(cost) → bool` | Atomic check-and-deduct: returns false (no mutation) if insufficient |
 | `Stamina` | `recover(amount)` | Increases current, clamps to max |
-| `Ammo` | `spend_one() → bool` | Spends 1 round if available |
-| `Ammo` | `is_empty() → bool` | True when `current ≤ 0` |
 
 Using these methods instead of raw field mutation guarantees that:
 1. Health never goes below 0 (no negative HP bugs).
@@ -234,16 +230,14 @@ Using these methods instead of raw field mutation guarantees that:
 | `CameraFollow` | marker | Tags the entity the camera tracks |
 | `BlocksMovement` | marker | Marks an entity as impassable (enforced via `SpatialIndex`) |
 | `Hostile` | marker | Tags entities hostile to the player (triggers bump-to-attack) |
-| `HellGate` | marker | Tags the enemy stronghold — destroying it wins the game |
 | `Viewshed` | `{ range, visible_tiles, revealed_tiles, dirty }` | Field-of-view + fog-of-war memory |
 | `Health` | `{ current: i32, max: i32 }` | Hit-point pool for damageable entities |
-| `CombatStats` | `{ attack: i32, defense: i32 }` | Offensive/defensive power for combat resolution |
+| `CombatStats` | `{ attack: i32 }` | Offensive power for combat resolution |
 | `Speed` | `Speed(i32)` | Energy gained per world tick (100 = normal) |
 | `Energy` | `Energy(i32)` | Accumulated action points; act when ≥ ACTION_COST |
 | `AiState` | `Idle \| Chasing` | AI behaviour state for non-player entities |
 | `Faction` | `Wildlife \| Outlaws \| Lawmen \| Vaqueros` | Group affiliation for spawning tiers |
 | `Stamina` | `{ current: i32, max: i32 }` | Pool for special actions (grenades, etc.) |
-| `Ammo` | `{ current: i32, max: i32 }` | Ammunition for AI ranged attacks |
 | `Item` | marker | Tags an entity as a pickable item |
 | `ItemKind` | `Gun \| Knife \| Tomahawk \| Grenade \| Whiskey \| Hat` | Item type and associated stats |
 | `Inventory` | `{ items: Vec<Entity> }` | Holds item entities belonging to an entity |
@@ -276,7 +270,7 @@ Entity
  ├─ Renderable { symbol: "@", fg: White, bg: Black }
  ├─ CameraFollow    (marker)
  ├─ Health { current: 30, max: 30 }
- ├─ CombatStats { attack: 5, defense: 2 }
+ ├─ CombatStats { attack: 5 }
  ├─ Speed(100)      (normal speed)
  ├─ Energy(0)
  └─ Viewshed { range: 15, dirty: true }
@@ -293,14 +287,13 @@ Entity
  ├─ Hostile         (marker)
  ├─ Faction::Wildlife
  ├─ Health { current: 4, max: 4 }
- ├─ CombatStats { attack: 2, defense: 0 }
+ ├─ CombatStats { attack: 2 }
  ├─ Speed(110)
  ├─ Energy(0)
  ├─ AiState::Idle
  ├─ LootTable { drop_chance: 0.25 }
  ├─ ExpReward(3)
- ├─ Viewshed { range: 6 }
- └─ Ammo { current: 0, max: 0 }
+ └─ Viewshed { range: 6 }
 ```
 
 All hostile entities share the same component bundle, constructed via
@@ -398,7 +391,7 @@ Monsters are placed deterministically using noise-based spawn probability:
 - ~2% of passable tiles spawn a monster.
 - Minimum distance of 12 tiles from player spawn.
 - Monster type (Goblin, Orc, Rat) selected by a separate noise layer.
-- Each type has distinct stats: health, attack, defense, speed, and sight range.
+- Each type has distinct stats: health, attack, speed, and sight range.
 
 ### Determinism
 
@@ -463,7 +456,7 @@ Player presses 'd' (move right)
   → input_system emits MoveIntent { entity: player, dx: 1, dy: 0 }
   → movement_system detects Hostile entity at target tile
   → movement_system emits AttackIntent { attacker: player, target: goblin }
-  → combat_system resolves damage = max(0, attack - defense)
+  → combat_system resolves damage = max(0, attack)
   → combat_system emits DamageEvent { target: goblin, amount: 3 }
   → apply_damage_system reduces goblin health
   → death_system despawns goblin if health ≤ 0
@@ -558,17 +551,17 @@ Update
 #### `combat_system`
 - **Reads:** `MessageReader<AttackIntent>`, `Query<(&CombatStats, Option<&Name>)>`
 - **Writes:** `MessageWriter<DamageEvent>`, `ResMut<CombatLog>`
-- Resolves damage = max(0, attacker.attack − target.defense).
+- Resolves damage = max(0, attacker.attack).
 - Logs combat messages to `CombatLog`.
 
 #### `ranged_attack_system` (Bresenham Line-of-Sight)
-- **Reads:** `MessageReader<RangedAttackIntent>`, `Query<(&Position, &mut Ammo, &CombatStats)>`, `Query<(Entity, &Position, &CombatStats), With<Hostile>>`, `Res<GameMapResource>`
+- **Reads:** `MessageReader<RangedAttackIntent>`, `Query<(&Position, &CombatStats)>`, `Query<(Entity, &Position, &CombatStats), With<Hostile>>`, `Res<GameMapResource>`
 - **Writes:** `MessageWriter<DamageEvent>`, `ResMut<CombatLog>`, `ResMut<SpellParticles>`
 - Computes the bullet trajectory using **Bresenham's line algorithm** from the
   caster's position to the maximum range endpoint. The bullet path is the
   mathematically correct sequence of integer grid tiles — no floating-point,
   no directional heuristics. Bullets stop at impassable walls and can penetrate
-  through multiple enemies (penetration decreases by each target's defense).
+  through multiple enemies (penetration carries through until exhausted).
 - Spawns visual particle effects along the trajectory.
 
 #### `apply_damage_system`
