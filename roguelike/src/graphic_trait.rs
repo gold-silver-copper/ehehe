@@ -30,6 +30,7 @@ impl GraphicElement for Floor {
             Floor::DeepWater => "≈".into(),
             Floor::Beach => ".".into(),
             Floor::Bridge => "=".into(),
+            Floor::Sidewalk => ".".into(),
         }
     }
 
@@ -49,6 +50,7 @@ impl GraphicElement for Floor {
             Floor::DeepWater => RatColor::Rgb(30, 80, 180),
             Floor::Beach => RatColor::Rgb(220, 200, 140),
             Floor::Bridge => RatColor::Rgb(140, 100, 55),
+            Floor::Sidewalk => RatColor::Rgb(140, 120, 85),
         }
     }
 
@@ -68,6 +70,7 @@ impl GraphicElement for Floor {
             Floor::DeepWater => RatColor::Rgb(15, 40, 120),
             Floor::Beach => RatColor::Rgb(190, 170, 110),
             Floor::Bridge => RatColor::Rgb(100, 72, 40),
+            Floor::Sidewalk => RatColor::Rgb(110, 95, 65),
         }
     }
 }

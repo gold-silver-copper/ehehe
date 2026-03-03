@@ -361,6 +361,26 @@ pub fn draw_system(
             }
         }
 
+        // ── Apply per-tile color noise (final step before rendering) ──
+        // Each tile gets a deterministic ±TILE_COLOR_NOISE_RANGE jitter
+        // on every RGB channel, seeded by its world coordinates.
+        {
+            use crate::noise::{tile_color_noise, TILE_COLOR_NOISE_RANGE};
+            for (screen_y, row) in render_packet.iter_mut().enumerate() {
+                for (screen_x, cell) in row.iter_mut().enumerate() {
+                    let world = bottom_left + GridVec::new(screen_x as i32, screen_y as i32);
+                    if let RatColor::Rgb(r, g, b) = cell.1 {
+                        let (nr, ng, nb) = tile_color_noise(r, g, b, world.x, world.y, TILE_COLOR_NOISE_RANGE);
+                        cell.1 = RatColor::Rgb(nr, ng, nb);
+                    }
+                    if let RatColor::Rgb(r, g, b) = cell.2 {
+                        let (nr, ng, nb) = tile_color_noise(r, g, b, world.x, world.y, TILE_COLOR_NOISE_RANGE);
+                        cell.2 = RatColor::Rgb(nr, ng, nb);
+                    }
+                }
+            }
+        }
+
         let mut render_lines = Vec::new();
 
         for y in 0..render_height as usize {

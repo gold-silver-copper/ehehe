@@ -98,6 +98,37 @@ pub fn fbm(x: f64, y: f64, octaves: u32, frequency: f64, persistence: f64, seed:
     value / max_amplitude
 }
 
+/// Default per-tile color noise range (±).
+/// Each RGB channel is shifted by at most this many units.
+pub const TILE_COLOR_NOISE_RANGE: i16 = 2;
+
+/// Applies deterministic per-tile color noise to an RGB color.
+///
+/// Uses a cheap hash of the tile's `(x, y)` world coordinates to produce
+/// a stable offset in `[-range, +range]` for each RGB channel.  The noise
+/// is identical every frame for the same tile, so it never flickers.
+///
+/// Call this as the **final** step before rendering — after lighting,
+/// faction tinting, fog-of-war, and any other color logic.
+pub fn tile_color_noise(r: u8, g: u8, b: u8, x: i32, y: i32, range: i16) -> (u8, u8, u8) {
+    if range == 0 {
+        return (r, g, b);
+    }
+    // Three independent noise samples per tile (one per channel).
+    let hr = noise2d(x, y, 0xA3B1_C5D7);
+    let hg = noise2d(x, y, 0xE7F2_4A8B);
+    let hb = noise2d(x, y, 0x91D6_3F0E);
+
+    // Map to [-range, +range] using unsigned modulo to avoid sign issues.
+    let span = (2 * range + 1) as u32;
+    let dr = (hr % span) as i16 - range;
+    let dg = (hg % span) as i16 - range;
+    let db = (hb % span) as i16 - range;
+
+    let clamp = |v: i16| v.clamp(0, 255) as u8;
+    (clamp(r as i16 + dr), clamp(g as i16 + dg), clamp(b as i16 + db))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +188,50 @@ mod tests {
         let a = fbm(5.5, 3.3, 4, 0.1, 0.5, 42);
         let b = fbm(5.5, 3.3, 4, 0.1, 0.5, 42);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn tile_color_noise_deterministic() {
+        let a = tile_color_noise(100, 100, 100, 10, 20, 2);
+        let b = tile_color_noise(100, 100, 100, 10, 20, 2);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn tile_color_noise_in_range() {
+        for x in -5..5 {
+            for y in -5..5 {
+                let (r, g, b) = tile_color_noise(100, 100, 100, x, y, 2);
+                assert!(r >= 98 && r <= 102, "r={r} out of ±2 range for ({x},{y})");
+                assert!(g >= 98 && g <= 102, "g={g} out of ±2 range for ({x},{y})");
+                assert!(b >= 98 && b <= 102, "b={b} out of ±2 range for ({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn tile_color_noise_clamps_at_boundaries() {
+        // Near 0: should not underflow
+        let (r, _, _) = tile_color_noise(0, 128, 255, 5, 5, 2);
+        assert!(r <= 2, "r={r} should be clamped near 0");
+        // Near 255: should not overflow
+        let (_, _, b) = tile_color_noise(0, 128, 255, 5, 5, 2);
+        assert!(b >= 253, "b={b} should be clamped near 255");
+    }
+
+    #[test]
+    fn tile_color_noise_different_positions_vary() {
+        let a = tile_color_noise(100, 100, 100, 0, 0, 2);
+        let b = tile_color_noise(100, 100, 100, 50, 50, 2);
+        // Very unlikely all 3 channels are identical for different positions
+        assert!(a != b, "Different positions should typically produce different noise");
+    }
+
+    #[test]
+    fn tile_color_noise_zero_range_is_identity() {
+        let (r, g, b) = tile_color_noise(100, 150, 200, 42, 99, 0);
+        assert_eq!(r, 100);
+        assert_eq!(g, 150);
+        assert_eq!(b, 200);
     }
 }

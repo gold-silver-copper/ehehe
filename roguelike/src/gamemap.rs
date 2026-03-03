@@ -211,10 +211,11 @@ impl GameMap {
             }
         }
 
-        // ── Step 3: Curved street grid ──────────────────────────────
-        // Horizontal avenues with sinusoidal curvature
-        let avenue_spacing = 24;
-        let avenue_half_width = 3;
+        // ── Step 3: Curved street grid with sidewalks ────────────────
+        // Horizontal avenues: wide dirt carriage roads flanked by sidewalks
+        let avenue_spacing = 36; // more space between avenues for bigger blocks
+        let avenue_half_width = 3; // carriage road half-width (7 tiles total)
+        let sidewalk_width = 2; // sidewalk on each side of the road
         let mut avenue_ys: Vec<CoordinateUnit> = Vec::new();
         let curve_seed = seed.wrapping_add(55500);
         {
@@ -226,6 +227,22 @@ impl GameMap {
                 let curve_freq = 0.015 + value_noise(0, ay, curve_seed) * 0.01;
                 for x in 1..width - 1 {
                     let curve_offset = (x as f64 * curve_freq).sin() * curve_amp;
+                    // Sidewalk (outer band)
+                    for sw in 1..=sidewalk_width {
+                        for sign in [-1i32, 1] {
+                            let y = ay + sign * (avenue_half_width + sw) + curve_offset as CoordinateUnit;
+                            if y <= 0 || y >= height - 1 { continue; }
+                            let pos = GridVec::new(x, y);
+                            if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                                if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Bridge)) {
+                                    continue;
+                                }
+                                voxel.floor = Some(Floor::Sidewalk);
+                                voxel.props = None;
+                            }
+                        }
+                    }
+                    // Carriage road (inner band)
                     for hw in -avenue_half_width..=avenue_half_width {
                         let y = ay + hw + curve_offset as CoordinateUnit;
                         if y <= 0 || y >= height - 1 { continue; }
@@ -244,10 +261,11 @@ impl GameMap {
             }
         }
 
-        // Vertical cross streets with sinusoidal curvature
+        // Vertical cross streets with sinusoidal curvature and sidewalks
         let cross_seed = seed.wrapping_add(66666);
-        let cross_spacing = 22;
-        let cross_half_width = 2;
+        let cross_spacing = 32; // wider spacing for bigger lots
+        let cross_half_width = 2; // narrower than avenues
+        let cross_sidewalk_width = 1;
         let mut cross_xs: Vec<CoordinateUnit> = Vec::new();
         {
             let mut cx = 40i32;
@@ -260,6 +278,27 @@ impl GameMap {
                 let curve_freq = 0.02 + value_noise(1, ci, cross_seed) * 0.01;
                 for y in 1..height - 1 {
                     let curve_offset = (y as f64 * curve_freq).sin() * curve_amp;
+                    // Sidewalk — cross streets are laid after avenues, so we
+                    // must not overwrite existing avenue dirt roads or building walls.
+                    for sw in 1..=cross_sidewalk_width {
+                        for sign in [-1i32, 1] {
+                            let x = actual_cx + sign * (cross_half_width + sw) + curve_offset as CoordinateUnit;
+                            if x <= 0 || x >= width - 1 { continue; }
+                            let pos = GridVec::new(x, y);
+                            if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                                if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Bridge)) {
+                                    continue;
+                                }
+                                if !matches!(voxel.props, Some(Props::Wall))
+                                    && !matches!(voxel.floor, Some(Floor::Dirt))
+                                {
+                                    voxel.floor = Some(Floor::Sidewalk);
+                                    voxel.props = None;
+                                }
+                            }
+                        }
+                    }
+                    // Carriage road
                     for hw in -cross_half_width..=cross_half_width {
                         let x = actual_cx + hw + curve_offset as CoordinateUnit;
                         if x <= 0 || x >= width - 1 { continue; }
@@ -372,7 +411,7 @@ impl GameMap {
                 let pos = GridVec::new(x, y);
                 if let Some(voxel) = self.get_voxel_at(&pos)
                     && voxel.props.is_none()
-                    && matches!(voxel.floor, Some(Floor::Dirt) | Some(Floor::Sand) | Some(Floor::Gravel) | Some(Floor::Grass))
+                    && matches!(voxel.floor, Some(Floor::Dirt) | Some(Floor::Sand) | Some(Floor::Gravel) | Some(Floor::Grass) | Some(Floor::Sidewalk))
                 {
                     // Check if there's an adjacent wall (meaning we're just outside a building)
                     let has_adjacent_wall = pos.cardinal_neighbors().iter().any(|n| {
@@ -495,11 +534,83 @@ fn select_desert_floor(biome: f64, detail: f64) -> Floor {
 /// Post Office, Church, Bank, Hotel, Jail, Undertaker, Blacksmith.
 const BUILDING_TYPE_COUNT: u32 = 12;
 
+/// District types that influence which building kinds appear in each area.
+/// Derived from Voronoi-style partitioning of the town into themed zones.
+const DISTRICT_RESIDENTIAL: u32 = 0;
+const DISTRICT_COMMERCIAL: u32 = 1;
+const DISTRICT_LIVERY: u32 = 2;
+/// Cantina-row district — saloons, hotels, entertainment.
+#[allow(dead_code)]
+const DISTRICT_CANTINA: u32 = 3;
+
+/// Number of distinct district types.
+const DISTRICT_COUNT: u32 = 4;
+
+/// Assigns a district type based on position using Voronoi-style partitioning.
+/// Deterministic based on position and seed.
+fn get_district(x: CoordinateUnit, y: CoordinateUnit, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) -> u32 {
+    let district_seed = seed.wrapping_add(222333);
+    // Place ~8 Voronoi sites across the town
+    let num_sites = 8;
+    let mut min_dist = i64::MAX;
+    let mut best_district = DISTRICT_RESIDENTIAL;
+    for i in 0..num_sites {
+        let sx = (value_noise(i, 0, district_seed) * (width - 80) as f64) as CoordinateUnit + 40;
+        let sy = (value_noise(0, i, district_seed) * (height - 80) as f64) as CoordinateUnit + 40;
+        let dx = (x - sx) as i64;
+        let dy = (y - sy) as i64;
+        let dist = dx * dx + dy * dy;
+        if dist < min_dist {
+            min_dist = dist;
+            // Assign district type based on site index
+            best_district = (value_noise(i, i, district_seed.wrapping_add(444)) * DISTRICT_COUNT as f64) as u32;
+            best_district = best_district.min(DISTRICT_COUNT - 1);
+        }
+    }
+    best_district
+}
+
+/// Selects a building kind based on district type, using weighted random tables.
+fn district_building_kind(district: u32, noise: f64) -> u32 {
+    match district {
+        DISTRICT_RESIDENTIAL => {
+            // Mostly houses, some churches, hotels
+            if noise < 0.55 { 0 }       // House
+            else if noise < 0.70 { 6 }   // Church
+            else if noise < 0.85 { 8 }   // Hotel
+            else { 5 }                    // Post Office
+        }
+        DISTRICT_COMMERCIAL => {
+            // General stores, banks, post offices, sheriff
+            if noise < 0.30 { 3 }        // General Store
+            else if noise < 0.50 { 7 }   // Bank
+            else if noise < 0.65 { 4 }   // Sheriff's Office
+            else if noise < 0.80 { 9 }   // Jail
+            else { 5 }                    // Post Office
+        }
+        DISTRICT_LIVERY => {
+            // Stables, blacksmiths, general stores
+            if noise < 0.35 { 2 }        // Stable
+            else if noise < 0.60 { 11 }  // Blacksmith
+            else if noise < 0.80 { 3 }   // General Store
+            else { 10 }                   // Undertaker
+        }
+        _ => {
+            // Cantina row: saloons, hotels
+            if noise < 0.40 { 1 }        // Saloon
+            else if noise < 0.65 { 8 }   // Hotel
+            else if noise < 0.80 { 0 }   // House
+            else { 1 }                    // Saloon
+        }
+    }
+}
+
 /// Generates deterministic building footprints for the western town.
 ///
 /// Buildings are placed in rows between every pair of adjacent avenues,
-/// filling the entire map with dense city blocks.
-/// Uses noise for position jitter and building kind selection.
+/// filling the entire map with dense city blocks. Buildings are larger
+/// (10-18 wide, 8-16 tall) so interiors feel like actual rooms.
+/// Uses Voronoi-based districts for themed building type selection.
 fn generate_buildings(
     width: CoordinateUnit,
     height: CoordinateUnit,
@@ -517,26 +628,26 @@ fn generate_buildings(
     // Band above the first avenue
     if let Some(&first) = avenue_ys.first() {
         let top = 4;
-        let bot = first - avenue_half_width - 2;
-        if bot - top >= 6 {
+        let bot = first - avenue_half_width - 4;
+        if bot - top >= 8 {
             row_bands.push((top, bot));
         }
     }
 
     // Bands between each pair of avenues
     for pair in avenue_ys.windows(2) {
-        let top = pair[0] + avenue_half_width + 2;
-        let bot = pair[1] - avenue_half_width - 2;
-        if bot - top >= 6 {
+        let top = pair[0] + avenue_half_width + 4;
+        let bot = pair[1] - avenue_half_width - 4;
+        if bot - top >= 8 {
             row_bands.push((top, bot));
         }
     }
 
     // Band below the last avenue
     if let Some(&last) = avenue_ys.last() {
-        let top = last + avenue_half_width + 2;
+        let top = last + avenue_half_width + 4;
         let bot = height - 4;
-        if bot - top >= 6 {
+        if bot - top >= 8 {
             row_bands.push((top, bot));
         }
     }
@@ -547,19 +658,22 @@ fn generate_buildings(
         let mut cx = 4 + (row_offset_noise * 6.0) as CoordinateUnit;
         let mut bldg_index = 0u32;
         let band_height = row_max_y - row_min_y;
-        while cx < width - 6 {
+        while cx < width - 10 {
             let noise = value_noise(cx, bldg_index as i32 + row_idx as i32, bldg_seed);
             let kind_noise = value_noise(bldg_index as i32, cx + row_idx as i32, bldg_seed.wrapping_add(2222));
 
-            let bw = 6 + (noise * 6.0) as CoordinateUnit; // width 6–11
-            let max_h = band_height.min(10);
-            let bh = 5 + (noise * (max_h - 5).max(1) as f64) as CoordinateUnit; // height 5–max_h
-            let by_jitter = (value_noise(cx, row_min_y, bldg_seed.wrapping_add(3333)) * 3.0) as CoordinateUnit;
+            // Larger buildings: 10-18 wide, 8-16 tall
+            let bw = 10 + (noise * 9.0) as CoordinateUnit; // width 10–18
+            let max_h = band_height.min(16);
+            let bh = 8.max(max_h - (noise * 4.0) as CoordinateUnit); // height 8–max_h
+            let by_jitter = (value_noise(cx, row_min_y, bldg_seed.wrapping_add(3333)) * 2.0) as CoordinateUnit;
             let by = row_min_y + by_jitter;
 
             // Don't exceed row bounds or map bounds
             if by + bh <= row_max_y && by > 0 && by + bh < height - 1 && cx + bw < width - 1 {
-                let kind = (kind_noise * BUILDING_TYPE_COUNT as f64) as u32;
+                // District-based building type
+                let district = get_district(cx + bw / 2, by + bh / 2, width, height, seed);
+                let kind = district_building_kind(district, kind_noise);
                 buildings.push(Building {
                     x: cx,
                     y: by,
@@ -569,9 +683,9 @@ fn generate_buildings(
                 });
             }
 
-            // Tighter gaps between buildings for a denser town
+            // Gap between buildings
             let gap_noise = value_noise(cx + 1, bldg_index as i32, bldg_seed.wrapping_add(4444));
-            cx += bw + 2 + (noise * 2.0 + gap_noise * 3.0) as CoordinateUnit;
+            cx += bw + 3 + (gap_noise * 4.0) as CoordinateUnit;
             bldg_index += 1;
         }
     }
@@ -593,8 +707,6 @@ const ROUNDED_CORNER_RADIUS: CoordinateUnit = 2;
 const L_SHAPE_NOTCH_DIVISOR: CoordinateUnit = 3;
 
 fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
-    let furn_seed = seed.wrapping_add(55555);
-
     // Determine building shape based on noise
     let shape_noise = value_noise(b.x + b.y, b.w + b.h, seed.wrapping_add(77777));
     let shape_type = if b.w >= 8 && b.h >= 8 {
@@ -681,158 +793,248 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
 
     match b.kind {
         0 => {
-            // House: table and chairs
-            if iw >= 2 && ih >= 2 {
+            // House: dining area, bedroom corner, storage
+            if iw >= 4 && ih >= 4 {
+                // Dining table with chairs
+                set_prop(map, interior_x + 2, interior_y + 2, Props::Table);
+                set_prop(map, interior_x + 1, interior_y + 2, Props::Chair);
+                set_prop(map, interior_x + 3, interior_y + 2, Props::Chair);
+                set_prop(map, interior_x + 2, interior_y + 1, Props::Chair);
+                set_prop(map, interior_x + 2, interior_y + 3, Props::Chair);
+                // Bedroom area (far corner)
+                set_prop(map, interior_x + iw - 1, interior_y + ih - 1, Props::Bench);
+                set_prop(map, interior_x + iw - 2, interior_y + ih - 1, Props::Bench);
+                // Storage
+                set_prop(map, interior_x, interior_y, Props::Barrel);
+                set_prop(map, interior_x + iw - 1, interior_y, Props::Crate);
+                if iw >= 6 {
+                    set_prop(map, interior_x, interior_y + ih - 1, Props::Barrel);
+                }
+            } else if iw >= 2 && ih >= 2 {
                 set_prop(map, interior_x + 1, interior_y + 1, Props::Table);
                 set_prop(map, interior_x, interior_y + 1, Props::Chair);
-                if iw >= 3 {
-                    set_prop(map, interior_x + 2, interior_y + 1, Props::Chair);
-                }
-                if ih >= 3 {
-                    set_prop(map, interior_x + iw - 1, interior_y, Props::Barrel);
-                }
             }
         }
         1 => {
-            // Saloon: piano, tables, chairs, barrels
-            if iw >= 4 && ih >= 3 {
+            // Saloon: piano, bar counter, multiple table/chair clusters
+            if iw >= 6 && ih >= 5 {
+                set_prop(map, interior_x, interior_y, Props::Piano);
+                // Bar (barrels along back wall)
+                for dx in 2..iw.min(8) {
+                    set_prop(map, interior_x + dx, interior_y, Props::Barrel);
+                }
+                // Table clusters in a grid
+                for row in 0..(ih - 2) / 3 {
+                    for col in 0..(iw - 1) / 4 {
+                        let tx = interior_x + 1 + col * 4;
+                        let ty = interior_y + 2 + row * 3;
+                        if tx + 1 < interior_x + iw && ty < interior_y + ih {
+                            set_prop(map, tx, ty, Props::Table);
+                            set_prop(map, tx - 1, ty, Props::Chair);
+                            set_prop(map, tx + 1, ty, Props::Chair);
+                        }
+                    }
+                }
+            } else if iw >= 4 && ih >= 3 {
                 set_prop(map, interior_x, interior_y, Props::Piano);
                 set_prop(map, interior_x + 2, interior_y + 1, Props::Table);
                 set_prop(map, interior_x + 1, interior_y + 1, Props::Chair);
                 set_prop(map, interior_x + 3, interior_y + 1, Props::Chair);
-                if iw >= 5 {
-                    set_prop(map, interior_x + iw - 1, interior_y, Props::Barrel);
-                    set_prop(map, interior_x + iw - 1, interior_y + 1, Props::Barrel);
-                }
             }
         }
         2 => {
-            // Stable: hitching posts, water trough, hay bales, some crates
-            if iw >= 3 && ih >= 2 {
+            // Stable: hitching posts along walls, hay bales, water troughs
+            if iw >= 5 && ih >= 4 {
+                // Hitching posts along one wall
+                for dx in (0..iw).step_by(3) {
+                    set_prop(map, interior_x + dx, interior_y, Props::HitchingPost);
+                }
+                // Hay bales along opposite wall
+                for dx in (0..iw).step_by(2) {
+                    set_prop(map, interior_x + dx, interior_y + ih - 1, Props::HayBale);
+                }
+                // Water trough and crates
+                set_prop(map, interior_x + iw / 2, interior_y + ih / 2, Props::WaterTrough);
+                set_prop(map, interior_x + iw - 1, interior_y + ih / 2, Props::Crate);
+            } else if iw >= 3 && ih >= 2 {
                 set_prop(map, interior_x, interior_y, Props::HitchingPost);
                 set_prop(map, interior_x + 2, interior_y, Props::HitchingPost);
                 set_prop(map, interior_x + 1, interior_y + ih - 1, Props::WaterTrough);
-                if iw >= 4 {
-                    set_prop(map, interior_x + iw - 1, interior_y + ih - 1, Props::Crate);
-                    set_prop(map, interior_x + iw - 1, interior_y, Props::HayBale);
-                }
-                if iw >= 5 {
-                    set_prop(map, interior_x + iw - 2, interior_y, Props::HayBale);
-                }
             }
         }
         3 => {
-            // General store: barrels, crates, table
-            if iw >= 3 && ih >= 2 {
+            // General store: shelves (barrels/crates) along walls, counter
+            if iw >= 5 && ih >= 4 {
+                // Counter (tables)
+                for dx in 1..iw - 1 {
+                    set_prop(map, interior_x + dx, interior_y + ih / 2, Props::Table);
+                }
+                // Shelves along walls
+                set_prop(map, interior_x, interior_y, Props::Barrel);
+                set_prop(map, interior_x, interior_y + 1, Props::Crate);
+                set_prop(map, interior_x + iw - 1, interior_y, Props::Crate);
+                set_prop(map, interior_x + iw - 1, interior_y + 1, Props::Barrel);
+                if ih >= 6 {
+                    set_prop(map, interior_x, interior_y + ih - 1, Props::Crate);
+                    set_prop(map, interior_x + iw - 1, interior_y + ih - 1, Props::Barrel);
+                }
+            } else if iw >= 3 && ih >= 2 {
                 set_prop(map, interior_x, interior_y, Props::Barrel);
                 set_prop(map, interior_x + 1, interior_y, Props::Crate);
-                if iw >= 4 {
-                    set_prop(map, interior_x + iw - 1, interior_y, Props::Crate);
-                }
-                let noise = value_noise(b.x, b.y, furn_seed);
-                if noise > 0.5 && ih >= 3 {
-                    set_prop(map, interior_x + 1, interior_y + ih - 1, Props::Table);
-                }
             }
         }
         4 => {
-            // Sheriff's office: table (desk), chair, barrel (lock-up), sign
-            if iw >= 3 && ih >= 2 {
+            // Sheriff's office: desk, cells in back, wanted posters
+            if iw >= 5 && ih >= 4 {
+                // Desk area
+                set_prop(map, interior_x + 2, interior_y + 1, Props::Table);
+                set_prop(map, interior_x + 1, interior_y + 1, Props::Chair);
+                set_prop(map, interior_x + 3, interior_y + 1, Props::Chair);
+                // Wanted posters
+                set_prop(map, interior_x, interior_y, Props::Sign);
+                set_prop(map, interior_x + 1, interior_y, Props::Sign);
+                // Cell area (barrels as bars)
+                set_prop(map, interior_x + iw - 1, interior_y + ih - 1, Props::Barrel);
+                set_prop(map, interior_x + iw - 2, interior_y + ih - 1, Props::Barrel);
+                set_prop(map, interior_x + iw - 1, interior_y + ih - 2, Props::Barrel);
+            } else if iw >= 3 && ih >= 2 {
                 set_prop(map, interior_x + 1, interior_y, Props::Table);
                 set_prop(map, interior_x, interior_y, Props::Chair);
-                if iw >= 4 {
-                    set_prop(map, interior_x + iw - 1, interior_y + ih - 1, Props::Barrel);
-                }
-                if ih >= 3 {
-                    set_prop(map, interior_x + iw - 1, interior_y, Props::Sign);
-                }
             }
         }
         5 => {
-            // Post office: table (counter), crates (parcels), sign
-            if iw >= 3 && ih >= 2 {
+            // Post office: service counter, mail storage
+            if iw >= 5 && ih >= 4 {
+                // Counter
+                for dx in 1..iw - 1 {
+                    set_prop(map, interior_x + dx, interior_y + 2, Props::Table);
+                }
+                // Mail crates behind counter
+                set_prop(map, interior_x, interior_y, Props::Crate);
+                set_prop(map, interior_x + 1, interior_y, Props::Crate);
+                set_prop(map, interior_x + iw - 1, interior_y, Props::Crate);
+                // Sign
+                set_prop(map, interior_x + iw / 2, interior_y + ih - 1, Props::Sign);
+            } else if iw >= 3 && ih >= 2 {
                 set_prop(map, interior_x + 1, interior_y, Props::Table);
                 set_prop(map, interior_x, interior_y, Props::Crate);
-                if iw >= 4 {
-                    set_prop(map, interior_x + iw - 1, interior_y, Props::Crate);
-                }
-                if ih >= 3 {
-                    set_prop(map, interior_x, interior_y + ih - 1, Props::Sign);
-                }
             }
         }
         6 => {
-            // Church: benches (pews) in rows, table (altar)
-            if iw >= 3 && ih >= 3 {
+            // Church: pews in rows, altar at front
+            if iw >= 5 && ih >= 5 {
+                // Altar
+                set_prop(map, interior_x + iw / 2, interior_y, Props::Table);
+                set_prop(map, interior_x + iw / 2 - 1, interior_y, Props::Sign);
+                set_prop(map, interior_x + iw / 2 + 1, interior_y, Props::Sign);
+                // Pew rows (benches on both sides of center aisle)
+                for row in 2..ih.min(8) {
+                    set_prop(map, interior_x + 1, interior_y + row, Props::Bench);
+                    if iw >= 6 {
+                        set_prop(map, interior_x + iw - 2, interior_y + row, Props::Bench);
+                    }
+                }
+            } else if iw >= 3 && ih >= 3 {
                 set_prop(map, interior_x + iw / 2, interior_y, Props::Table);
                 for row in 1..ih.min(4) {
                     set_prop(map, interior_x, interior_y + row, Props::Bench);
-                    if iw >= 4 {
-                        set_prop(map, interior_x + iw - 1, interior_y + row, Props::Bench);
-                    }
                 }
             }
         }
         7 => {
-            // Bank: table (counter), barrels (vault), crates (strongboxes)
-            if iw >= 3 && ih >= 2 {
+            // Bank: counter, vault area, strongboxes
+            if iw >= 5 && ih >= 4 {
+                // Counter
+                for dx in 1..iw - 1 {
+                    set_prop(map, interior_x + dx, interior_y + ih / 2, Props::Table);
+                }
+                // Vault (barrels as heavy door / safe)
+                set_prop(map, interior_x, interior_y, Props::Barrel);
+                set_prop(map, interior_x + 1, interior_y, Props::Barrel);
+                set_prop(map, interior_x, interior_y + 1, Props::Barrel);
+                // Strongboxes
+                set_prop(map, interior_x + iw - 1, interior_y, Props::Crate);
+                set_prop(map, interior_x + iw - 1, interior_y + ih - 1, Props::Crate);
+                set_prop(map, interior_x + iw - 2, interior_y + ih - 1, Props::Crate);
+            } else if iw >= 3 && ih >= 2 {
                 set_prop(map, interior_x + 1, interior_y, Props::Table);
                 set_prop(map, interior_x, interior_y + ih - 1, Props::Barrel);
-                if iw >= 4 {
-                    set_prop(map, interior_x + iw - 1, interior_y + ih - 1, Props::Barrel);
-                    set_prop(map, interior_x + iw - 1, interior_y, Props::Crate);
-                }
             }
         }
         8 => {
-            // Hotel: table, chairs in rows (rooms suggested by props layout)
-            if iw >= 3 && ih >= 2 {
-                set_prop(map, interior_x, interior_y, Props::Table);
-                set_prop(map, interior_x + 1, interior_y, Props::Chair);
-                if ih >= 3 {
-                    set_prop(map, interior_x, interior_y + 2, Props::Bench);
-                    if iw >= 4 {
-                        set_prop(map, interior_x + iw - 1, interior_y + 2, Props::Bench);
+            // Hotel: lobby, guest rooms suggested by bed rows
+            if iw >= 5 && ih >= 4 {
+                // Lobby area
+                set_prop(map, interior_x + 1, interior_y, Props::Table);
+                set_prop(map, interior_x, interior_y, Props::Chair);
+                set_prop(map, interior_x + 2, interior_y, Props::Chair);
+                // Guest rooms (beds/benches in rows)
+                for row in (2..ih).step_by(2) {
+                    set_prop(map, interior_x, interior_y + row, Props::Bench);
+                    if iw >= 6 {
+                        set_prop(map, interior_x + iw - 1, interior_y + row, Props::Bench);
                     }
                 }
-                if iw >= 5 {
-                    set_prop(map, interior_x + iw - 1, interior_y, Props::Barrel);
-                }
+                // Storage
+                set_prop(map, interior_x + iw - 1, interior_y, Props::Barrel);
+            } else if iw >= 3 && ih >= 2 {
+                set_prop(map, interior_x, interior_y, Props::Table);
+                set_prop(map, interior_x + 1, interior_y, Props::Chair);
             }
         }
         9 => {
-            // Jail: barrels (cells), sign (wanted poster)
-            if iw >= 3 && ih >= 2 {
+            // Jail: cells, wanted posters, desk
+            if iw >= 5 && ih >= 4 {
+                // Desk
+                set_prop(map, interior_x + 1, interior_y, Props::Table);
+                set_prop(map, interior_x, interior_y, Props::Chair);
+                // Wanted posters
+                set_prop(map, interior_x + 2, interior_y, Props::Sign);
+                // Cell bars (barrels forming cell walls)
+                for dy in 0..ih.min(5) {
+                    set_prop(map, interior_x + iw - 1, interior_y + dy, Props::Barrel);
+                }
+                set_prop(map, interior_x + iw - 2, interior_y + ih - 1, Props::Barrel);
+            } else if iw >= 3 && ih >= 2 {
                 set_prop(map, interior_x, interior_y, Props::Sign);
                 set_prop(map, interior_x + iw - 1, interior_y, Props::Barrel);
-                if ih >= 3 {
-                    set_prop(map, interior_x, interior_y + ih - 1, Props::Barrel);
-                    set_prop(map, interior_x + iw - 1, interior_y + ih - 1, Props::Barrel);
-                }
             }
         }
         10 => {
-            // Undertaker: tables (slabs), crates (coffins)
-            if iw >= 3 && ih >= 2 {
+            // Undertaker: preparation tables, coffins (crates)
+            if iw >= 5 && ih >= 4 {
+                // Tables in center
+                set_prop(map, interior_x + 2, interior_y + 1, Props::Table);
+                set_prop(map, interior_x + 2, interior_y + ih / 2, Props::Table);
+                if iw >= 7 {
+                    set_prop(map, interior_x + 4, interior_y + 1, Props::Table);
+                }
+                // Coffins (crates) along wall
+                for dy in (0..ih).step_by(2) {
+                    set_prop(map, interior_x, interior_y + dy, Props::Crate);
+                }
+                set_prop(map, interior_x + iw - 1, interior_y + ih - 1, Props::Crate);
+            } else if iw >= 3 && ih >= 2 {
                 set_prop(map, interior_x + 1, interior_y, Props::Table);
-                if iw >= 4 {
-                    set_prop(map, interior_x + 3.min(iw - 1), interior_y, Props::Table);
-                }
                 set_prop(map, interior_x, interior_y + ih - 1, Props::Crate);
-                if iw >= 4 {
-                    set_prop(map, interior_x + iw - 1, interior_y + ih - 1, Props::Crate);
-                }
             }
         }
         _ => {
-            // Blacksmith: barrels (water quench), crates (supplies), hitching post (anvil stand-in)
-            if iw >= 3 && ih >= 2 {
+            // Blacksmith: forge area, anvil, quench barrel, supplies
+            if iw >= 5 && ih >= 4 {
+                // Anvil (hitching post stand-in)
+                set_prop(map, interior_x + iw / 2, interior_y + ih / 2, Props::HitchingPost);
+                // Quench barrel
+                set_prop(map, interior_x + iw / 2 + 1, interior_y + ih / 2, Props::Barrel);
+                // Water trough
+                set_prop(map, interior_x, interior_y + ih - 1, Props::WaterTrough);
+                // Supplies along walls
+                set_prop(map, interior_x + iw - 1, interior_y, Props::Crate);
+                set_prop(map, interior_x + iw - 1, interior_y + 1, Props::Crate);
+                set_prop(map, interior_x, interior_y, Props::Barrel);
+            } else if iw >= 3 && ih >= 2 {
                 set_prop(map, interior_x, interior_y, Props::HitchingPost);
                 set_prop(map, interior_x + 1, interior_y + ih - 1, Props::Barrel);
-                if iw >= 4 {
-                    set_prop(map, interior_x + iw - 1, interior_y, Props::Crate);
-                    set_prop(map, interior_x + iw - 1, interior_y + ih - 1, Props::WaterTrough);
-                }
             }
         }
     }
@@ -1024,8 +1226,8 @@ fn place_desert_decorations(
                 if matches!(voxel.floor, Some(Floor::WoodPlanks)) {
                     continue;
                 }
-                // Skip road tiles — no decorations on dirt roads.
-                if matches!(voxel.floor, Some(Floor::Dirt)) {
+                // Skip road tiles — no decorations on dirt roads or sidewalks.
+                if matches!(voxel.floor, Some(Floor::Dirt) | Some(Floor::Sidewalk)) {
                     continue;
                 }
             } else {
