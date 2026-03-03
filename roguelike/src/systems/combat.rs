@@ -69,7 +69,7 @@ fn spawn_gun_smoke(game_map: &mut GameMapResource, origin: GridVec, turn: u32, f
 
 /// Resolves attack intents into damage events.
 ///
-/// Damage = attacker.attack (defense has been removed).
+/// Damage = attacker.attack.
 /// Uses `CombatStats::damage_against` for the formal damage model.
 /// Emits a `DamageEvent` for each successful hit and logs combat messages.
 pub fn combat_system(
@@ -82,11 +82,11 @@ pub fn combat_system(
         let Ok((attacker_stats, attacker_name, attacker_pos)) = stats_query.get(intent.attacker) else {
             continue;
         };
-        let Ok((target_stats, target_name, _)) = stats_query.get(intent.target) else {
+        let Ok((_target_stats, target_name, _)) = stats_query.get(intent.target) else {
             continue;
         };
 
-        let damage = attacker_stats.damage_against(target_stats);
+        let damage = attacker_stats.damage_against();
         let a_name = display_name(attacker_name);
         let t_name = display_name(target_name);
         let pos = attacker_pos.map(|p| p.as_grid_vec());
@@ -435,7 +435,7 @@ pub fn melee_wide_system(
     mut intents: MessageReader<MeleeWideIntent>,
     mut damage_events: MessageWriter<DamageEvent>,
     attacker_query: Query<(&Position, &CombatStats, Option<&Name>)>,
-    targets: Query<(Entity, &Position, &CombatStats, Option<&Name>), With<Hostile>>,
+    targets: Query<(Entity, &Position, Option<&Name>), With<Hostile>>,
     mut combat_log: ResMut<CombatLog>,
     mut game_map: ResMut<GameMapResource>,
 ) {
@@ -447,10 +447,10 @@ pub fn melee_wide_system(
         let a_name = display_name(attacker_name);
         let mut hit_count = 0;
 
-        for (target_entity, target_pos, target_stats, target_name) in &targets {
+        for (target_entity, target_pos, target_name) in &targets {
             let dist = origin.chebyshev_distance(target_pos.as_grid_vec());
             if dist == 1 {
-                let damage = attacker_stats.damage_against(target_stats);
+                let damage = attacker_stats.damage_against();
                 let t_name = display_name(target_name);
                 if damage > 0 {
                     damage_events.write(DamageEvent {

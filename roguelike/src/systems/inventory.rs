@@ -109,9 +109,6 @@ pub fn use_item_system(
                 inv.items.remove(intent.item_index);
                 commands.entity(item_entity).despawn();
             }
-            ItemKind::Hat { defense } => {
-                combat_log.push(format!("Equipped {item_name} (+{defense} def)"));
-            }
             ItemKind::Gun { loaded, capacity, caliber, name: gun_name, .. } => {
                 let gun_name = gun_name.clone();
                 let caliber = *caliber;
@@ -302,7 +299,7 @@ pub fn throw_system(
     mut commands: Commands,
     mut damage_events: MessageWriter<crate::events::DamageEvent>,
     mut inventory_query: Query<(&mut Inventory, &Position), With<Player>>,
-    targets: Query<(Entity, &Position, &crate::components::CombatStats, Option<&Name>), With<Hostile>>,
+    targets: Query<(Entity, &Position, Option<&Name>), With<Hostile>>,
     mut combat_log: ResMut<CombatLog>,
     mut spell_particles: ResMut<SpellParticles>,
     game_map: Res<GameMapResource>,
@@ -331,11 +328,11 @@ pub fn throw_system(
         let path = origin.bresenham_line(endpoint);
 
         // Build hostile lookup
-        let mut target_by_pos: std::collections::HashMap<GridVec, (Entity, i32, String)> =
+        let mut target_by_pos: std::collections::HashMap<GridVec, (Entity, String)> =
             std::collections::HashMap::new();
-        for (target_entity, target_pos, target_stats, target_name) in &targets {
+        for (target_entity, target_pos, target_name) in &targets {
             let t_name = display_name(target_name).to_string();
-            target_by_pos.insert(target_pos.as_grid_vec(), (target_entity, target_stats.defense, t_name));
+            target_by_pos.insert(target_pos.as_grid_vec(), (target_entity, t_name));
         }
 
         let mut landing = origin;
@@ -350,8 +347,8 @@ pub fn throw_system(
 
             landing = tile;
 
-            if let Some((target_entity, target_def, t_name)) = target_by_pos.get(&tile) {
-                let dmg = crate::components::compute_damage(intent.damage, *target_def);
+            if let Some((target_entity, t_name)) = target_by_pos.get(&tile) {
+                let dmg = crate::components::compute_damage(intent.damage);
                 if dmg > 0 {
                     damage_events.write(crate::events::DamageEvent {
                         target: *target_entity,

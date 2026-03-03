@@ -344,7 +344,6 @@ fn do_spawn_player(commands: &mut Commands, seed: u64, map: &GameMapResource) {
         },
         CombatStats {
             attack: 5,
-            defense: 0,
         },
         Speed(ACTION_COST),
         Energy(0),
@@ -424,7 +423,7 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
 
                     let template_idx = templates[(spawned as usize) % templates.len()];
                     let template = &MONSTER_TEMPLATES[template_idx];
-                    spawn::spawn_monster(commands, template, pos.x, pos.y, 0, 0, 0, 0, 0.25);
+                    spawn::spawn_monster(commands, template, pos.x, pos.y, 0, 0, 0, 0.25);
                     spawned += 1;
                 }
                 if spawned >= group_size {

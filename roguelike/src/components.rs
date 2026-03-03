@@ -128,31 +128,24 @@ impl Health {
 }
 
 /// Combat statistics used by the combat system to resolve attacks.
-/// Damage dealt = attacker.attack (defense has been removed from the game).
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct CombatStats {
     pub attack: CoordinateUnit,
-    /// Defense is no longer used in damage calculations.
-    /// Kept at 0 for struct compatibility.
-    pub defense: CoordinateUnit,
 }
 
 impl CombatStats {
-    /// Computes the raw damage this attacker deals against `defender`.
-    ///
-    /// **Damage model**: `self.attack` (defense removed).
+    /// Computes the raw damage this attacker deals.
     #[inline]
-    pub fn damage_against(&self, _defender: &CombatStats) -> CoordinateUnit {
+    pub fn damage_against(&self) -> CoordinateUnit {
         self.attack.max(0)
     }
 }
 
 /// Pure function: computes damage from attack value.
-/// Defense parameter is kept for API compatibility but ignored.
 ///
-/// `damage(atk, _def) = max(0, atk)`
+/// `damage(atk) = max(0, atk)`
 #[inline]
-pub fn compute_damage(attack: CoordinateUnit, _defense: CoordinateUnit) -> CoordinateUnit {
+pub fn compute_damage(attack: CoordinateUnit) -> CoordinateUnit {
     attack.max(0)
 }
 
@@ -436,8 +429,6 @@ pub enum ItemKind {
     Grenade { damage: i32, radius: i32 },
     /// Whiskey bottle. Restores health when consumed.
     Whiskey { heal: i32 },
-    /// A hat. Provides defense when equipped.
-    Hat { defense: i32 },
     /// A molotov cocktail. Thrown toward cursor; sets a large area on fire.
     Molotov { damage: i32, radius: i32 },
 }
@@ -485,7 +476,7 @@ impl Experience {
 }
 
 /// Player level. Increases when enough EXP is accumulated.
-/// Each level grants stat bonuses (attack, defense, max HP, max stamina).
+/// Each level grants stat bonuses (attack, max HP, max stamina).
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Level(pub i32);
 
@@ -657,71 +648,50 @@ mod tests {
 
     #[test]
     fn damage_formula_positive() {
-        let attacker = CombatStats { attack: 5, defense: 0 };
-        let defender = CombatStats { attack: 0, defense: 2 };
-        // Defense is ignored — damage = attacker.attack
-        assert_eq!(attacker.damage_against(&defender), 5);
-        // compute_damage also ignores the defense parameter
-        assert_eq!(compute_damage(5, 2), 5);
+        let attacker = CombatStats { attack: 5 };
+        assert_eq!(attacker.damage_against(), 5);
+        assert_eq!(compute_damage(5), 5);
     }
 
     #[test]
-    fn damage_formula_equals_attack_regardless_of_defense() {
-        let attacker = CombatStats { attack: 3, defense: 0 };
-        let defender = CombatStats { attack: 0, defense: 3 };
-        // Defense removed — damage is always the attack value
-        assert_eq!(attacker.damage_against(&defender), 3);
-        assert_eq!(compute_damage(3, 3), 3);
+    fn damage_formula_equals_attack() {
+        let attacker = CombatStats { attack: 3 };
+        assert_eq!(attacker.damage_against(), 3);
+        assert_eq!(compute_damage(3), 3);
     }
 
     #[test]
-    fn damage_formula_ignores_high_defense() {
-        let attacker = CombatStats { attack: 2, defense: 0 };
-        let defender = CombatStats { attack: 0, defense: 10 };
-        // Defense removed — damage is always the attack value
-        assert_eq!(attacker.damage_against(&defender), 2);
-        assert_eq!(compute_damage(2, 10), 2);
+    fn damage_formula_zero_attack() {
+        let attacker = CombatStats { attack: 2 };
+        assert_eq!(attacker.damage_against(), 2);
+        assert_eq!(compute_damage(2), 2);
     }
 
     #[test]
     fn compute_damage_non_negative() {
-        // Property: ∀ atk, def: compute_damage(atk, def) ≥ 0
+        // Property: ∀ atk: compute_damage(atk) ≥ 0
         for atk in 0..20 {
-            for def in 0..20 {
-                assert!(compute_damage(atk, def) >= 0);
-            }
+            assert!(compute_damage(atk) >= 0);
         }
     }
 
     #[test]
     fn compute_damage_monotone_in_attack() {
-        // Property: atk₁ ≤ atk₂ ⟹ damage(atk₁, def) ≤ damage(atk₂, def)
-        let def = 3;
+        // Property: atk₁ ≤ atk₂ ⟹ damage(atk₁) ≤ damage(atk₂)
         for atk in 0..19 {
-            assert!(compute_damage(atk, def) <= compute_damage(atk + 1, def));
-        }
-    }
-
-    #[test]
-    fn compute_damage_ignores_defense_parameter() {
-        // Defense is no longer used — damage should equal attack regardless of def
-        let atk = 10;
-        for def in 0..19 {
-            assert_eq!(compute_damage(atk, def), compute_damage(atk, def + 1));
+            assert!(compute_damage(atk) <= compute_damage(atk + 1));
         }
     }
 
     #[test]
     fn compute_damage_zero_only_for_zero_attack() {
-        // With defense removed: damage = max(0, atk), so it's 0 only when atk <= 0
+        // damage = max(0, atk), so it's 0 only when atk <= 0
         for atk in 0..15 {
-            for def in 0..15 {
-                let d = compute_damage(atk, def);
-                if atk <= 0 {
-                    assert_eq!(d, 0);
-                } else {
-                    assert!(d > 0);
-                }
+            let d = compute_damage(atk);
+            if atk <= 0 {
+                assert_eq!(d, 0);
+            } else {
+                assert!(d > 0);
             }
         }
     }
