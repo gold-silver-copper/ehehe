@@ -303,7 +303,7 @@ pub struct Hostile;
 
 
 /// Faction affiliation for group-based spawning.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Faction {
     Wildlife,
     Outlaws,

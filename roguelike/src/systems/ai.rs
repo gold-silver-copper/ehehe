@@ -467,6 +467,26 @@ pub fn ai_system(
         .map(|(pos, _, _, _, _, _)| *pos)
         .collect();
 
+    // ── Allied target sharing ──────────────────────────────────────
+    // Build a map of (faction → Vec<known hostile position>) from NPCs
+    // that are currently chasing a target. Idle/patrolling NPCs within
+    // ALLY_SHARE_RANGE can adopt these targets, simulating coordinated
+    // faction response (e.g., lawmen converging on a shooter).
+    const ALLY_SHARE_RANGE: i32 = 20;
+    let mut faction_alerts: HashMap<Faction, Vec<GridVec>> = HashMap::new();
+    for (_, _pos_ref, ai_state, _, _, faction_opt, _, _, _, _, _, _, mem_opt, _) in &ai_query {
+        if !matches!(*ai_state, AiState::Chasing) { continue; }
+        let Some(&f) = faction_opt else { continue; };
+        if let Some(ref mem) = mem_opt {
+            if let Some(known) = mem.last_known_pos {
+                let age = turn_counter.0.saturating_sub(mem.last_seen_turn);
+                if age < MEMORY_DURATION {
+                    faction_alerts.entry(f).or_default().push(known);
+                }
+            }
+        }
+    }
+
     for (entity, pos, mut ai, mut viewshed, mut energy, faction, mut ai_look_dir, patrol_origin, mut inventory, health, mut stamina, combat_stats, mut ai_memory, personality) in &mut ai_query {
         if !energy.can_act() {
             continue;
@@ -529,6 +549,29 @@ pub fn ai_system(
             if let Some(ref mut mem) = ai_memory {
                 mem.last_known_pos = Some(tv);
                 mem.last_seen_turn = turn_counter.0;
+            }
+        }
+
+        // Allied target sharing: if this NPC has no direct target but a
+        // nearby ally of the same faction is chasing something, adopt
+        // that target into memory so we converge on the threat.
+        if chase_target.is_none() {
+            if let Some(my_f) = my_faction {
+                if let Some(alerts) = faction_alerts.get(&my_f) {
+                    let nearest_alert: Option<&GridVec> = alerts.iter()
+                        .filter(|&&alert_pos| my_pos.chebyshev_distance(alert_pos) <= ALLY_SHARE_RANGE)
+                        .min_by_key(|&&alert_pos| my_pos.chebyshev_distance(alert_pos));
+                    if let Some(&alert_pos) = nearest_alert {
+                        if let Some(ref mut mem) = ai_memory {
+                            if mem.last_known_pos.is_none()
+                                || turn_counter.0.saturating_sub(mem.last_seen_turn) >= MEMORY_DURATION
+                            {
+                                mem.last_known_pos = Some(alert_pos);
+                                mem.last_seen_turn = turn_counter.0;
+                            }
+                        }
+                    }
+                }
             }
         }
 
