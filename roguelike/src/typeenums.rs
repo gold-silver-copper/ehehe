@@ -189,7 +189,7 @@ impl std::fmt::Display for Props {
             Props::HayBale => write!(f, "Hay Bale"),
             Props::Well => write!(f, "Well"),
             Props::Gallows => write!(f, "Gallows"),
-            Props::WaterTower => write!(f, "Water Towr"),
+            Props::WaterTower => write!(f, "Water Twr"),
             Props::RailTrack => write!(f, "Rail Track"),
             Props::Windmill => write!(f, "Windmill"),
             Props::LampPost => write!(f, "Lamp Post"),
