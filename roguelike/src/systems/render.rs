@@ -260,11 +260,11 @@ pub fn draw_system(
                         // as they drift and dissipate, creating a visible plume effect.
                         let intensity = (*lifetime as f32 / SMOKE_PARTICLE_MAX_LIFETIME).clamp(0.2, 1.0);
                         let (symbol, r, g, b) = if *lifetime > 6 {
-                            ("▓", (220.0 * intensity) as u8, (190.0 * intensity) as u8, (130.0 * intensity) as u8)
+                            ("*", (220.0 * intensity) as u8, (190.0 * intensity) as u8, (130.0 * intensity) as u8)
                         } else if *lifetime > 3 {
-                            ("░", (180.0 * intensity) as u8, (150.0 * intensity) as u8, (100.0 * intensity) as u8)
+                            ("*", (180.0 * intensity) as u8, (150.0 * intensity) as u8, (100.0 * intensity) as u8)
                         } else {
-                            ("·", (120.0 * intensity) as u8, (100.0 * intensity) as u8, (70.0 * intensity) as u8)
+                            ("*", (120.0 * intensity) as u8, (100.0 * intensity) as u8, (70.0 * intensity) as u8)
                         };
                         render_packet[screen.y as usize][screen.x as usize] =
                             (symbol.into(), RatColor::Rgb(r, g, b), bg);
@@ -273,7 +273,7 @@ pub fn draw_system(
                         let intensity = (*lifetime as f32 / PARTICLE_LIFETIME).clamp(MIN_EXPLOSION_INTENSITY, 1.0);
                         let r = (255.0 * intensity) as u8;
                         let g = (165.0 * intensity) as u8;
-                        let symbol = if *lifetime > 5 { "▓" } else if *lifetime > 3 { "░" } else { "·" };
+                        let symbol = "*";
                         render_packet[screen.y as usize][screen.x as usize] =
                             (symbol.into(), RatColor::Rgb(r, g, 0), bg);
                     }

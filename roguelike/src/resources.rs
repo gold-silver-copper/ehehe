@@ -189,6 +189,10 @@ pub struct SpellParticles {
     /// World positions where "!" sound indicators should appear this frame.
     /// Computed by the particle tick system from SoundEvents + player viewshed.
     pub sound_indicators: Vec<MyPoint>,
+    /// Frame accumulator for frame-rate-independent particle ticking.
+    /// Particles advance once every `PARTICLE_TICK_INTERVAL` frames so that
+    /// animations remain readable at high frame rates (e.g., 60 FPS).
+    frame_accumulator: u32,
 }
 
 /// Maximum number of active combat particles to prevent unbounded growth.
@@ -197,6 +201,10 @@ const MAX_PARTICLES: usize = 1200;
 /// Number of movement sub-steps per tick for particle animations.
 /// Higher values make particles move faster and more visibly.
 const PARTICLE_SUB_STEPS: usize = 1;
+
+/// Particles advance once every this many render frames to stay readable
+/// at high frame rates. At 60 FPS, 3 → particles tick at ~20 Hz.
+const PARTICLE_TICK_INTERVAL: u32 = 3;
 
 impl SpellParticles {
     /// Adds an expanding ring of particles for a grenade blast.
@@ -229,8 +237,15 @@ impl SpellParticles {
     }
 
     /// Ticks all particles: counts down delays, then lifetimes and moves particles.
-    /// Particles move multiple sub-steps per tick for visible, satisfying motion.
+    /// Uses a frame accumulator so particles advance at a fixed rate (~20 Hz)
+    /// regardless of the render frame rate, keeping animations readable.
     pub fn tick(&mut self) {
+        self.frame_accumulator += 1;
+        if self.frame_accumulator < PARTICLE_TICK_INTERVAL {
+            return; // not time to advance particles yet
+        }
+        self.frame_accumulator = 0;
+
         self.particles.retain_mut(|(pos, life, delay, _is_sand, vx, vy)| {
             if *delay > 0 {
                 *delay -= 1;
@@ -533,7 +548,7 @@ impl Default for CursorPosition {
         Self {
             pos: GridVec::new(SPAWN_X, SPAWN_Y),
             blink_frame: 0,
-            blink_half_period: 8, // At 30 FPS: toggles every 8 frames → ~2 blinks/sec
+            blink_half_period: 24, // At 60 FPS: toggles every 24 frames → ~1.25 blinks/sec
         }
     }
 }
@@ -544,7 +559,7 @@ impl CursorPosition {
         Self {
             pos,
             blink_frame: 0,
-            blink_half_period: 8,
+            blink_half_period: 24,
         }
     }
 
@@ -762,14 +777,14 @@ mod tests {
         let mut cursor = CursorPosition::default();
         // Initially visible (frame 0)
         assert!(cursor.blink_visible());
-        // Advance past half_period (8 frames at 30 FPS)
-        for _ in 0..8 {
+        // Advance past half_period (24 frames at 60 FPS)
+        for _ in 0..24 {
             cursor.tick_blink();
         }
         // Should now be invisible
         assert!(!cursor.blink_visible());
         // Advance another half_period
-        for _ in 0..8 {
+        for _ in 0..24 {
             cursor.tick_blink();
         }
         // Should be visible again (full cycle)

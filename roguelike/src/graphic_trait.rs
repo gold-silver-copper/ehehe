@@ -25,7 +25,7 @@ impl GraphicElement for Floor {
             Floor::WoodPlanks => " ".into(),
             Floor::Fire => "^".into(),
             Floor::Water => "~".into(),
-            Floor::SandCloud => "░".into(),
+            Floor::SandCloud => "*".into(),
             Floor::ShallowWater => "~".into(),
             Floor::DeepWater => "≈".into(),
             Floor::Beach => ".".into(),
