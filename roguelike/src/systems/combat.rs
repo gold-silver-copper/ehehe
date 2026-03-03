@@ -5,7 +5,7 @@ use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIn
 use crate::noise::value_noise;
 use crate::resources::{CombatLog, DynamicRng, GameMapResource, GameState, KillCount, MapSeed, SoundEvents, TurnCounter};
 use crate::grid_vec::GridVec;
-use crate::typeenums::{Floor, Furniture};
+use crate::typeenums::{Floor, Props};
 use crate::typedefs::{CoordinateUnit, RatColor};
 
 /// Computes the bullet endpoint by scaling a direction vector so the
@@ -49,7 +49,7 @@ fn spawn_gun_smoke(game_map: &mut GameMapResource, origin: GridVec, turn: u32, f
             }
             let pos = origin + GridVec::new(dx, dy);
             if let Some(voxel) = game_map.0.get_voxel_at(&pos) {
-                if !matches!(voxel.furniture, Some(Furniture::Wall)) {
+                if !matches!(voxel.props, Some(Props::Wall)) {
                     tiles_to_cloud.push((pos, voxel.floor.clone()));
                 }
             }
@@ -457,8 +457,8 @@ pub fn melee_wide_system(
             }
         }
 
-        // Destroy adjacent destructible furniture (Chebyshev distance 1).
-        let mut furn_destroyed = 0;
+        // Destroy adjacent destructible props (Chebyshev distance 1).
+        let mut props_destroyed = 0;
         for dx in -1..=1i32 {
             for dy in -1..=1i32 {
                 if dx == 0 && dy == 0 {
@@ -466,24 +466,24 @@ pub fn melee_wide_system(
                 }
                 let tile = origin + GridVec::new(dx, dy);
                 if let Some(voxel) = game_map.0.get_voxel_at_mut(&tile)
-                    && let Some(ref furn) = voxel.furniture {
+                    && let Some(ref prop) = voxel.props {
                         let is_indestructible = matches!(
-                            furn,
-                            Furniture::Wall
-                            | Furniture::HitchingPost | Furniture::Rock
+                            prop,
+                            Props::Wall
+                            | Props::HitchingPost | Props::Rock
                         );
                         if !is_indestructible {
-                            voxel.furniture = None;
-                            furn_destroyed += 1;
+                            voxel.props = None;
+                            props_destroyed += 1;
                         }
                     }
             }
         }
-        if furn_destroyed > 0 {
-            combat_log.push(format!("{a_name} smashes {furn_destroyed} piece(s) of furniture!"));
+        if props_destroyed > 0 {
+            combat_log.push(format!("{a_name} smashes {props_destroyed} prop(s)!"));
         }
 
-        if hit_count == 0 && furn_destroyed == 0 {
+        if hit_count == 0 && props_destroyed == 0 {
             combat_log.push(format!("{a_name} roundhouse kicks but hits nothing!"));
         }
     }

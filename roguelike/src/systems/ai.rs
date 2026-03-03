@@ -7,7 +7,7 @@ use crate::components::{AiLookDir, AiMemory, AiPersonality, AiState, BlocksMovem
 use crate::events::{AttackIntent, MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
 use crate::grid_vec::GridVec;
 use crate::resources::{GameMapResource, SpatialIndex, TurnCounter};
-use crate::typeenums::Furniture;
+use crate::typeenums::Props;
 
 // ───────────────────────── A* Pathfinding ──────────────────────────
 
@@ -137,7 +137,7 @@ const AI_RANGED_ATTACK_RANGE: i32 = 15;
 fn is_near_cactus(pos: GridVec, game_map: &GameMapResource) -> bool {
     for neighbor in pos.cardinal_neighbors() {
         if let Some(voxel) = game_map.0.get_voxel_at(&neighbor)
-            && matches!(voxel.furniture, Some(Furniture::Cactus)) {
+            && matches!(voxel.props, Some(Props::Cactus)) {
                 return true;
             }
     }
@@ -195,7 +195,7 @@ fn rotate_look_dir(
 
 /// Checks line-of-sight between two points using Bresenham, ignoring
 /// the directional FOV cone.  Returns `true` when no vision-blocking
-/// furniture or sand cloud exists on the path (the endpoints are excluded from the
+/// props or sand cloud exists on the path (the endpoints are excluded from the
 /// obstruction check so the attacker can fire from / into a doorway).
 fn has_clear_line_of_sight(origin: GridVec, target: GridVec, game_map: &GameMapResource, sand_clouds: &HashSet<GridVec>) -> bool {
     let path = origin.bresenham_line(target);
@@ -211,7 +211,7 @@ fn has_clear_line_of_sight(origin: GridVec, target: GridVec, game_map: &GameMapR
                 if matches!(v.floor, Some(crate::typeenums::Floor::SandCloud)) {
                     return false;
                 }
-                if v.furniture.as_ref().is_some_and(|f| f.blocks_vision()) {
+                if v.props.as_ref().is_some_and(|f| f.blocks_vision()) {
                     return false;
                 }
             }

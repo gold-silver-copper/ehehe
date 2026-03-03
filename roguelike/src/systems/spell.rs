@@ -4,7 +4,7 @@ use crate::components::{CombatStats, Inventory, Item, ItemKind, Projectile, Stam
 use crate::events::{MolotovCastIntent, SpellCastIntent};
 use crate::grid_vec::GridVec;
 use crate::resources::{CombatLog, GameMapResource, MapSeed, SpellParticles, TurnCounter};
-use crate::typeenums::{Floor, Furniture};
+use crate::typeenums::{Floor, Props};
 use crate::typedefs::RatColor;
 
 /// Stamina cost for casting the AoE grenade.
@@ -68,7 +68,7 @@ pub fn spell_system(
                     }
                     let pos = origin + crate::grid_vec::GridVec::new(dx, dy);
                     if let Some(voxel) = game_map.0.get_voxel_at(&pos) {
-                        if !matches!(voxel.furniture, Some(Furniture::Wall)) {
+                        if !matches!(voxel.props, Some(Props::Wall)) {
                             tiles_to_cloud.push((pos, voxel.floor.clone()));
                         }
                     }
@@ -122,7 +122,7 @@ pub fn spell_system(
 
 /// Resolves molotov cocktail throws.
 /// Spawns a traveling explosive projectile that detonates on first impact,
-/// igniting flammable furniture and generating smoke.
+/// igniting flammable props and generating smoke.
 pub fn molotov_system(
     mut commands: Commands,
     mut intents: MessageReader<MolotovCastIntent>,
@@ -211,7 +211,7 @@ fn spawn_molotov_smoke(game_map: &mut GameMapResource, origin: crate::grid_vec::
             }
             let pos = origin + crate::grid_vec::GridVec::new(dx, dy);
             if let Some(voxel) = game_map.0.get_voxel_at(&pos) {
-                if !matches!(voxel.furniture, Some(Furniture::Wall))
+                if !matches!(voxel.props, Some(Props::Wall))
                     && !matches!(voxel.floor, Some(Floor::Fire)) {
                     tiles_to_cloud.push((pos, voxel.floor.clone()));
                 }
@@ -362,13 +362,13 @@ fn detonate_dynamite(
             if dist > 0 && dist <= radius {
                 let target_pos = origin + GridVec::new(dx, dy);
                 if let Some(voxel) = game_map.0.get_voxel_at_mut(&target_pos)
-                    && let Some(ref furn) = voxel.furniture {
-                        let is_flammable = furn.is_flammable();
-                        let is_water_trough = matches!(furn, Furniture::WaterTrough);
-                        let is_lootable = matches!(furn, Furniture::Crate | Furniture::Barrel);
-                        let is_indestructible = matches!(furn, Furniture::Wall | Furniture::HitchingPost);
+                    && let Some(ref prop) = voxel.props {
+                        let is_flammable = prop.is_flammable();
+                        let is_water_trough = matches!(prop, Props::WaterTrough);
+                        let is_lootable = matches!(prop, Props::Crate | Props::Barrel);
+                        let is_indestructible = matches!(prop, Props::Wall | Props::HitchingPost);
                         if is_water_trough {
-                            voxel.furniture = None;
+                            voxel.props = None;
                             voxel.floor = Some(Floor::Water);
                             water_count += 1;
                         } else if !is_indestructible {
@@ -377,11 +377,11 @@ fn detonate_dynamite(
                                 spawn_container_loot(commands, target_pos.x, target_pos.y, loot_roll);
                             }
                             if is_flammable && dist <= 1 {
-                                voxel.furniture = None;
+                                voxel.props = None;
                                 voxel.floor = Some(Floor::Fire);
                                 fire_count += 1;
                             } else {
-                                voxel.furniture = None;
+                                voxel.props = None;
                                 destroyed_count += 1;
                             }
                         }
@@ -424,9 +424,9 @@ fn detonate_molotov(
             if dist <= radius {
                 let target_pos = origin + GridVec::new(dx, dy);
                 if let Some(voxel) = game_map.0.get_voxel_at_mut(&target_pos) {
-                    if let Some(ref furn) = voxel.furniture {
-                        if furn.is_flammable() {
-                            voxel.furniture = None;
+                    if let Some(ref prop) = voxel.props {
+                        if prop.is_flammable() {
+                            voxel.props = None;
                             voxel.floor = Some(Floor::Fire);
                             fire_count += 1;
                         }
