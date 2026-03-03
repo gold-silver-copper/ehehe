@@ -15,6 +15,9 @@ pub enum Floor {
     Fire,
     /// Spilled water from a destroyed water trough.
     Water,
+    /// Persistent sand/smoke cloud that blocks line of sight.
+    /// Placed by sand throws and gun smoke; ticks down per game turn.
+    SandCloud,
 }
 
 /// Furniture (obstacles/structures) placed on tiles.
@@ -65,7 +68,7 @@ impl Furniture {
     pub fn is_flammable(&self) -> bool {
         matches!(
             self,
-            Furniture::Tree | Furniture::DeadTree | Furniture::Bush
+            Furniture::Wall | Furniture::Tree | Furniture::DeadTree | Furniture::Bush
             | Furniture::Barrel | Furniture::Crate | Furniture::Table
             | Furniture::Chair | Furniture::Piano | Furniture::Bench
             | Furniture::HayBale | Furniture::Sign | Furniture::Fence

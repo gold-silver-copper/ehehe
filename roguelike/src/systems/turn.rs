@@ -23,6 +23,9 @@ const FIRE_DAMAGE: i32 = 2;
 /// Maximum number of world turns a fire tile persists before burning out.
 const FIRE_BURNOUT_TURNS: u32 = 20;
 
+/// Number of world turns before a sand cloud tile dissipates.
+const SAND_CLOUD_LIFETIME: u32 = 8;
+
 /// Advances the turn state from `PlayerTurn` → `WorldTurn`.
 /// Runs only during `TurnState::PlayerTurn` after all player-phase systems.
 pub fn end_player_turn(mut next_state: ResMut<NextState<TurnState>>) {
@@ -134,13 +137,20 @@ pub fn fire_system(
                         burnout_tiles.push(pos);
                     }
 
-                // Spread fire to adjacent flammable furniture.
+                // Spread fire to adjacent flammable furniture and wooden floors.
                 for neighbor in pos.cardinal_neighbors() {
-                    if let Some(n_voxel) = game_map.0.get_voxel_at(&neighbor)
-                        && let Some(ref furn) = n_voxel.furniture
-                            && furn.is_flammable() {
-                                new_fire_tiles.push(neighbor);
-                            }
+                    if let Some(n_voxel) = game_map.0.get_voxel_at(&neighbor) {
+                        // Skip tiles already on fire
+                        if matches!(n_voxel.floor, Some(Floor::Fire)) {
+                            continue;
+                        }
+                        let has_flammable_furniture = n_voxel.furniture.as_ref()
+                            .is_some_and(|f| f.is_flammable());
+                        let has_wood_floor = matches!(n_voxel.floor, Some(Floor::WoodPlanks));
+                        if has_flammable_furniture || has_wood_floor {
+                            new_fire_tiles.push(neighbor);
+                        }
+                    }
                 }
             }
         }
@@ -161,5 +171,22 @@ pub fn fire_system(
             voxel.floor = Some(Floor::ScorchedEarth);
         }
         game_map.0.fire_turns.remove(tile);
+    }
+
+    // ── Sand cloud dissipation ──────────────────────────────────────
+    // Remove sand cloud tiles that have exceeded their lifetime.
+    let expired_clouds: Vec<GridVec> = game_map.0.sand_cloud_turns.iter()
+        .filter(|entry| turn_counter.0.saturating_sub(*entry.1) >= SAND_CLOUD_LIFETIME)
+        .map(|entry| *entry.0)
+        .collect();
+
+    for tile in &expired_clouds {
+        if let Some(voxel) = game_map.0.get_voxel_at_mut(tile) {
+            if matches!(voxel.floor, Some(Floor::SandCloud)) {
+                // Restore to sand (desert default).
+                voxel.floor = Some(Floor::Sand);
+            }
+        }
+        game_map.0.sand_cloud_turns.remove(tile);
     }
 }

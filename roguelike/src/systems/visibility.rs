@@ -140,7 +140,7 @@ pub fn visibility_system(
 ///
 /// When cursor is close: range = FOV_MIN_RADIUS (36), cos_threshold ≈ -1 (360°).
 /// At cursor distance 2: range ≈ 60, cos_threshold ≈ 0.0 (forward hemisphere).
-/// When cursor is far: range = FOV_MAX_RANGE (120), cos_threshold ≈ 0.85 (narrow ~30° cone).
+/// When cursor is far: range = FOV_MAX_RANGE (120), cos_threshold ≈ 0.99 (narrow ~10° cone).
 pub fn compute_fov_params(cursor_dir: Option<GridVec>) -> (CoordinateUnit, f64) {
     let Some(dir) = cursor_dir else {
         return (FOV_MIN_RADIUS, -1.0); // full circle
@@ -155,11 +155,11 @@ pub fn compute_fov_params(cursor_dir: Option<GridVec>) -> (CoordinateUnit, f64) 
     // At dist=2: range ≈ 60. Caps at FOV_MAX_RANGE (120).
     let range = (FOV_MIN_RADIUS as f64 + dist * 12.0).min(FOV_MAX_RANGE as f64);
 
-    // Cone narrows aggressively. Reaches max narrowing at dist ≈ 4.
+    // Cone narrows aggressively. Reaches max narrowing at dist ≈ 6.
     // At dist=2: cos ≈ 0.0 (forward hemisphere, no vision behind).
-    // At dist=4+: cos ≈ 0.85 (narrow ~30° cone).
-    let cone_t = (dist / 4.0).min(1.0);
-    let cos_threshold = -1.0 + cone_t * 1.85;
+    // At dist=6+: cos ≈ 0.99 (narrow ~10° cone).
+    let cone_t = (dist / 6.0).min(1.0);
+    let cos_threshold = -1.0 + cone_t * 1.99;
 
     (range as CoordinateUnit, cos_threshold)
 }
@@ -187,7 +187,12 @@ fn is_opaque(game_map: &GameMapResource, point: MyPoint, sand_clouds: &HashSet<M
         return true;
     }
     match game_map.0.get_voxel_at(&point) {
-        Some(v) => v.furniture.as_ref().is_some_and(|f| f.blocks_vision()),
+        Some(v) => {
+            if matches!(v.floor, Some(crate::typeenums::Floor::SandCloud)) {
+                return true;
+            }
+            v.furniture.as_ref().is_some_and(|f| f.blocks_vision())
+        }
         None => true, // off-map ⇒ opaque
     }
 }

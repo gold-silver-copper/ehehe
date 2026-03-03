@@ -14,6 +14,9 @@ pub struct GameMap {
     /// Tracks the world turn at which each fire tile was ignited.
     /// Used for deterministic burnout.
     pub fire_turns: HashMap<GridVec, u32>,
+    /// Tracks the world turn at which each sand cloud tile was placed.
+    /// Sand clouds dissipate after `SAND_CLOUD_LIFETIME` world turns.
+    pub sand_cloud_turns: HashMap<GridVec, u32>,
 }
 
 /// A rectangular building footprint used during town generation.
@@ -76,6 +79,7 @@ impl GameMap {
             height,
             voxels,
             fire_turns: HashMap::new(),
+            sand_cloud_turns: HashMap::new(),
         };
 
         // ── Step 2: Main street (horizontal dirt road) ──────────────
@@ -494,10 +498,10 @@ fn place_street_furniture(
     for x in (4..width - 4).step_by(4) {
         let noise = value_noise(x, sidewalk_north, furn_seed);
         let furn = match (noise * 6.0) as u32 {
-            0 => Furniture::LampPost,
+            0 => Furniture::HitchingPost,
             1 => Furniture::Bench,
             2 => Furniture::Barrel,
-            3 => Furniture::HitchingPost,
+            3 => Furniture::WaterTrough,
             4 => Furniture::Sign,
             _ => Furniture::Crate,
         };
@@ -508,7 +512,7 @@ fn place_street_furniture(
         let noise = value_noise(x, sidewalk_south, furn_seed.wrapping_add(1111));
         let furn = match (noise * 6.0) as u32 {
             0 => Furniture::Bench,
-            1 => Furniture::LampPost,
+            1 => Furniture::Crate,
             2 => Furniture::WaterTrough,
             3 => Furniture::Barrel,
             4 => Furniture::HitchingPost,
