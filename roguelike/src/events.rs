@@ -60,7 +60,7 @@ pub struct RangedAttackIntent {
     /// Trajectory direction (normalized to -1/0/1 per axis).
     pub dx: CoordinateUnit,
     pub dy: CoordinateUnit,
-    /// Optional gun item entity. If present, decrements loaded rounds instead of Ammo.
+    /// Optional gun item entity. If present, decrements its loaded rounds.
     pub gun_item: Option<Entity>,
 }
 

@@ -3,7 +3,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use bevy::prelude::*;
 
-use crate::components::{AiLookDir, AiMemory, AiPersonality, AiState, Ammo, BlocksMovement, CombatStats, Energy, Faction, Health, Hostile, Inventory, Item, ItemKind, PatrolOrigin, Player, Position, Speed, Stamina, Viewshed};
+use crate::components::{AiLookDir, AiMemory, AiPersonality, AiState, BlocksMovement, CombatStats, Energy, Faction, Health, Hostile, Inventory, Item, ItemKind, PatrolOrigin, Player, Position, Speed, Stamina, Viewshed};
 use crate::events::{AttackIntent, MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
 use crate::grid_vec::GridVec;
 use crate::resources::{GameMapResource, SpatialIndex, TurnCounter};
@@ -396,7 +396,7 @@ fn kite_direction(
 /// sight is lost, they navigate to the remembered position before giving up.
 pub fn ai_system(
     mut ai_query: Query<
-        (Entity, &Position, &mut AiState, Option<&mut Viewshed>, &mut Energy, Option<&Faction>, Option<&mut Ammo>, Option<&mut AiLookDir>, Option<&PatrolOrigin>, Option<&mut Inventory>, Option<&mut Health>, Option<&mut Stamina>, Option<&CombatStats>, Option<&mut AiMemory>, Option<&AiPersonality>),
+        (Entity, &Position, &mut AiState, Option<&mut Viewshed>, &mut Energy, Option<&Faction>, Option<&mut AiLookDir>, Option<&PatrolOrigin>, Option<&mut Inventory>, Option<&mut Health>, Option<&mut Stamina>, Option<&CombatStats>, Option<&mut AiMemory>, Option<&AiPersonality>),
         Without<Player>,
     >,
     player_query: Query<(Entity, &Position), With<Player>>,
@@ -422,7 +422,7 @@ pub fn ai_system(
         .map(|(pos, _, _, _)| *pos)
         .collect();
 
-    for (entity, pos, mut ai, mut viewshed, mut energy, faction, ammo, mut ai_look_dir, patrol_origin, mut inventory, health, mut stamina, combat_stats, mut ai_memory, personality) in &mut ai_query {
+    for (entity, pos, mut ai, mut viewshed, mut energy, faction, mut ai_look_dir, patrol_origin, mut inventory, health, mut stamina, combat_stats, mut ai_memory, personality) in &mut ai_query {
         if !energy.can_act() {
             continue;
         }
@@ -980,19 +980,7 @@ pub fn ai_system(
                                         used_gun = true;
                                     }
                         }
-                    } else if let Some(mut ammo_pool) = ammo
-                        && ammo_pool.spend_one() {
-                            let dx = target_vec.x - my_pos.x;
-                            let dy = target_vec.y - my_pos.y;
-                            ranged_intents.write(RangedAttackIntent {
-                                attacker: entity,
-                                range: AI_RANGED_ATTACK_RANGE,
-                                dx,
-                                dy,
-                                gun_item: None,
-                            });
-                            used_gun = true;
-                        }
+                    }
                 }
                 if used_gun {
                     energy.spend_action();

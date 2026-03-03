@@ -1000,73 +1000,35 @@ fn test_app_with_ranged() -> App {
     app
 }
 
-/// Spawns a player with ammo at the given position.
-fn spawn_test_player_with_ammo(app: &mut App, x: i32, y: i32, ammo: i32) -> Entity {
-    app.world_mut().spawn((
+/// Spawns a player with a gun item at the given position. Returns (player, gun).
+fn spawn_test_player_with_gun(app: &mut App, x: i32, y: i32, attack: i32) -> (Entity, Entity) {
+    let gun = app.world_mut().spawn((
+        Item,
+        Name("Test Gun".into()),
+        ItemKind::Gun {
+            loaded: 10,
+            capacity: 10,
+            caliber: Caliber::Cal36,
+            attack,
+            name: "Test Gun".into(),
+        },
+    )).id();
+    let player = app.world_mut().spawn((
         Position { x, y },
         Player,
         BlocksMovement,
         Name("Player".into()),
         Health { current: 30, max: 30 },
-        CombatStats { attack: 5, defense: 2 },
-        Ammo { current: ammo, max: 30 },
-    )).id()
-}
-
-#[test]
-fn ranged_attack_consumes_ammo() {
-    let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
-    let _monster = spawn_test_monster(&mut app, 64, 40, "Bandit");
-
-    app.update();
-
-    app.world_mut().write_message(RangedAttackIntent {
-        attacker: player,
-        range: 8,
-        dx: 1,
-        dy: 0,
-        gun_item: None,
-    });
-    app.update();
-
-    let ammo = app.world().get::<Ammo>(player).unwrap();
-    assert_eq!(ammo.current, 9, "Ranged attack should consume 1 ammo");
-}
-
-#[test]
-fn ranged_attack_no_ammo_does_not_fire() {
-    let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 0);
-    let monster = spawn_test_monster(&mut app, 64, 40, "Bandit");
-
-    app.update();
-
-    app.world_mut().write_message(RangedAttackIntent {
-        attacker: player,
-        range: 8,
-        dx: 1,
-        dy: 0,
-        gun_item: None,
-    });
-    app.update();
-
-    // Monster should not be damaged.
-    let monster_hp = app.world().get::<Health>(monster).unwrap();
-    assert_eq!(monster_hp.current, 10, "Monster should not be damaged when player has no ammo");
-
-    // Combat log should contain ammo message.
-    let log = app.world().resource::<CombatLog>();
-    assert!(
-        log.messages.iter().any(|m| m.contains("ammo")),
-        "Combat log should mention ammo shortage"
-    );
+        CombatStats { attack, defense: 2 },
+        Inventory { items: vec![gun] },
+    )).id();
+    (player, gun)
 }
 
 #[test]
 fn ranged_attack_damages_nearest_enemy() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    let (player, gun) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
     // Monster at distance 4 (within range 8).
     let monster = app.world_mut().spawn((
         Position { x: 64, y: 40 },
@@ -1084,7 +1046,7 @@ fn ranged_attack_damages_nearest_enemy() {
         range: 8,
         dx: 1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update(); // ranged_attack_system spawns bullet entity
     app.update(); // projectile_system advances bullet and applies damage
@@ -1096,7 +1058,7 @@ fn ranged_attack_damages_nearest_enemy() {
 #[test]
 fn ranged_attack_no_target_in_range() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    let (player, gun) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
     // Monster far away (distance 20, beyond range 8).
     let _monster = app.world_mut().spawn((
         Position { x: 80, y: 40 },
@@ -1114,14 +1076,10 @@ fn ranged_attack_no_target_in_range() {
         range: 8,
         dx: 1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update(); // ranged_attack_system spawns bullet entity
     app.update(); // projectile_system advances bullet (misses - out of range)
-
-    // Ammo should still be consumed (shot fired but missed).
-    let ammo = app.world().get::<Ammo>(player).unwrap();
-    assert_eq!(ammo.current, 9, "Ammo should be consumed even if no target in range");
 
     let log = app.world().resource::<CombatLog>();
     assert!(
@@ -1134,6 +1092,17 @@ fn ranged_attack_no_target_in_range() {
 fn ranged_bullet_penetrates_multiple_enemies() {
     let mut app = test_app_with_ranged();
     // Player with attack=10 so bullet has high penetration.
+    let gun = app.world_mut().spawn((
+        Item,
+        Name("Test Gun".into()),
+        ItemKind::Gun {
+            loaded: 10,
+            capacity: 10,
+            caliber: Caliber::Cal36,
+            attack: 10,
+            name: "Test Gun".into(),
+        },
+    )).id();
     let player = app.world_mut().spawn((
         Position { x: 60, y: 40 },
         Player,
@@ -1141,7 +1110,7 @@ fn ranged_bullet_penetrates_multiple_enemies() {
         Name("Player".into()),
         Health { current: 30, max: 30 },
         CombatStats { attack: 10, defense: 2 },
-        Ammo { current: 10, max: 30 },
+        Inventory { items: vec![gun] },
     )).id();
 
     // Two enemies in a line east of player with low defense.
@@ -1170,7 +1139,7 @@ fn ranged_bullet_penetrates_multiple_enemies() {
         range: 8,
         dx: 1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update(); // ranged_attack_system spawns bullet entity
     app.update(); // projectile_system advances bullet through both enemies
@@ -1186,6 +1155,17 @@ fn ranged_bullet_penetrates_multiple_enemies() {
 fn ranged_bullet_stops_when_penetration_exhausted() {
     let mut app = test_app_with_ranged();
     // Player with attack=3, low penetration.
+    let gun = app.world_mut().spawn((
+        Item,
+        Name("Test Gun".into()),
+        ItemKind::Gun {
+            loaded: 10,
+            capacity: 10,
+            caliber: Caliber::Cal36,
+            attack: 3,
+            name: "Test Gun".into(),
+        },
+    )).id();
     let player = app.world_mut().spawn((
         Position { x: 60, y: 40 },
         Player,
@@ -1193,7 +1173,7 @@ fn ranged_bullet_stops_when_penetration_exhausted() {
         Name("Player".into()),
         Health { current: 30, max: 30 },
         CombatStats { attack: 3, defense: 2 },
-        Ammo { current: 10, max: 30 },
+        Inventory { items: vec![gun] },
     )).id();
 
     // First enemy with defense=5 (exceeds penetration after first hit).
@@ -1223,7 +1203,7 @@ fn ranged_bullet_stops_when_penetration_exhausted() {
         range: 8,
         dx: 1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update(); // ranged_attack_system spawns bullet entity
     app.update(); // projectile_system advances bullet
@@ -1240,7 +1220,7 @@ fn ranged_bullet_stops_when_penetration_exhausted() {
 #[test]
 fn ranged_attack_logs_shoot_message() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    let (player, gun) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
     let _monster = spawn_test_monster(&mut app, 64, 40, "Bandit");
 
     app.update();
@@ -1250,7 +1230,7 @@ fn ranged_attack_logs_shoot_message() {
         range: 8,
         dx: 1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update(); // ranged_attack_system spawns bullet and logs "fires!"
     app.update(); // projectile_system advances bullet and logs hits
@@ -1265,9 +1245,7 @@ fn ranged_attack_logs_shoot_message() {
 #[test]
 fn roundhouse_kick_hits_adjacent_enemies() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
-
-    // Adjacent enemies (distance 1).
+    let (player, _) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
     let m1 = spawn_test_monster(&mut app, 61, 40, "Bandit1");
     let m2 = spawn_test_monster(&mut app, 60, 41, "Bandit2");
 
@@ -1293,9 +1271,7 @@ fn roundhouse_kick_hits_adjacent_enemies() {
 #[test]
 fn roundhouse_kick_misses_distant_enemies() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
-
-    // Enemy at distance 3 (not adjacent).
+    let (player, _) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
     let monster = spawn_test_monster(&mut app, 63, 40, "FarBandit");
 
     app.update();
@@ -2515,7 +2491,7 @@ fn god_mode_prevents_player_damage() {
 #[test]
 fn projectile_despawns_on_wall_collision() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    let (player, gun) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
 
     app.update();
 
@@ -2525,7 +2501,7 @@ fn projectile_despawns_on_wall_collision() {
         range: 100,
         dx: -1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update(); // Spawn projectile
     app.update(); // Advance projectile
@@ -2542,7 +2518,7 @@ fn projectile_despawns_on_wall_collision() {
 #[test]
 fn ranged_attack_preserves_player_position() {
     let mut app = test_app_with_ranged();
-    let player = spawn_test_player_with_ammo(&mut app, 60, 40, 10);
+    let (player, gun) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
 
     app.update();
 
@@ -2551,7 +2527,7 @@ fn ranged_attack_preserves_player_position() {
         range: 8,
         dx: 1,
         dy: 0,
-        gun_item: None,
+        gun_item: Some(gun),
     });
     app.update();
 
@@ -2817,16 +2793,6 @@ fn stamina_recover_from_zero() {
     let mut s = Stamina { current: 0, max: 50 };
     s.recover(25);
     assert_eq!(s.current, 25);
-}
-
-// ─── Ammo Edge Cases ────────────────────────────────────────────
-
-#[test]
-fn ammo_spend_one_at_one_succeeds() {
-    let mut a = Ammo { current: 1, max: 10 };
-    assert!(a.spend_one());
-    assert_eq!(a.current, 0);
-    assert!(a.is_empty());
 }
 
 // ─── SpellParticles Stress Tests ─────────────────────────────────

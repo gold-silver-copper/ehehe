@@ -391,35 +391,6 @@ impl Stamina {
     }
 }
 
-/// Ammo supply for AI ranged attacks (enemies only).
-/// Player weapons use per-gun `ItemKind::Gun { loaded, .. }` instead.
-///
-/// **Invariant**: `0 ≤ current ≤ max`.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Ammo {
-    pub current: CoordinateUnit,
-    pub max: CoordinateUnit,
-}
-
-impl Ammo {
-    /// Attempts to spend one round. Returns `true` on success.
-    #[inline]
-    pub fn spend_one(&mut self) -> bool {
-        if self.current > 0 {
-            self.current -= 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Returns `true` when no ammo remains.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.current <= 0
-    }
-}
-
 /// A projectile entity (bullet or shrapnel) that travels along a path over ticks.
 /// Each tick the projectile advances `tiles_per_tick` steps along its precomputed
 /// Bresenham path. When it reaches a hostile entity, it applies damage and despawns.
@@ -434,7 +405,7 @@ pub struct Projectile {
     pub tiles_per_tick: usize,
     /// Damage to apply on hit.
     pub damage: i32,
-    /// Remaining penetration power. Decreases by target defense on each hit.
+    /// Remaining penetration power.
     pub penetration: i32,
     /// Entity that fired the projectile (to avoid self-damage for bullets).
     pub source: Entity,
@@ -979,25 +950,4 @@ mod tests {
         assert!(s.current >= 0 && s.current <= s.max);
     }
 
-    // ─── Ammo pool tests ────────────────────────────────────────────
-
-    #[test]
-    fn ammo_spend_one_success() {
-        let mut a = Ammo { current: 5, max: 10 };
-        assert!(a.spend_one());
-        assert_eq!(a.current, 4);
-    }
-
-    #[test]
-    fn ammo_spend_one_empty() {
-        let mut a = Ammo { current: 0, max: 10 };
-        assert!(!a.spend_one());
-        assert_eq!(a.current, 0);
-    }
-
-    #[test]
-    fn ammo_is_empty() {
-        assert!(Ammo { current: 0, max: 10 }.is_empty());
-        assert!(!Ammo { current: 1, max: 10 }.is_empty());
-    }
 }
