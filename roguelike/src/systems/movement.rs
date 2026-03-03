@@ -128,7 +128,7 @@ const CACTUS_DAMAGE: i32 = 1;
 /// any entity near a cactus.
 pub fn cactus_damage_system(
     game_map: Res<GameMapResource>,
-    mut health_query: Query<(&Position, &mut Health)>,
+    mut health_query: Query<(&Position, &mut Health, Option<&crate::components::Name>)>,
     mut combat_log: ResMut<CombatLog>,
     turn_state: Option<Res<State<TurnState>>>,
 ) {
@@ -140,8 +140,9 @@ pub fn cactus_damage_system(
         return;
     }
 
-    for (pos, mut hp) in &mut health_query {
+    for (pos, mut hp, name) in &mut health_query {
         let p = pos.as_grid_vec();
+        let entity_name = crate::components::display_name(name);
         // Check if standing adjacent to (or on) a cactus
         for neighbor in p.cardinal_neighbors() {
             if let Some(voxel) = game_map.0.get_voxel_at(&neighbor)
@@ -149,7 +150,7 @@ pub fn cactus_damage_system(
                     let actual = hp.apply_damage(CACTUS_DAMAGE);
                     if actual > 0 {
                         combat_log.push_at(
-                            format!("Ouch! Cactus prick for {} damage!", actual),
+                            format!("{entity_name} is pricked by a cactus for {actual} damage!"),
                             p,
                         );
                     }

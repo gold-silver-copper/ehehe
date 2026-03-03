@@ -4,7 +4,8 @@ use bevy::prelude::*;
 
 use crate::components::{
     BlocksMovement, Caliber, CameraFollow, CombatStats, Energy,
-    Health, Inventory, Item, ItemKind, Outfit, Stamina, Name, Player, Position,
+    GroupFollower, GroupLeader,
+    Health, Inventory, Item, ItemKind, Stamina, Name, Player, Position,
     Renderable, Speed, Viewshed, ACTION_COST,
 };
 use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, DropItemIntent, MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
@@ -147,6 +148,7 @@ impl Plugin for RoguelikePlugin {
                     combat::melee_wide_system,
                     combat::combat_system,
                     projectile::projectile_system,
+                    spell::explosive_projectile_system,
                     combat::apply_damage_system,
                     combat::death_system,
                 )
@@ -178,6 +180,7 @@ impl Plugin for RoguelikePlugin {
                 (
                     ai::energy_accumulate_system,
                     ai::ai_system,
+                    ai::leader_death_system,
                     combat::ai_ranged_attack_system,
                     turn::fire_system,
                 )
@@ -219,46 +222,8 @@ fn spawn_monsters(mut commands: Commands, map: Res<GameMapResource>, seed: Res<M
     do_spawn_monsters(&mut commands, &map, seed.0);
 }
 
-/// Generates a procedural outfit description for the player character.
-/// Uses the map seed to produce a different look each playthrough.
-fn generate_outfit(seed: u64) -> String {
-    const HATS: &[&str] = &[
-        "a dusty Stetson", "a wide-brimmed gambler hat", "a worn felt hat",
-        "a battered cavalry hat", "a low-crown Boss of the Plains",
-        "a sun-bleached plantation hat", "a creased cattleman hat",
-        "no hat — just wind-swept hair",
-    ];
-    const SHIRTS: &[&str] = &[
-        "a faded red flannel shirt", "a collarless muslin pullover",
-        "a stained white cotton shirt", "a dark wool vest over a henley",
-        "a patched buckskin shirt", "a dusty denim work shirt",
-        "a striped calico shirt", "a sweat-soaked chambray shirt",
-    ];
-    const BOTTOMS: &[&str] = &[
-        "canvas trousers held up by suspenders", "worn leather chaps over dungarees",
-        "dark wool trousers tucked into boots", "faded denim jeans with frayed cuffs",
-        "buckskin leggings", "dust-caked cavalry trousers",
-        "patched corduroy pants", "brown cotton work pants",
-    ];
-    const EXTRAS: &[&str] = &[
-        "a sun-faded bandana around the neck", "a leather gun belt slung low",
-        "spurs that jingle with every step", "a rawhide lariat coiled at the hip",
-        "a tattered serape draped over one shoulder", "a tobacco pouch in the breast pocket",
-        "a pocket watch chain glinting at the waist", "dust on every inch of cloth",
-    ];
-
-    // Prime multipliers and bit-shifts decorrelate selections across categories.
-    let h = (seed.wrapping_mul(7919) >> 3) as usize % HATS.len();
-    let s = (seed.wrapping_mul(104729) >> 5) as usize % SHIRTS.len();
-    let b = (seed.wrapping_mul(3571) >> 7) as usize % BOTTOMS.len();
-    let e = (seed.wrapping_mul(9103) >> 2) as usize % EXTRAS.len();
-
-    format!("Wearing {}, {}, {}, and {}.",
-        HATS[h], SHIRTS[s], BOTTOMS[b], EXTRAS[e])
-}
-
 /// Helper: spawns the player entity.
-fn do_spawn_player(commands: &mut Commands, seed: u64, map: &GameMapResource) {
+fn do_spawn_player(commands: &mut Commands, _seed: u64, map: &GameMapResource) {
     // Find a saloon interior tile, falling back to default spawn point.
     let spawn_pos = map.0.find_saloon_interior()
         .unwrap_or(GridVec::new(SPAWN_X, SPAWN_Y));
@@ -347,7 +312,6 @@ fn do_spawn_player(commands: &mut Commands, seed: u64, map: &GameMapResource) {
         Energy(0),
     )).insert((
         Inventory { items: vec![colt_pocket, knife, whiskey, molotov] },
-        Outfit(generate_outfit(seed)),
         Viewshed {
             range: 40,
             visible_tiles: HashSet::new(),
@@ -371,6 +335,9 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
         &[2, 5],    // Outlaws: Outlaw(2), Gunslinger(5)
         &[3],       // Vaqueros: Vaquero(3)
         &[4],       // Lawmen: Cowboy(4)
+        &[6],       // Civilians: Civilian(6)
+        &[7, 8],    // Indians: Indian Brave(7), Indian Scout(8)
+        &[9, 10],   // Sheriff: Sheriff(9), Deputy(10)
     ];
 
     // Generate group centers using deterministic noise-based placement.
@@ -397,10 +364,12 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
             group_idx += 1;
 
             // Spawn 3-5 NPCs per group within the radius.
+            // The first NPC in each non-wildlife group is the leader.
             let group_size_noise = value_noise(cx, cy, group_seed.wrapping_add(11111));
             let group_size = 3 + (group_size_noise * 3.0) as i32; // 3-5
 
             let mut spawned = 0;
+            let mut leader_entity: Option<Entity> = None;
             for dy in -group_radius..=group_radius {
                 for dx in -group_radius..=group_radius {
                     if spawned >= group_size {
@@ -421,7 +390,16 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
 
                     let template_idx = templates[(spawned as usize) % templates.len()];
                     let template = &MONSTER_TEMPLATES[template_idx];
-                    spawn::spawn_monster(commands, template, pos.x, pos.y, 0, 0, 0.25);
+                    let ent = spawn::spawn_monster(commands, template, pos.x, pos.y, 0, 0, 0.25);
+
+                    // First humanoid NPC in a group becomes the leader.
+                    if spawned == 0 && !matches!(template.faction, crate::components::Faction::Wildlife) {
+                        commands.entity(ent).insert(GroupLeader);
+                        leader_entity = Some(ent);
+                    } else if let Some(leader) = leader_entity {
+                        commands.entity(ent).insert(GroupFollower { leader });
+                    }
+
                     spawned += 1;
                 }
                 if spawned >= group_size {
@@ -443,7 +421,7 @@ fn restart_system(
     mut spell_particles: ResMut<SpellParticles>,
     mut input_state: ResMut<InputState>,
     mut next_game_state: ResMut<NextState<GameState>>,
-    seed: Res<MapSeed>,
+    mut seed: ResMut<MapSeed>,
     mut game_map: ResMut<GameMapResource>,
     mut camera: ResMut<CameraPosition>,
     mut cursor: ResMut<CursorPosition>,
@@ -458,6 +436,13 @@ fn restart_system(
     for entity in &all_entities {
         commands.entity(entity).despawn();
     }
+
+    // Generate a new seed each restart so the map is different every time.
+    let new_seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(seed.0.wrapping_add(1));
+    seed.0 = new_seed;
 
     combat_log.clear();
     kill_count.0 = 0;

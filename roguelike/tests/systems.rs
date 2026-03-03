@@ -580,6 +580,7 @@ fn test_app_with_spells() -> App {
             spell::spell_system,
             combat::combat_system,
             projectile::projectile_system,
+            spell::explosive_projectile_system,
             combat::apply_damage_system,
             combat::death_system,
         )
@@ -619,7 +620,8 @@ fn spell_damages_nearby_enemies() {
         target: GridVec::new(60, 40),
         grenade_index: 0,
     });
-    app.update(); // spell_system spawns shrapnel projectile entities
+    app.update(); // spell_system spawns explosive projectile
+    app.update(); // explosive_projectile_system detonates, spawns shrapnel
     app.update(); // projectile_system advances shrapnel and applies damage
 
     // Monster should be damaged or killed by shrapnel.
@@ -705,7 +707,8 @@ fn spell_hits_multiple_enemies() {
         target: GridVec::new(60, 40),
         grenade_index: 0,
     });
-    app.update(); // spell_system spawns shrapnel
+    app.update(); // spell_system spawns explosive projectile
+    app.update(); // explosive detonates, spawns shrapnel
     app.update(); // projectile_system advances shrapnel
 
     // Monsters should be damaged or killed by shrapnel.
@@ -751,7 +754,8 @@ fn spell_kills_weak_enemy_and_increments_kill_count() {
         target: GridVec::new(60, 40),
         grenade_index: 0,
     });
-    app.update(); // spell_system spawns shrapnel
+    app.update(); // spell_system spawns explosive projectile
+    app.update(); // explosive detonates, spawns shrapnel
     app.update(); // projectile_system advances shrapnel, death_system runs
 
     // Monster should be despawned
@@ -816,11 +820,12 @@ fn spell_no_hit_logs_message() {
         grenade_index: 0,
     });
     app.update();
+    app.update();
 
     let log = app.world().resource::<CombatLog>();
     assert!(
-        log.messages.iter().any(|m| m.contains("grenade")),
-        "Combat log should note grenade was thrown"
+        log.messages.iter().any(|m| m.contains("dynamite") || m.contains("Dynamite")),
+        "Combat log should note dynamite was thrown"
     );
 }
 
@@ -887,7 +892,8 @@ fn spell_damages_hostile_entity() {
         target: GridVec::new(60, 40),
         grenade_index: 0,
     });
-    app.update(); // spell_system spawns shrapnel
+    app.update(); // spell_system spawns explosive projectile
+    app.update(); // explosive detonates, spawns shrapnel
     app.update(); // projectile_system advances shrapnel and applies damage
 
     let gate_health = app.world().get::<Health>(gate).unwrap();
@@ -1619,7 +1625,7 @@ fn cactus_logs_damage_message() {
     app.update();
 
     let log = app.world().resource::<CombatLog>();
-    let has_cactus_msg = log.messages.iter().any(|m| m.contains("Cactus"));
+    let has_cactus_msg = log.messages.iter().any(|m| m.to_lowercase().contains("cactus"));
     assert!(has_cactus_msg,
         "Combat log should contain cactus damage message");
 }
@@ -2421,8 +2427,10 @@ fn projectile_despawns_on_wall_collision() {
         gun_item: Some(gun),
     });
     app.update(); // Spawn projectile
-    app.update(); // Advance projectile
-    app.update(); // Continue advancement
+    // Advance projectile enough ticks to reach the border wall (60 tiles at 3/tick)
+    for _ in 0..25 {
+        app.update();
+    }
 
     // Projectile should be despawned after hitting wall
     let projectile_count = app.world_mut().query::<&Projectile>()

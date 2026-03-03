@@ -84,21 +84,22 @@ pub fn fire_system(
     mut game_map: ResMut<GameMapResource>,
     turn_counter: Res<TurnCounter>,
     mut health_query: Query<&mut Health>,
-    position_query: Query<(Entity, &Position)>,
+    position_query: Query<(Entity, &Position, Option<&crate::components::Name>)>,
     mut combat_log: ResMut<CombatLog>,
 ) {
     let map_width = game_map.0.width;
     let map_height = game_map.0.height;
 
     // Damage entities standing on fire tiles.
-    for (entity, pos) in &position_query {
+    for (entity, pos, name) in &position_query {
         let p = pos.as_grid_vec();
+        let entity_name = crate::components::display_name(name);
         if let Some(voxel) = game_map.0.get_voxel_at(&p)
             && matches!(voxel.floor, Some(Floor::Fire))
                 && let Ok(mut hp) = health_query.get_mut(entity) {
                     let actual = hp.apply_damage(FIRE_DAMAGE);
                     if actual > 0 {
-                        combat_log.push(format!("Fire burns for {actual} damage!"));
+                        combat_log.push_at(format!("{entity_name} is burned by fire for {actual} damage!"), p);
                     }
                 }
     }

@@ -262,6 +262,18 @@ impl Default for AiMemory {
     }
 }
 
+/// Marks an NPC as a group leader. When the leader dies, followers become
+/// more erratic and cowardly.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct GroupLeader;
+
+/// Marks an NPC as following a group leader entity.
+/// When the leader entity dies, the follower's courage drops significantly.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct GroupFollower {
+    pub leader: Entity,
+}
+
 /// Personality traits that modulate NPC AI behavior.
 /// Different NPCs exhibit different combat styles based on these parameters.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -297,6 +309,50 @@ pub enum Faction {
     Outlaws,
     Lawmen,
     Vaqueros,
+    /// Town civilians — shopkeepers, townsfolk. Allied with Lawmen.
+    Civilians,
+    /// Native American faction. Allied with Wildlife.
+    Indians,
+    /// Sheriff and deputies. Allied with Civilians and Lawmen.
+    Sheriff,
+}
+
+impl Faction {
+    /// Returns a discriminant value for ordering purposes.
+    fn disc(&self) -> u8 {
+        match self {
+            Faction::Wildlife => 0,
+            Faction::Outlaws => 1,
+            Faction::Lawmen => 2,
+            Faction::Vaqueros => 3,
+            Faction::Civilians => 4,
+            Faction::Indians => 5,
+            Faction::Sheriff => 6,
+        }
+    }
+
+    /// Returns `true` if this faction considers `other` an ally.
+    /// Allied factions won't attack each other.
+    pub fn is_allied(&self, other: &Faction) -> bool {
+        if self == other {
+            return true;
+        }
+        // Normalize the pair to avoid duplicating every bidirectional match.
+        let (a, b) = if self.disc() <= other.disc() { (self, other) } else { (other, self) };
+        matches!(
+            (a, b),
+            // Wildlife ↔ Indians
+            (Faction::Wildlife, Faction::Indians)
+            // Outlaws ↔ Vaqueros
+            | (Faction::Outlaws, Faction::Vaqueros)
+            // Lawmen ↔ Civilians
+            | (Faction::Lawmen, Faction::Civilians)
+            // Lawmen ↔ Sheriff
+            | (Faction::Lawmen, Faction::Sheriff)
+            // Civilians ↔ Sheriff
+            | (Faction::Civilians, Faction::Sheriff)
+        )
+    }
 }
 
 /// Bullet caliber for period-accurate cap-and-ball revolvers and rifles.
@@ -402,6 +458,17 @@ pub struct Projectile {
     pub penetration: i32,
     /// Entity that fired the projectile (to avoid self-damage for bullets).
     pub source: Entity,
+}
+
+/// A thrown explosive (dynamite or molotov) traveling through the air.
+/// When this projectile hits something (entity, wall) or reaches its target,
+/// it detonates, spawning the appropriate explosion/fire effect.
+#[derive(Component, Debug)]
+pub enum ThrownExplosive {
+    /// Dynamite: spawns shrapnel and environmental destruction on detonation.
+    Dynamite { damage: i32, radius: i32, grenade_index: usize },
+    /// Molotov: sets area on fire and generates smoke on detonation.
+    Molotov { damage: i32, radius: i32, item_index: usize },
 }
 
 // ─── Inventory & Item system ─────────────────────────────────────
