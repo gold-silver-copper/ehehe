@@ -25,7 +25,7 @@ impl GraphicElement for Floor {
             Floor::WoodPlanks => " ".into(),
             Floor::Fire => "^".into(),
             Floor::Water => "~".into(),
-            Floor::SandCloud => "░".into(),
+            Floor::SandCloud => "*".into(),
             Floor::ShallowWater => "~".into(),
             Floor::DeepWater => "≈".into(),
             Floor::Beach => ".".into(),
@@ -104,6 +104,12 @@ impl GraphicElement for Props {
             Props::Piano => "M".into(),
             Props::Sign => "]".into(),
             Props::HayBale => "&".into(),
+            Props::Well => "O".into(),
+            Props::Gallows => "P".into(),
+            Props::WaterTower => "A".into(),
+            Props::RailTrack => "=".into(),
+            Props::Windmill => "X".into(),
+            Props::LampPost => "i".into(),
         }
     }
 
@@ -126,6 +132,12 @@ impl GraphicElement for Props {
             Props::Piano => RatColor::Rgb(50, 45, 40),
             Props::Sign => RatColor::Rgb(150, 125, 70),
             Props::HayBale => RatColor::Rgb(200, 180, 80),
+            Props::Well => RatColor::Rgb(130, 130, 130),
+            Props::Gallows => RatColor::Rgb(100, 70, 35),
+            Props::WaterTower => RatColor::Rgb(110, 80, 45),
+            Props::RailTrack => RatColor::Rgb(90, 85, 80),
+            Props::Windmill => RatColor::Rgb(140, 110, 60),
+            Props::LampPost => RatColor::Rgb(80, 80, 90),
         }
     }
 

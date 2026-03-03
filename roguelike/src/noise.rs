@@ -110,20 +110,19 @@ pub const TILE_COLOR_NOISE_RANGE: i16 = 2;
 ///
 /// Call this as the **final** step before rendering — after lighting,
 /// faction tinting, fog-of-war, and any other color logic.
+#[inline]
 pub fn tile_color_noise(r: u8, g: u8, b: u8, x: i32, y: i32, range: i16) -> (u8, u8, u8) {
     if range == 0 {
         return (r, g, b);
     }
-    // Three independent noise samples per tile (one per channel).
-    let hr = noise2d(x, y, 0xA3B1_C5D7);
-    let hg = noise2d(x, y, 0xE7F2_4A8B);
-    let hb = noise2d(x, y, 0x91D6_3F0E);
+    // Single hash producing enough bits for all three channels.
+    let h = noise2d(x, y, 0xA3B1_C5D7);
 
     // Map to [-range, +range] using unsigned modulo to avoid sign issues.
     let span = (2 * range + 1) as u32;
-    let dr = (hr % span) as i16 - range;
-    let dg = (hg % span) as i16 - range;
-    let db = (hb % span) as i16 - range;
+    let dr = (h % span) as i16 - range;
+    let dg = ((h >> 11) % span) as i16 - range;
+    let db = ((h >> 22) % span) as i16 - range;
 
     let clamp = |v: i16| v.clamp(0, 255) as u8;
     (clamp(r as i16 + dr), clamp(g as i16 + dg), clamp(b as i16 + db))

@@ -15,6 +15,7 @@ pub struct Voxel {
 impl Voxel {
     /// Converts this voxel to a GraphicTriple based on visibility.
     /// Layers: floor → props. Unseen tiles are dimmed.
+    #[inline]
     pub fn to_graphic(&self, visible: bool) -> GraphicTriple {
         let floor = match &self.floor {
             Some(fl) => fl.to_graphic_triple(),

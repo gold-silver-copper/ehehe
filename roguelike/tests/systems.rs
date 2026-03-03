@@ -1698,15 +1698,18 @@ fn sand_particles_persist_for_12_ticks() {
     let origin = GridVec::new(10, 10);
     particles.particles.push((origin, 12, 0, true, 0, 0));
 
-    // Tick 11 times - particle should still exist
-    for _ in 0..11 {
+    // Each logical tick requires PARTICLE_TICK_INTERVAL (3) calls to tick().
+    // Tick 11 logical ticks (33 calls) - particle should still exist
+    for _ in 0..33 {
         particles.tick();
     }
     assert_eq!(particles.particles.len(), 1,
         "Sand particle should persist for 12 ticks (11 ticks elapsed)");
 
-    // Tick once more - particle should expire
-    particles.tick();
+    // Tick once more logical tick (3 calls) - particle should expire
+    for _ in 0..3 {
+        particles.tick();
+    }
     assert_eq!(particles.particles.len(), 0,
         "Sand particle should expire after 12 ticks");
 }
@@ -1746,14 +1749,18 @@ fn particles_tick_respects_delay() {
     // Particle with delay=3
     particles.particles.push((GridVec::new(0, 0), 6, 3, false, 0, 0));
 
-    // After 2 ticks, delay should be reduced but particle still waiting
-    particles.tick();
-    particles.tick();
+    // Each logical tick requires PARTICLE_TICK_INTERVAL (3) calls to tick().
+    // After 2 logical ticks (6 calls), delay should be reduced but particle still waiting
+    for _ in 0..6 {
+        particles.tick();
+    }
     assert_eq!(particles.particles.len(), 1);
     assert_eq!(particles.particles[0].2, 1, "Delay should be decremented");
 
-    // After 1 more tick, delay reaches 0, lifetime starts counting
-    particles.tick();
+    // After 1 more logical tick (3 calls), delay reaches 0, lifetime starts counting
+    for _ in 0..3 {
+        particles.tick();
+    }
     assert_eq!(particles.particles.len(), 1);
     assert_eq!(particles.particles[0].2, 0, "Delay should be 0");
     assert_eq!(particles.particles[0].1, 6, "Lifetime should not yet decrement when delay just reached 0");
@@ -2765,8 +2772,8 @@ fn spell_particles_all_expire_eventually() {
     particles.add_aoe(GridVec::new(10, 10), 6);
     particles.particles.push((GridVec::new(0, 0), 12, 0, true, 0, 0));
 
-    // Tick enough times for all particles to expire
-    for _ in 0..50 {
+    // Tick enough times for all particles to expire (accounts for frame accumulator)
+    for _ in 0..150 {
         particles.tick();
     }
 
