@@ -23,6 +23,8 @@ pub enum Floor {
     Beach,
     /// Bridge over the river — normal movement speed.
     Bridge,
+    /// Packed-dirt sidewalk flanking carriage roads.
+    Sidewalk,
 }
 
 /// Props (obstacles/structures) placed on tiles.
