@@ -296,10 +296,6 @@ impl Default for AiPersonality {
 #[derive(Component, Debug)]
 pub struct Hostile;
 
-/// Marker component: tags the Hell Gate entity.
-/// When destroyed, the player wins the game.
-#[derive(Component, Debug)]
-pub struct HellGate;
 
 /// Faction affiliation for group-based spawning.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]

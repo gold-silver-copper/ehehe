@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::{CollectibleKind, CombatStats, ExpReward, Experience, Faction, Health, HellGate, Hostile, Inventory, Item, ItemKind, LastDamageSource, Level, LootTable, Stamina, Ammo, Name, Player, Position, Renderable, display_name};
+use crate::components::{CollectibleKind, CombatStats, ExpReward, Experience, Faction, Health, Hostile, Inventory, Item, ItemKind, LastDamageSource, Level, LootTable, Stamina, Ammo, Name, Player, Position, Renderable, display_name};
 use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, RangedAttackIntent};
 use crate::noise::value_noise;
 use crate::resources::{CombatLog, DynamicRng, GameMapResource, GameState, KillCount, MapSeed, PendingExp, PendingNpcExp, SoundEvents, TurnCounter};
@@ -135,12 +135,11 @@ pub fn apply_damage_system(
 /// blow, drops the entity's entire inventory on the ground, and removes the entity.
 /// Animals (Wildlife faction) drop nothing. Non-wildlife NPCs drop their full
 /// inventory including guns with ammo.
-/// If the Hell Gate is destroyed, transitions to the Victory state.
 /// If the player dies, transitions to the Dead state.
 /// NPCs that kill other entities also gain stat bonuses (enemy level-up).
 pub fn death_system(
     mut commands: Commands,
-    query: Query<(Entity, &Health, Option<&Name>, Option<&Hostile>, Option<&HellGate>, Option<&Position>, Option<&LootTable>, Option<&Player>, Option<&ExpReward>, Option<&LastDamageSource>, Option<&Inventory>, Option<&Faction>)>,
+    query: Query<(Entity, &Health, Option<&Name>, Option<&Hostile>, Option<&Position>, Option<&LootTable>, Option<&Player>, Option<&ExpReward>, Option<&LastDamageSource>, Option<&Inventory>, Option<&Faction>)>,
     player_entities: Query<Entity, With<Player>>,
     mut combat_log: ResMut<CombatLog>,
     mut kill_count: ResMut<KillCount>,
@@ -151,7 +150,7 @@ pub fn death_system(
 ) {
     let player_entity = player_entities.single().ok();
 
-    for (entity, health, name, hostile, hell_gate, pos, loot_table, is_player, exp_reward, last_damage_source, inventory, faction) in &query {
+    for (entity, health, name, hostile, pos, loot_table, is_player, exp_reward, last_damage_source, inventory, faction) in &query {
         if !health.is_dead() {
             continue;
         }
@@ -181,11 +180,6 @@ pub fn death_system(
                 pending_npc_exp.entries.push((lds.0, reward));
             }
         }
-        if hell_gate.is_some() {
-            combat_log.push("The Enemy Stronghold crumbles! You are victorious!".into());
-            next_game_state.set(GameState::Victory);
-        }
-
         let is_wildlife = faction.is_some_and(|f| matches!(f, Faction::Wildlife));
 
         // Drop entire NPC inventory on the ground (animals drop nothing).

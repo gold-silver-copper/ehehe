@@ -830,17 +830,16 @@ fn spell_no_hit_logs_message() {
     );
 }
 
-// ─── Hell Gate tests ─────────────────────────────────────────────
+// ─── Hostile entity combat tests ─────────────────────────────────
 
 #[test]
-fn player_can_bump_attack_hell_gate() {
+fn player_can_bump_attack_hostile_entity() {
     let mut app = test_app();
     let player = spawn_test_player(&mut app, 60, 40);
 
-    // Spawn a hell gate adjacent to the player
+    // Spawn a hostile entity adjacent to the player
     let gate = app.world_mut().spawn((
         Position { x: 61, y: 40 },
-        HellGate,
         Hostile,
         BlocksMovement,
         Name("Gate of Hell".into()),
@@ -864,47 +863,7 @@ fn player_can_bump_attack_hell_gate() {
 }
 
 #[test]
-fn gate_destruction_triggers_victory() {
-    let mut app = test_app();
-    let player = spawn_test_player(&mut app, 60, 40);
-
-    // Spawn a gate with just 1 HP so it dies in one hit
-    let gate = app.world_mut().spawn((
-        Position { x: 61, y: 40 },
-        HellGate,
-        Hostile,
-        BlocksMovement,
-        Name("Gate of Hell".into()),
-        Health { current: 1, max: 100 },
-        CombatStats { attack: 0, defense: 0 },
-    )).id();
-
-    app.update();
-
-    // Player attacks the gate
-    app.world_mut().write_message(MoveIntent {
-        entity: player,
-        dx: 1,
-        dy: 0,
-    });
-    app.update();
-
-    // Gate should be despawned
-    assert!(
-        app.world().get::<Health>(gate).is_none(),
-        "Gate should be despawned after reaching 0 HP"
-    );
-
-    // Victory message should be in the combat log
-    let log = app.world().resource::<CombatLog>();
-    assert!(
-        log.messages.iter().any(|m| m.contains("Enemy Stronghold crumbles")),
-        "Combat log should contain victory message"
-    );
-}
-
-#[test]
-fn spell_damages_hell_gate() {
+fn spell_damages_hostile_entity() {
     let mut app = test_app_with_spells();
     let player = app.world_mut().spawn((
         Position { x: 60, y: 40 },
@@ -915,10 +874,9 @@ fn spell_damages_hell_gate() {
         CombatStats { attack: 5, defense: 2 },
     )).id();
 
-    // Gate within spell radius
+    // Hostile entity within spell radius
     let gate = app.world_mut().spawn((
         Position { x: 62, y: 40 },
-        HellGate,
         Hostile,
         BlocksMovement,
         Name("Gate of Hell".into()),
