@@ -428,10 +428,24 @@ impl Stamina {
     }
 }
 
-/// A projectile entity (bullet or shrapnel) that travels along a path over ticks.
+/// Visual style for projectile rendering.
+/// The animation system is generic over visual: each projectile type carries
+/// its own `ProjectileVisual` so the renderer can pick the correct symbols.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectileVisual {
+    /// Bullets and shrapnel: center dot head (`◦`/`·`) with a trailing dot tail.
+    BulletTrail,
+    /// Tomahawks and knives: spinning slashes and dashes (`/`, `—`, `\`, `|`).
+    SpinningBlade,
+    /// Everything else (dynamite, molotov, generic): asterisk (`*`).
+    Asterisk,
+}
+
+/// A projectile entity that travels along a path over ticks.
+/// Unified animation system: bullets, shrapnel, arrows, thrown knives/tomahawks,
+/// and explosives all use this component with tunable speed and visual style.
 /// Each tick the projectile advances `tiles_per_tick` steps along its precomputed
 /// Bresenham path. When it reaches a hostile entity, it applies damage and despawns.
-/// Bullets and shrapnel can move multiple tiles in one tick.
 #[derive(Component, Debug)]
 pub struct Projectile {
     /// Precomputed path tiles (Bresenham line from origin to endpoint).
@@ -448,6 +462,10 @@ pub struct Projectile {
     pub source: Entity,
     /// Previous position for rendering a trailing tail.
     pub tail_pos: Option<GridVec>,
+    /// Visual style used by the renderer (dots, spinning slashes, asterisk).
+    pub visual: ProjectileVisual,
+    /// Whether this is a firearm bullet (uses hit-chance / headshot rolls).
+    pub is_bullet: bool,
 }
 
 /// A thrown explosive (dynamite or molotov) traveling through the air.
@@ -530,6 +548,15 @@ impl ItemKind {
 /// and can be recovered by walking over it.
 #[derive(Component, Debug)]
 pub struct Thrown;
+
+/// Attached to a projectile that carries a thrown item (knife/tomahawk).
+/// When the projectile lands or hits, the item entity is placed at the
+/// landing position with a `Thrown` marker so it can be recovered.
+#[derive(Component, Debug)]
+pub struct ThrownItemProjectile {
+    /// The item entity being thrown.
+    pub item_entity: Entity,
+}
 
 /// Inventory component: holds item entities belonging to an entity.
 #[derive(Component, Debug, Default)]
