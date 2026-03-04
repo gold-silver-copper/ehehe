@@ -101,7 +101,6 @@ pub struct InputState {
     pub inv_selection: usize,
     pub help_visible: bool,
     pub welcome_visible: bool,
-    pub quit_confirm: bool,
     /// Set to true when the player requests a reload (R key).
     pub reload_pending: bool,
     /// Stamina cost for a pending dive action.
@@ -119,7 +118,6 @@ impl Default for InputState {
             inv_selection: 0,
             help_visible: false,
             welcome_visible: true, // shown on first launch
-            quit_confirm: false,
             reload_pending: false,
             dive_stamina_pending: 0,
             ability_stamina_pending: 0,
@@ -403,6 +401,24 @@ pub struct SpectatingAfterDeath(pub bool);
 /// God mode: when true, the player cannot take damage. Toggled with Shift+G.
 #[derive(Resource, Debug, Default)]
 pub struct GodMode(pub bool);
+
+/// GTA-style star (wanted) level. Higher stars = more sheriffs spawn.
+/// Decays when the player is not in hostile or sheriff vision for a while.
+#[derive(Resource, Debug, Default)]
+pub struct StarLevel {
+    /// Current wanted level (0 = peaceful, 1+ = wanted).
+    pub level: u32,
+    /// Turns since last seen by a hostile or sheriff NPC.
+    pub unseen_turns: u32,
+}
+
+/// Prop health map: tracks damage dealt to props.
+/// When accumulated damage exceeds the prop's max HP, it is destroyed.
+#[derive(Resource, Debug, Default)]
+pub struct PropHealth {
+    /// Maps world position → current remaining HP for the prop at that tile.
+    pub hp: HashMap<GridVec, i32>,
+}
 
 /// Extra world ticks remaining after a player action. Physical movement sets
 /// this to 1 so that the world turn cycles twice (2 total ticks), making

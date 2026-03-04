@@ -1,16 +1,17 @@
-use bevy::{app::AppExit, ecs::system::SystemParam, prelude::*};
+use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_ratatui::event::KeyMessage;
 use ratatui::crossterm::event::KeyCode;
 
-use crate::components::{Hostile, Inventory, ItemKind, SPELL_STAMINA_COST, Stamina, Player, Position, Viewshed};
-use crate::events::{MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
+use crate::components::{Health, Hostile, Inventory, ItemKind, SPELL_STAMINA_COST, Stamina, Player, Position, Viewshed};
+use crate::events::{AttackIntent, MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
+use crate::grid_vec::GridVec;
 use crate::resources::{CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameState, InputMode, InputState, MapSeed, RestartRequested, SpectatingAfterDeath, TurnState};
 
 /// Bundles all intent MessageWriters to stay under Bevy's 16-param system limit.
 #[derive(SystemParam)]
 pub struct IntentWriters<'w> {
-    exit: MessageWriter<'w, AppExit>,
     move_intents: MessageWriter<'w, MoveIntent>,
+    attack_intents: MessageWriter<'w, AttackIntent>,
     spell_intents: MessageWriter<'w, SpellCastIntent>,
     molotov_intents: MessageWriter<'w, MolotovCastIntent>,
     use_item_intents: MessageWriter<'w, UseItemIntent>,
@@ -68,14 +69,15 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
     CommandBinding { key: "R", name: "Reload (6 ticks)", docs: "Reload gun (1 bullet + 1 cap + 1 powder). Costs 6 ticks." },
     CommandBinding { key: "F", name: "Kick (2 ticks)", docs: "Roundhouse kick all adjacent enemies. Costs 2 ticks." },
     CommandBinding { key: "T", name: "Wait (1 tick)", docs: "Skip your turn. Costs 1 tick." },
-    CommandBinding { key: "G", name: "Pick up", docs: "Pick up item at your feet. Costs 1 tick." },
+    CommandBinding { key: "G", name: "Punch (2 ticks)", docs: "Punch in cursor direction. Costs 2 ticks." },
+    CommandBinding { key: "E", name: "Pick up", docs: "Pick up item at your feet. Costs 1 tick." },
     CommandBinding { key: "Z", name: "Dive (20 sta)", docs: "Move 3 tiles toward cursor instantly. Costs 20 stamina." },
     CommandBinding { key: "1-6", name: "Fire/Use (2 ticks)", docs: "Use item by slot. Guns/grenades fire toward cursor. Costs 2 ticks." },
     CommandBinding { key: "7", name: "Dual wield (15 sta)", docs: "Fire two random revolvers at once." },
     CommandBinding { key: "8", name: "Fan shot (20 sta)", docs: "Fire all rounds from a random revolver." },
     CommandBinding { key: "9", name: "Throw sand (5 sta)", docs: "Create sand cloud blocking vision toward cursor." },
     CommandBinding { key: "0", name: "Throw item (10 sta)", docs: "Throw a random inventory item toward cursor." },
-    CommandBinding { key: "Q", name: "Menu / Close", docs: "Toggle pause menu, E then Y to quit." },
+    CommandBinding { key: "Q", name: "Menu", docs: "Toggle pause menu" },
 ];
 
 /// Reads keyboard input. Global keys (quit, pause, help) are always handled.
@@ -90,7 +92,7 @@ pub fn input_system(
     player_query: Query<(Entity, &Position, Option<&Stamina>, Option<&Inventory>), With<Player>>,
     mut player_viewshed: Query<&mut Viewshed, With<Player>>,
     item_kind_query: Query<&ItemKind>,
-    hostiles_query: Query<&Position, With<Hostile>>,
+    (hostiles_query, health_query): (Query<&Position, With<Hostile>>, Query<Entity, With<Health>>),
     game_state: Res<State<GameState>>,
     mut next_game_state: ResMut<NextState<GameState>>,
     turn_state: Option<Res<State<TurnState>>>,
@@ -99,16 +101,13 @@ pub fn input_system(
     mut input_state: ResMut<InputState>,
     mut restart_requested: ResMut<RestartRequested>,
     mut cursor: ResMut<CursorPosition>,
-    (mut extra_world_ticks, mut spectating, dynamic_rng, seed): (ResMut<ExtraWorldTicks>, ResMut<SpectatingAfterDeath>, Res<DynamicRng>, Res<MapSeed>),
+    (mut extra_world_ticks, mut spectating, dynamic_rng, seed, spatial): (ResMut<ExtraWorldTicks>, ResMut<SpectatingAfterDeath>, Res<DynamicRng>, Res<MapSeed>, Res<crate::resources::SpatialIndex>),
     mut god_mode: ResMut<crate::resources::GodMode>,
 ) {
-    // Handle Dead and Victory states: Q to quit, R to restart, T to spectate.
+    // Handle Dead and Victory states: R to restart, T to spectate.
     if *game_state.get() == GameState::Dead || *game_state.get() == GameState::Victory {
         for message in messages.read() {
             match message.code {
-                KeyCode::Char('q') => {
-                    intents.exit.write_default();
-                }
                 KeyCode::Char('r') => {
                     restart_requested.0 = true;
                 }
@@ -125,11 +124,7 @@ pub fn input_system(
 
     let Ok((player_entity, player_pos, player_stamina, player_inv)) = player_query.single() else {
         // Player entity is gone (should only happen transiently).
-        for message in messages.read() {
-            if matches!(message.code, KeyCode::Char('q')) {
-                intents.exit.write_default();
-            }
-        }
+        messages.read().for_each(|_| {});
         return;
     };
 
@@ -138,14 +133,10 @@ pub fn input_system(
         .is_some_and(|s| *s.get() == TurnState::AwaitingInput);
 
     // When spectating after death, automatically advance to WorldTurn
-    // without waiting for player input. Allow Q/R to quit/restart.
+    // without waiting for player input. Allow R to restart.
     if spectating.0 && awaiting_input {
         for message in messages.read() {
             match message.code {
-                KeyCode::Char('q') => {
-                    intents.exit.write_default();
-                    return;
-                }
                 KeyCode::Char('r') => {
                     restart_requested.0 = true;
                     spectating.0 = false;
@@ -161,19 +152,6 @@ pub fn input_system(
     // ── ESC menu input mode ─────────────────────────────────────
     if input_state.mode == InputMode::EscMenu {
         for message in messages.read() {
-            // Handle exit confirmation sub-mode within ESC menu.
-            if input_state.quit_confirm {
-                match message.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
-                        intents.exit.write_default();
-                    }
-                    _ => {
-                        input_state.quit_confirm = false;
-                    }
-                }
-                continue;
-            }
-
             match message.code {
                 KeyCode::Char('q') => {
                     // Resume game (Q toggles ESC menu)
@@ -186,10 +164,6 @@ pub fn input_system(
                     // Restart
                     input_state.mode = InputMode::Game;
                     restart_requested.0 = true;
-                }
-                KeyCode::Char('e') | KeyCode::Char('E') => {
-                    // Exit — requires Y confirmation
-                    input_state.quit_confirm = true;
                 }
                 _ => {}
             }
@@ -205,26 +179,12 @@ pub fn input_system(
             continue; // consume the key that dismissed the welcome
         }
 
-        // Handle exit confirmation mode.
-        if input_state.quit_confirm {
-            match message.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    intents.exit.write_default();
-                }
-                _ => {
-                    input_state.quit_confirm = false;
-                }
-            }
-            continue;
-        }
-
         // Exhaustive input handling — every arm here corresponds to a KEYBINDINGS entry.
         match message.code {
             // ── Q key: toggle ESC menu ──────────────────────────
             KeyCode::Char('q') => {
                 // Open ESC menu and pause the game.
                 input_state.mode = InputMode::EscMenu;
-                input_state.quit_confirm = false;
                 if *game_state.get() == GameState::Playing {
                     next_game_state.set(GameState::Paused);
                 }
@@ -307,8 +267,32 @@ pub fn input_system(
                 });
                 advance_turn(&mut next_turn_state);
             }
-            // ── Pickup item on ground ───────────────────────────
+            // ── Punch in cursor direction (G key) — costs 2 ticks ──
             KeyCode::Char('g') if awaiting_input => {
+                let delta = cursor.pos - player_pos.as_grid_vec();
+                let step = if delta == crate::grid_vec::GridVec::ZERO {
+                    GridVec::new(0, -1) // default: punch south
+                } else {
+                    delta.king_step()
+                };
+                let punch_target = player_pos.as_grid_vec() + step;
+                // Find any entity with Health on that tile
+                let target_entity = spatial.entities_at(&punch_target).iter().find(|&&e| {
+                    e != player_entity && health_query.contains(e)
+                }).copied();
+                if let Some(target) = target_entity {
+                    extra_world_ticks.0 = 1;
+                    intents.attack_intents.write(AttackIntent {
+                        attacker: player_entity,
+                        target,
+                    });
+                    advance_turn(&mut next_turn_state);
+                } else {
+                    combat_log.push("Nothing to punch there.".into());
+                }
+            }
+            // ── Pickup item on ground (E key) ───────────────────
+            KeyCode::Char('e') if awaiting_input => {
                 intents.pickup_intents.write(PickupItemIntent {
                     picker: player_entity,
                 });
