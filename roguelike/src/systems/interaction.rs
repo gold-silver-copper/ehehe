@@ -40,7 +40,7 @@ pub fn interaction_system(
 
     for intent in intents_vec {
         // First pass: get target info and apply direct hostility
-        let (target_gv, npc_name_str, delta, _mood_val, became_hostile) = {
+        let (target_gv, npc_name_str, delta, became_hostile) = {
             let Ok((_, target_pos, mut hostility, mood, name, _faction)) =
                 npc_query.get_mut(intent.target) else { continue; };
 
@@ -90,7 +90,7 @@ pub fn interaction_system(
             let threshold = mood.hostility_threshold();
             let became_hostile = hostility.exceeds_threshold(threshold);
 
-            (target_gv, npc_name, delta, *mood, became_hostile)
+            (target_gv, npc_name, delta, became_hostile)
         };
 
         if became_hostile {

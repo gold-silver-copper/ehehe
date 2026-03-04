@@ -4603,6 +4603,7 @@ fn spawn_sandbox_player(app: &mut App, x: i32, y: i32) -> Entity {
 }
 
 /// Spawns an NPC with mood and hostility components.
+#[allow(dead_code)]
 fn spawn_test_npc(
     app: &mut App,
     x: i32,
@@ -4618,7 +4619,7 @@ fn spawn_test_npc(
         Health { current: 60, max: 60 },
         CombatStats { attack: 2 },
         BlocksMovement,
-        NpcMood::Calm, // Will be overridden below
+        mood,
         Hostility::default(),
         faction,
         Viewshed {
@@ -4639,7 +4640,7 @@ fn crime_event_raises_wanted_level_when_witnessed() {
 
     // Spawn a sheriff NPC near the crime scene with the crime position visible
     let crime_pos = GridVec::new(60, 40);
-    let sheriff = {
+    let _sheriff = {
         use std::collections::HashSet;
         let mut visible = HashSet::new();
         visible.insert(crime_pos);
@@ -4906,8 +4907,8 @@ fn fire_spreads_to_adjacent_flammable_props() {
 
     // Check if the haybale caught fire
     let game_map = app.world().resource::<GameMapResource>();
-    let hay_voxel = game_map.0.get_voxel_at(&hay_pos);
-    let fire_set = game_map.0.fire_turns.contains_key(&hay_pos);
+    let _hay_voxel = game_map.0.get_voxel_at(&hay_pos);
+    let _fire_set = game_map.0.fire_turns.contains_key(&hay_pos);
 
     // The fire system should spread fire to the adjacent flammable haybale
     // (depends on the fire spread interval logic)
@@ -5024,7 +5025,7 @@ fn brawl_witness_joins_same_faction() {
     let _player = spawn_sandbox_player(&mut app, 60, 40);
 
     // Spawn a brawling NPC (outlaw faction)
-    let brawler = app.world_mut().spawn((
+    let _brawler = app.world_mut().spawn((
         Position { x: 61, y: 40 },
         Name("Brawler".into()),
         Health { current: 60, max: 60 },

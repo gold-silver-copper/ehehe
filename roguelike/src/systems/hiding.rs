@@ -4,8 +4,9 @@ use crate::components::{Hidden, Player, Position, Renderable};
 use crate::events::HideIntent;
 use crate::resources::{CombatLog, GameMapResource, SoundEvents, StarLevel};
 
-/// Noise radius when exiting a hiding spot (used by the sound event system).
-const _EXIT_NOISE_RADIUS: i32 = 5;
+/// Noise radius when exiting a hiding spot (tiles).
+/// Used by hide_system to determine the audible range of the exit noise event.
+const EXIT_NOISE_RADIUS: i32 = 5;
 
 /// Processes hide/unhide intents.
 ///
@@ -64,9 +65,11 @@ pub fn hide_system(
                 commands.entity(intent.entity).remove::<Hidden>();
                 star_level.player_hidden = false;
 
-                // Generate noise that may alert nearby NPCs
+                // Generate noise that may alert nearby NPCs within EXIT_NOISE_RADIUS
                 sound_events.add(gv);
-                combat_log.push("You climb out — nearby NPCs may hear you.".into());
+                combat_log.push(
+                    format!("You climb out — NPCs within {EXIT_NOISE_RADIUS} tiles may hear you."),
+                );
             }
         }
     }
