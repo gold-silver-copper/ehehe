@@ -168,8 +168,9 @@ pub fn death_system(
         combat_log.push_opt(format!("{label} has been slain!"), pos.map(|p| p.as_grid_vec()));
 
         // If the player died, transition to Dead state.
-        // Spawn a corpse marker (X) at the player's position, then despawn the player
-        // entity — identical to how NPC deaths are handled.
+        // Spawn a corpse marker (X) at the player's position — same visual
+        // treatment as NPC deaths. The player entity itself is NOT despawned
+        // so the UI can continue reading stats (HP, inventory, etc.).
         if is_player.is_some() {
             combat_log.push("You have fallen... Press T to continue watching, Q to quit, or R to restart.".into());
             next_game_state.set(GameState::Dead);

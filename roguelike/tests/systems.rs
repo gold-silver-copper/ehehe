@@ -4473,6 +4473,14 @@ fn ai_npc_inventory_capacity_limit() {
 //  SINGLE BULLET PER SHOT TESTS
 // ═══════════════════════════════════════════════════════════════════
 
+/// Counts the number of bullet projectile entities in the world.
+fn count_bullet_projectiles(app: &mut App) -> usize {
+    app.world_mut().query::<&Projectile>()
+        .iter(app.world())
+        .filter(|p| p.is_bullet)
+        .count()
+}
+
 /// A single player shot should produce at most one bullet projectile entity.
 #[test]
 fn single_shot_produces_at_most_one_bullet() {
@@ -4490,12 +4498,7 @@ fn single_shot_produces_at_most_one_bullet() {
     });
     app.update();
 
-    // Count all bullet projectile entities on screen.
-    let bullet_count = app.world_mut().query::<&Projectile>()
-        .iter(app.world())
-        .filter(|p| p.is_bullet)
-        .count();
-
+    let bullet_count = count_bullet_projectiles(&mut app);
     assert!(
         bullet_count <= 1,
         "A single shot should produce at most 1 bullet entity, but found {bullet_count}",
@@ -4529,11 +4532,7 @@ fn two_shots_produce_at_most_two_bullets() {
     });
     app.update();
 
-    let bullet_count = app.world_mut().query::<&Projectile>()
-        .iter(app.world())
-        .filter(|p| p.is_bullet)
-        .count();
-
+    let bullet_count = count_bullet_projectiles(&mut app);
     assert!(
         bullet_count <= 2,
         "Two shots should produce at most 2 bullet entities, but found {bullet_count}",
