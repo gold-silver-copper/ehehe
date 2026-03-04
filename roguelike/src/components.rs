@@ -297,49 +297,20 @@ pub enum Faction {
     Outlaws,
     Lawmen,
     Vaqueros,
-    /// Town civilians — shopkeepers, townsfolk. Allied with Lawmen.
+    /// Town civilians — shopkeepers, townsfolk. No allies.
     Civilians,
-    /// Native American faction. Allied with Wildlife.
+    /// Native American faction. No allies.
     Indians,
-    /// Sheriff and deputies. Allied with Civilians and Lawmen.
+    /// Sheriff and deputies. No allies.
     Sheriff,
 }
 
 impl Faction {
-    /// Returns a discriminant value for ordering purposes.
-    fn disc(&self) -> u8 {
-        match self {
-            Faction::Wildlife => 0,
-            Faction::Outlaws => 1,
-            Faction::Lawmen => 2,
-            Faction::Vaqueros => 3,
-            Faction::Civilians => 4,
-            Faction::Indians => 5,
-            Faction::Sheriff => 6,
-        }
-    }
-
     /// Returns `true` if this faction considers `other` an ally.
-    /// Allied factions won't attack each other.
+    /// All factions are mutually hostile — no alliances of any kind.
+    /// Only members of the same faction are allied.
     pub fn is_allied(&self, other: &Faction) -> bool {
-        if self == other {
-            return true;
-        }
-        // Normalize the pair to avoid duplicating every bidirectional match.
-        let (a, b) = if self.disc() <= other.disc() { (self, other) } else { (other, self) };
-        matches!(
-            (a, b),
-            // Wildlife ↔ Indians
-            (Faction::Wildlife, Faction::Indians)
-            // Outlaws ↔ Vaqueros
-            | (Faction::Outlaws, Faction::Vaqueros)
-            // Lawmen ↔ Civilians
-            | (Faction::Lawmen, Faction::Civilians)
-            // Lawmen ↔ Sheriff
-            | (Faction::Lawmen, Faction::Sheriff)
-            // Civilians ↔ Sheriff
-            | (Faction::Civilians, Faction::Sheriff)
-        )
+        self == other
     }
 }
 

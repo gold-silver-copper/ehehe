@@ -397,32 +397,9 @@ fn has_friendly_in_path(
 }
 
 /// Returns `true` if two factions are hostile to each other.
-/// - Outlaws and Lawmen fight each other.
-/// - Wildlife attacks everyone.
-/// - Vaqueros fight Outlaws and Wildlife.
+/// All factions are mutually hostile — no alliances of any kind.
 pub fn factions_are_hostile(a: Faction, b: Faction) -> bool {
-    if a == b {
-        return false;
-    }
-    matches!(
-        (a, b),
-        // Outlaws vs law enforcement
-        (Faction::Outlaws, Faction::Lawmen)
-        | (Faction::Lawmen, Faction::Outlaws)
-        | (Faction::Outlaws, Faction::Sheriff)
-        | (Faction::Sheriff, Faction::Outlaws)
-        // Wildlife attacks everyone
-        | (Faction::Wildlife, _)
-        | (_, Faction::Wildlife)
-        // Vaqueros vs Outlaws
-        | (Faction::Vaqueros, Faction::Outlaws)
-        | (Faction::Outlaws, Faction::Vaqueros)
-        // Indians vs law enforcement
-        | (Faction::Indians, Faction::Lawmen)
-        | (Faction::Lawmen, Faction::Indians)
-        | (Faction::Indians, Faction::Sheriff)
-        | (Faction::Sheriff, Faction::Indians)
-    )
+    a != b
 }
 
 /// Dodge probability: chance per turn that an NPC sidesteps nearby explosions.
@@ -614,6 +591,19 @@ pub fn ai_system(
     } else {
         None
     };
+
+    // When the player is dead, clear all NPC memory so they stop
+    // pathfinding toward the player's last known position.
+    if !player_alive {
+        for (_, _, mut ai_state, _, _, _, _, _, _, _, _, _, mut mem_opt, _) in &mut ai_query {
+            if let Some(ref mut mem) = mem_opt {
+                mem.last_known_pos = None;
+            }
+            if matches!(*ai_state, AiState::Chasing) {
+                *ai_state = AiState::Patrolling;
+            }
+        }
+    }
 
     let sand_cloud_tiles: HashSet<GridVec> = spell_particles.particles.iter()
         .filter(|(_, life, delay, _, _, _)| *delay == 0 && *life > 0)
