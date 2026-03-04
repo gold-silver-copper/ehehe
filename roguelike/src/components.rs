@@ -697,6 +697,10 @@ pub struct Hidden {
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct HidingSpot;
 
+/// Marker component: tags an NPC as a bartender who can sell saloon items.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Bartender;
+
 // ─── Saloon Economy ─────────────────────────────────────────────
 
 /// Drunk status as a timed debuff. Reduces accuracy and causes stagger.

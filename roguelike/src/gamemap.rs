@@ -1362,8 +1362,11 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
 
     // ── Place outhouse behind the building (if space allows) ────
     // Deterministically decide whether this building gets an outhouse.
-    let outhouse_noise = value_noise(b.x + 3, b.y + 7, seed.wrapping_add(88888));
-    if outhouse_noise < 0.55 {
+    // ~55% of buildings get one (noise threshold 0.55).
+    const OUTHOUSE_SEED_SALT: NoiseSeed = 88888;
+    const OUTHOUSE_SPAWN_THRESHOLD: f64 = 0.55;
+    let outhouse_noise = value_noise(b.x + 3, b.y + 7, seed.wrapping_add(OUTHOUSE_SEED_SALT));
+    if outhouse_noise < OUTHOUSE_SPAWN_THRESHOLD {
         // Try placing 1 tile behind the building (above the top wall)
         let ox = b.x + b.w / 2;
         let oy = b.y + b.h; // below the building

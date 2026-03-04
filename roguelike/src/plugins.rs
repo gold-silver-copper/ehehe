@@ -19,6 +19,9 @@ use crate::resources::{
 };
 use crate::systems::{ai, brawl, camera, combat, hiding, input, interaction, inventory, movement, projectile, render, spawn, spatial_index, spell, turn, visibility, wanted};
 use crate::systems::spawn::MONSTER_TEMPLATES;
+
+/// Index of the Civilian template in MONSTER_TEMPLATES (tier 6).
+const CIVILIAN_TEMPLATE_IDX: usize = 6;
 use crate::typedefs::{RatColor, SPAWN_POINT, SPAWN_X, SPAWN_Y};
 
 // ─────────────────────────── System Sets ───────────────────────────
@@ -506,11 +509,12 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
                 let on_wood = map.0.get_voxel_at(&pos).is_some_and(|v|
                     matches!(v.floor, Some(crate::typeenums::Floor::WoodPlanks)));
                 if !on_wood { continue; }
-                let template = &MONSTER_TEMPLATES[6]; // Civilian template
+                let template = &MONSTER_TEMPLATES[CIVILIAN_TEMPLATE_IDX];
                 let ent = spawn::spawn_monster(commands, template, pos.x, pos.y, 0, 0);
                 commands.entity(ent).insert(crate::components::Name("Barman Jack".into()));
                 commands.entity(ent).insert(crate::components::NpcMood::Calm);
                 commands.entity(ent).insert(crate::components::Hostility::default());
+                commands.entity(ent).insert(crate::components::Bartender);
                 break;
             }
             break;

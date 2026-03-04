@@ -15,6 +15,10 @@ const WOUND_DAMAGE_PER_TICK: i32 = 1;
 /// Number of steps between wound damage ticks.
 const WOUND_DAMAGE_INTERVAL: u32 = 5;
 
+/// Drunk stagger chance denominator: 1 in N chance to stagger each move.
+/// With N=3, drunk entities stagger ~33% of the time.
+const STAGGER_CHANCE_DENOMINATOR: usize = 3;
+
 /// Processes `MoveIntent` events: checks the target tile on the `GameMap` for
 /// walkability *and* the `SpatialIndex` for entities that block movement.
 ///
@@ -52,10 +56,11 @@ pub fn movement_system(
 
         let mut target = pos.as_grid_vec() + GridVec::new(intent.dx, intent.dy);
 
-        // Drunk stagger: 33% chance to move in a random adjacent direction instead
+        // Drunk stagger: 1-in-STAGGER_CHANCE_DENOMINATOR chance to deviate.
+        // When roll is 0 (out of 0..N), pick a random orthogonal direction.
         if drunk_query.contains(intent.entity) {
             let stagger_key = intent.entity.to_bits() ^ turn_counter.0 as u64;
-            let stagger_roll = dynamic_rng.random_index(seed.0, stagger_key, 3);
+            let stagger_roll = dynamic_rng.random_index(seed.0, stagger_key, STAGGER_CHANCE_DENOMINATOR);
             if stagger_roll == 0 {
                 // Pick a random orthogonal deviation
                 let deviation_roll = dynamic_rng.random_index(seed.0, stagger_key ^ 0xABCD, 4);

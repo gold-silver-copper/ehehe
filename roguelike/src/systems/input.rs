@@ -2,7 +2,7 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_ratatui::event::KeyMessage;
 use ratatui::crossterm::event::KeyCode;
 
-use crate::components::{Health, Hidden, Hostile, Inventory, ItemKind, SPELL_STAMINA_COST, Stamina, Player, Position, Viewshed};
+use crate::components::{Bartender, Health, Hidden, Hostile, Inventory, ItemKind, SPELL_STAMINA_COST, Stamina, Player, Position, Viewshed};
 use crate::events::{AttackIntent, HideIntent, InteractionIntent, MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
 use crate::grid_vec::GridVec;
 use crate::resources::{CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameMapResource, GameState, Gold, InputMode, InputState, MapSeed, RestartRequested, SALOON_MENU, SaloonEffect, SpectatingAfterDeath, TurnState};
@@ -96,7 +96,7 @@ pub fn input_system(
     player_query: Query<(Entity, &Position, Option<&Stamina>, Option<&Inventory>, Option<&Hidden>), With<Player>>,
     mut player_viewshed: Query<&mut Viewshed, With<Player>>,
     item_kind_query: Query<&ItemKind>,
-    (hostiles_query, health_query, npc_name_query): (Query<&Position, With<Hostile>>, Query<Entity, With<Health>>, Query<(Entity, Option<&crate::components::Name>), Without<Player>>),
+    (hostiles_query, health_query, npc_name_query): (Query<&Position, With<Hostile>>, Query<Entity, With<Health>>, Query<(Entity, Option<&crate::components::Name>, Option<&Bartender>), Without<Player>>),
     game_state: Res<State<GameState>>,
     mut next_game_state: ResMut<NextState<GameState>>,
     turn_state: Option<Res<State<TurnState>>>,
@@ -418,14 +418,14 @@ pub fn input_system(
                     if found_npc.is_some() { break; }
                 }
                 if let Some(npc_entity) = found_npc {
-                    // Check if we're in a saloon (on wood planks, near barrels = bar)
-                    let on_saloon_floor = game_map.0.get_voxel_at(&player_gv)
-                        .is_some_and(|v| matches!(v.floor, Some(crate::typeenums::Floor::WoodPlanks)));
+                    // Check if this NPC is a bartender
+                    let is_bartender = npc_name_query.get(npc_entity).ok()
+                        .map_or(false, |(_, _, bart)| bart.is_some());
                     let npc_name = npc_name_query.get(npc_entity).ok()
-                        .and_then(|(_, n)| n.map(|n| n.0.clone()))
+                        .and_then(|(_, n, _)| n.map(|n| n.0.clone()))
                         .unwrap_or_else(|| "stranger".into());
 
-                    if on_saloon_floor && npc_name.contains("Barman") {
+                    if is_bartender {
                         // Open saloon buy menu
                         input_state.mode = InputMode::SaloonMenu;
                         combat_log.push(format!("The barkeep eyes you. \"What'll it be?\""));
