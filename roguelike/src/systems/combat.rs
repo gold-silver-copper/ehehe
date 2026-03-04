@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::{Caliber, CollectibleKind, CombatStats, Faction, Health, Hostile, Inventory, Item, ItemKind, LastDamageSource, LootTable, Name, Player, Position, Renderable, display_name};
+use crate::components::{Caliber, CollectibleKind, CombatStats, Dead, Faction, Health, Hostile, Inventory, Item, ItemKind, LastDamageSource, LootTable, Name, Player, Position, Renderable, display_name};
 use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, RangedAttackIntent};
 use crate::noise::value_noise;
 use crate::resources::{CombatLog, DynamicRng, GameMapResource, GameState, KillCount, MapSeed, SoundEvents, TurnCounter};
@@ -174,6 +174,7 @@ pub fn death_system(
         if is_player.is_some() {
             combat_log.push("You have fallen... Press T to continue watching, Q to quit, or R to restart.".into());
             next_game_state.set(GameState::Dead);
+            commands.entity(entity).insert(Dead);
             if let Some(p) = pos {
                 commands.spawn((
                     Position { x: p.x, y: p.y },

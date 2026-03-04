@@ -24,6 +24,10 @@ pub const ARROW_TILES_PER_TICK: usize = 3;
 /// Maximum range for thrown knives and tomahawks (in tiles).
 pub const THROWN_RANGE: i32 = 12;
 
+/// Delay in seconds between each visual tile step for projectile display.
+/// 100ms gives the player time to see each tile the projectile crosses.
+pub const TILE_STEP_DELAY: f32 = 0.10;
+
 /// Shrapnel self-damage multiplier (fraction of original damage dealt to the caster).
 /// Shrapnel that hits the player who threw the grenade deals reduced damage.
 const SELF_DAMAGE_DIVISOR: i32 = 2;
@@ -95,6 +99,9 @@ pub fn spawn_bullet(
             tail_pos: None,
             visual: ProjectileVisual::BulletTrail,
             is_bullet: true,
+            display_index: 1,
+            tile_timer: 0.0,
+            pending_despawn: false,
         },
     ));
 }
@@ -130,6 +137,9 @@ pub fn spawn_arrow(
             tail_pos: None,
             visual: ProjectileVisual::BulletTrail,
             is_bullet: false,
+            display_index: 1,
+            tile_timer: 0.0,
+            pending_despawn: false,
         },
     ));
 }
@@ -174,6 +184,9 @@ pub fn spawn_shrapnel(
                     // per the animation spec — same style as bullets.
                     visual: ProjectileVisual::BulletTrail,
                     is_bullet: false,
+                    display_index: 1,
+                    tile_timer: 0.0,
+                    pending_despawn: false,
                 },
             ));
         }
@@ -214,6 +227,9 @@ pub fn spawn_thrown_projectile(
             tail_pos: None,
             visual: ProjectileVisual::SpinningBlade,
             is_bullet: false,
+            display_index: 1,
+            tile_timer: 0.0,
+            pending_despawn: false,
         },
         ThrownItemProjectile { item_entity },
     ));
@@ -221,8 +237,10 @@ pub fn spawn_thrown_projectile(
 
 /// Advances all projectile entities along their paths each tick.
 /// When a projectile reaches a tile with a hostile entity, it applies damage.
-/// Projectiles are despawned when they reach the end of their path, hit a wall,
-/// or run out of penetration power.
+/// Game logic (damage, collision) happens instantly; the visual display
+/// trails behind via `projectile_display_system`.
+/// Sets `pending_despawn` when the projectile finishes; actual despawn
+/// happens in `projectile_display_system` after the visual catches up.
 pub fn projectile_system(
     mut commands: Commands,
     mut projectiles: Query<(Entity, &mut Position, &mut Projectile, &mut Renderable, Option<&ThrownItemProjectile>), Without<crate::components::ThrownExplosive>>,
@@ -256,7 +274,11 @@ pub fn projectile_system(
     // Player position for NPC bullet hits and shrapnel self-damage.
     let player_info = player_query.single().ok();
 
-    for (proj_entity, mut proj_pos, mut proj, mut renderable, thrown_item) in &mut projectiles {
+    for (_proj_entity, _proj_pos, mut proj, _renderable, thrown_item) in &mut projectiles {
+        // Skip already-resolved projectiles waiting for display to catch up.
+        if proj.pending_despawn {
+            continue;
+        }
         let mut despawn = false;
         let steps = proj.tiles_per_tick;
 
@@ -273,8 +295,6 @@ pub fn projectile_system(
         for _ in 0..steps {
             // Check current tile for damage before advancing.
             let tile = proj.path[proj.path_index];
-            proj_pos.x = tile.x;
-            proj_pos.y = tile.y;
 
             // Stop if hitting an impassable wall.
             if !game_map.0.is_passable(&tile) {
@@ -415,11 +435,6 @@ pub fn projectile_system(
                     break;
                 }
 
-            // Save previous position as tail before advancing.
-            if proj.path_index > 0 {
-                proj.tail_pos = Some(proj.path[proj.path_index.saturating_sub(1)]);
-            }
-
             // Advance to next tile.
             proj.path_index += 1;
             if proj.path_index >= proj.path.len() {
@@ -428,11 +443,60 @@ pub fn projectile_system(
             }
         }
 
-        // Visual updates based on projectile type.
+        if despawn {
+            proj.pending_despawn = true;
+            // If this projectile carries a thrown item, place it at the
+            // landing position so the player can recover it.
+            if let Some(thrown) = thrown_item {
+                let tile = proj.path[proj.path_index.min(proj.path.len() - 1)];
+                commands.entity(thrown.item_entity).insert((
+                    Position { x: tile.x, y: tile.y },
+                    Thrown,
+                ));
+            }
+        }
+    }
+}
+
+/// Visual display system: advances the projectile's visible position one tile
+/// every `TILE_STEP_DELAY` seconds toward the logical `path_index`.
+/// Despawns projectiles once the visual catches up to a `pending_despawn` projectile.
+/// Runs every frame (including AwaitingInput) so the player sees smooth travel.
+pub fn projectile_display_system(
+    mut commands: Commands,
+    mut projectiles: Query<(Entity, &mut Position, &mut Projectile, &mut Renderable)>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+
+    for (proj_entity, mut proj_pos, mut proj, mut renderable) in &mut projectiles {
+        // Accumulate real time.
+        proj.tile_timer += dt;
+
+        // Advance display one tile per TILE_STEP_DELAY.
+        while proj.tile_timer >= TILE_STEP_DELAY && proj.display_index < proj.path_index {
+            proj.tile_timer -= TILE_STEP_DELAY;
+
+            // Save previous display position as tail.
+            if proj.display_index < proj.path.len() {
+                proj.tail_pos = Some(proj.path[proj.display_index]);
+            }
+
+            proj.display_index += 1;
+        }
+
+        // Clamp display_index to valid range.
+        let di = proj.display_index.min(proj.path.len() - 1);
+
+        // Update entity Position to the current display tile.
+        let display_tile = proj.path[di];
+        proj_pos.x = display_tile.x;
+        proj_pos.y = display_tile.y;
+
+        // Visual updates based on projectile type (keyed to display_index).
         match proj.visual {
             ProjectileVisual::BulletTrail => {
-                // Fade the renderable as projectile nears end of path.
-                let remaining = proj.path.len().saturating_sub(proj.path_index);
+                let remaining = proj.path.len().saturating_sub(di);
                 if remaining <= 2 {
                     renderable.symbol = "·".into();
                     renderable.fg = RatColor::Rgb(180, 120, 0);
@@ -442,25 +506,14 @@ pub fn projectile_system(
                 }
             }
             ProjectileVisual::SpinningBlade => {
-                // Cycle through spinning slash/dash frames.
                 const SPIN_FRAMES: [&str; 4] = ["/", "—", "\\", "|"];
-                renderable.symbol = SPIN_FRAMES[proj.path_index % SPIN_FRAMES.len()].into();
+                renderable.symbol = SPIN_FRAMES[di % SPIN_FRAMES.len()].into();
             }
-            ProjectileVisual::Asterisk => {
-                // Asterisk stays constant.
-            }
+            ProjectileVisual::Asterisk => {}
         }
 
-        if despawn {
-            // If this projectile carries a thrown item, place it at the
-            // landing position so the player can recover it.
-            if let Some(thrown) = thrown_item {
-                let landing = GridVec::new(proj_pos.x, proj_pos.y);
-                commands.entity(thrown.item_entity).insert((
-                    Position { x: landing.x, y: landing.y },
-                    Thrown,
-                ));
-            }
+        // Despawn once display catches up and the projectile is done.
+        if proj.pending_despawn && proj.display_index >= proj.path_index {
             commands.entity(proj_entity).despawn();
         }
     }

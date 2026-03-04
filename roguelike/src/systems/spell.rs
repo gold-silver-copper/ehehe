@@ -234,6 +234,9 @@ fn spawn_explosive_projectile(
             tail_pos: None,
             visual: ProjectileVisual::Asterisk,
             is_bullet: false,
+            display_index: start_index,
+            tile_timer: 0.0,
+            pending_despawn: false,
         },
         explosive,
     ));
@@ -256,6 +259,9 @@ pub fn explosive_projectile_system(
 ) {
 
     for (proj_entity, mut proj_pos, mut proj, explosive) in &mut explosives {
+        if proj.pending_despawn {
+            continue;
+        }
         let steps = proj.tiles_per_tick;
         let mut detonate_pos: Option<GridVec> = None;
 

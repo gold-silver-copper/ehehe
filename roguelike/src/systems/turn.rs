@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::{Health, Stamina, Player, Position};
+use crate::components::{Dead, Health, Stamina, Player, Position};
 use crate::grid_vec::GridVec;
 use crate::resources::{CombatLog, DynamicRng, ExtraWorldTicks, GameMapResource, MapSeed, SoundEvents, SpectatingAfterDeath, TurnCounter, TurnState};
 use crate::typeenums::Floor;
@@ -38,7 +38,7 @@ pub fn end_player_turn(mut next_state: ResMut<NextState<TurnState>>) {
 pub fn end_world_turn(
     mut next_state: ResMut<NextState<TurnState>>,
     mut turn_counter: ResMut<TurnCounter>,
-    mut player_query: Query<(&mut Stamina, &mut Health), With<Player>>,
+    mut player_query: Query<(&mut Stamina, &mut Health), (With<Player>, Without<Dead>)>,
     mut extra_ticks: ResMut<ExtraWorldTicks>,
     mut sound_events: ResMut<SoundEvents>,
     spectating: Res<SpectatingAfterDeath>,

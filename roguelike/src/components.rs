@@ -38,6 +38,12 @@ impl From<Position> for GridVec {
 #[derive(Component, Debug)]
 pub struct Player;
 
+/// Marker component: tags an entity that has died.
+/// Dead entities are excluded from most gameplay systems (pickup, healing,
+/// combat actions, etc.) to prevent stale interactions.
+#[derive(Component, Debug)]
+pub struct Dead;
+
 /// Visual representation used when rendering an entity on the grid.
 #[derive(Component, Clone, Debug)]
 pub struct Renderable {
@@ -417,11 +423,15 @@ pub enum ProjectileVisual {
 /// and explosives all use this component with tunable speed and visual style.
 /// Each tick the projectile advances `tiles_per_tick` steps along its precomputed
 /// Bresenham path. When it reaches a hostile entity, it applies damage and despawns.
+///
+/// The visual position (`display_index`) trails behind the logical position
+/// (`path_index`), advancing one tile every 100ms so the player can see each
+/// tile the projectile crosses.
 #[derive(Component, Debug)]
 pub struct Projectile {
     /// Precomputed path tiles (Bresenham line from origin to endpoint).
     pub path: Vec<GridVec>,
-    /// Current index along the path (how far the projectile has traveled).
+    /// Current logical index along the path (game-logic: damage, collision).
     pub path_index: usize,
     /// Number of tiles the projectile advances per tick.
     pub tiles_per_tick: usize,
@@ -431,12 +441,20 @@ pub struct Projectile {
     pub penetration: i32,
     /// Entity that fired the projectile (to avoid self-damage for bullets).
     pub source: Entity,
-    /// Previous position for rendering a trailing tail.
+    /// Previous display position for rendering a trailing tail.
     pub tail_pos: Option<GridVec>,
     /// Visual style used by the renderer (dots, spinning slashes, asterisk).
     pub visual: ProjectileVisual,
     /// Whether this is a firearm bullet (uses hit-chance / headshot rolls).
     pub is_bullet: bool,
+    /// Current visual display index — trails behind `path_index` and advances
+    /// one tile every 100ms for perceptible projectile travel.
+    pub display_index: usize,
+    /// Accumulated real time (seconds) since the last visual tile step.
+    pub tile_timer: f32,
+    /// Whether the game logic has finished (hit something or end of path)
+    /// and the projectile is waiting for the visual display to catch up.
+    pub pending_despawn: bool,
 }
 
 /// A thrown explosive (dynamite or molotov) traveling through the air.
