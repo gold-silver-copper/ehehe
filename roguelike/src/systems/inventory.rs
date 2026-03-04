@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    CollectibleKind, Health, Inventory, Item, ItemKind, Name, Player, Position,
+    CollectibleKind, Dead, Health, Inventory, Item, ItemKind, Name, Player, Position,
     item_display_name,
 };
 use crate::events::{PickupItemIntent, ThrowItemIntent, UseItemIntent};
@@ -220,10 +220,10 @@ pub fn reload_system(
 /// over it. Runs after movement.
 pub fn auto_pickup_system(
     mut commands: Commands,
-    player_query: Query<&Position, With<Player>>,
+    player_query: Query<&Position, (With<Player>, Without<Dead>)>,
     items_query: Query<(Entity, &Position, Option<&Name>, Option<&CollectibleKind>), With<Item>>,
     spatial: Res<SpatialIndex>,
-    mut inventory_query: Query<&mut Inventory, With<Player>>,
+    mut inventory_query: Query<&mut Inventory, (With<Player>, Without<Dead>)>,
     mut combat_log: ResMut<CombatLog>,
     mut collectibles: ResMut<Collectibles>,
 ) {

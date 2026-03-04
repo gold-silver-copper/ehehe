@@ -2468,12 +2468,14 @@ fn projectile_despawns_on_wall_collision() {
         app.update();
     }
 
-    // Projectile should be despawned after hitting wall
-    let projectile_count = app.world_mut().query::<&Projectile>()
+    // Projectile should be pending despawn after hitting wall.
+    // (Actual despawn happens in the display system, which is not
+    // registered in this test app — we check pending_despawn instead.)
+    let pending = app.world_mut().query::<&Projectile>()
         .iter(app.world())
-        .count();
-    assert_eq!(projectile_count, 0,
-        "Projectile should despawn after hitting a wall");
+        .all(|p| p.pending_despawn);
+    assert!(pending,
+        "Projectile should be pending despawn after hitting a wall");
 }
 
 #[test]
