@@ -45,7 +45,6 @@ pub fn movement_system(
     mut healths: Query<&mut Health>,
     mut attack_intents: MessageWriter<AttackIntent>,
     mut movers: Query<(&mut Position, Option<&mut Viewshed>)>,
-    _combat_log: ResMut<CombatLog>,
     dead_query: Query<(), With<Dead>>,
 ) {
     for intent in intents.read() {

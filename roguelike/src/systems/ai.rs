@@ -422,17 +422,6 @@ const MEMORY_DURATION: u32 = 40;
 
 // ─────────────────────── AI Decision Helpers ───────────────────────
 
-/// Returns `true` if the NPC has any healing item (whiskey) in inventory.
-fn _has_healing_item(inventory: &Option<Mut<Inventory>>, item_kinds: &Query<&mut ItemKind>) -> bool {
-    inventory.as_ref().is_some_and(|inv| {
-        inv.items.iter().any(|&ent| {
-            item_kinds.get(ent).ok().is_some_and(|k|
-                matches!(*k, ItemKind::Whiskey { .. })
-            )
-        })
-    })
-}
-
 /// Returns `true` if the NPC has a loaded gun in inventory.
 fn has_loaded_gun(inventory: &Option<Mut<Inventory>>, item_kinds: &Query<&mut ItemKind>) -> bool {
     inventory.as_ref().is_some_and(|inv| {
@@ -473,7 +462,7 @@ fn has_unloaded_gun(inventory: &Option<Mut<Inventory>>, item_kinds: &Query<&mut 
 
 /// Returns `true` if the NPC should consider fleeing based on health.
 /// NPCs only flee when below 20 absolute HP.
-fn should_flee(health: &Option<Mut<Health>>, _personality: Option<&AiPersonality>, _inventory: &Option<Mut<Inventory>>, _item_kinds: &Query<&mut ItemKind>) -> bool {
+fn should_flee(health: &Option<Mut<Health>>) -> bool {
     let Some(hp) = health else { return false; };
     hp.current < FLEE_HP_ABSOLUTE
 }
@@ -829,7 +818,7 @@ pub fn ai_system(
         }
 
         // Check if NPC should flee
-        if should_flee(&health, personality, &inventory, &item_kinds) {
+        if should_flee(&health) {
             if !matches!(*ai, AiState::Fleeing) {
                 *ai = AiState::Fleeing;
             }
