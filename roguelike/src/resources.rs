@@ -111,6 +111,10 @@ pub struct InputState {
     pub water_bucket_pending: Option<(usize, i32)>,
     /// Entity the player is currently interacting with (NPC talk menu).
     pub interact_target: Option<Entity>,
+    /// Pending saloon heal from food purchase.
+    pub saloon_heal_pending: i32,
+    /// Whether the player just bought whiskey (apply DrunkStatus next frame).
+    pub saloon_drunk_pending: bool,
 }
 
 impl Default for InputState {
@@ -125,6 +129,8 @@ impl Default for InputState {
             ability_stamina_pending: 0,
             water_bucket_pending: None,
             interact_target: None,
+            saloon_heal_pending: 0,
+            saloon_drunk_pending: false,
         }
     }
 }

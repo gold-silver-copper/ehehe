@@ -178,6 +178,7 @@ impl Plugin for RoguelikePlugin {
                 Update,
                 (
                     interaction::interaction_system,
+                    interaction::saloon_effect_system,
                     hiding::hide_system,
                     hiding::hiding_detection_system,
                     wanted::crime_system,

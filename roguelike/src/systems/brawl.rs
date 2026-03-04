@@ -75,7 +75,8 @@ pub fn brawl_escalation_system(
 pub fn brawl_witness_system(
     mut commands: Commands,
     brawl_query: Query<(Entity, &Position, Option<&Faction>), With<InBrawl>>,
-    nearby_npc_query: Query<(Entity, &Position, Option<&Faction>), (Without<InBrawl>, Without<Player>)>,
+    nearby_npc_query: Query<(Entity, &Position, Option<&Faction>, Option<&Name>), (Without<InBrawl>, Without<Player>)>,
+    mut combat_log: ResMut<CombatLog>,
 ) {
     // Collect brawl positions and factions
     let brawl_sites: Vec<(GridVec, Option<Faction>)> = brawl_query
@@ -87,7 +88,7 @@ pub fn brawl_witness_system(
         return;
     }
 
-    for (ent, pos, faction) in &nearby_npc_query {
+    for (ent, pos, faction, name) in &nearby_npc_query {
         let npc_gv = pos.as_grid_vec();
 
         for (brawl_pos, brawl_faction) in &brawl_sites {
@@ -97,6 +98,11 @@ pub fn brawl_witness_system(
                     if nf == bf {
                         commands.entity(ent).insert(InBrawl);
                         commands.entity(ent).insert(Hostile);
+                        let npc_name = display_name(name);
+                        combat_log.push_at(
+                            format!("{npc_name} joins the brawl!"),
+                            npc_gv,
+                        );
                         break;
                     }
                 }

@@ -137,10 +137,15 @@ pub fn interaction_system(
 pub fn drunk_tick_system(
     mut commands: Commands,
     mut drunk_query: Query<(Entity, &mut DrunkStatus)>,
+    mut combat_log: ResMut<CombatLog>,
+    player_query: Query<(), With<Player>>,
 ) {
     for (entity, mut drunk) in &mut drunk_query {
         if !drunk.tick() {
             commands.entity(entity).remove::<DrunkStatus>();
+            if player_query.contains(entity) {
+                combat_log.push("You sober up. Your aim steadies.".into());
+            }
         }
     }
 }
@@ -163,6 +168,28 @@ pub fn mood_system(
         // Passive hostility decay each turn
         if !hostility.exceeds_threshold(mood.hostility_threshold()) {
             hostility.decay(1);
+        }
+    }
+}
+
+/// Applies pending saloon purchase effects (heal from food, drunk from whiskey).
+/// Runs each frame; checks InputState flags set by the saloon buy menu.
+pub fn saloon_effect_system(
+    mut commands: Commands,
+    mut input_state: ResMut<crate::resources::InputState>,
+    mut player_query: Query<(Entity, &mut crate::components::Health), With<Player>>,
+) {
+    if let Ok((player_entity, mut hp)) = player_query.single_mut() {
+        // Apply pending food heal
+        if input_state.saloon_heal_pending > 0 {
+            hp.heal(input_state.saloon_heal_pending);
+            input_state.saloon_heal_pending = 0;
+        }
+
+        // Apply pending drunk status
+        if input_state.saloon_drunk_pending {
+            commands.entity(player_entity).insert(DrunkStatus::new());
+            input_state.saloon_drunk_pending = false;
         }
     }
 }

@@ -185,9 +185,8 @@ pub fn input_system(
                         if gold.0 >= item.price {
                             gold.0 -= item.price;
                             combat_log.push(format!("You buy {} for ${} gold.", item.name, item.price));
-                            // Apply whiskey effect: add DrunkStatus to player
-                            // (handled via commands in a separate system; just log here)
                             combat_log.push("The whiskey burns going down. Your aim wavers.".into());
+                            input_state.saloon_drunk_pending = true;
                         } else {
                             combat_log.push("Not enough gold!".into());
                         }
@@ -202,7 +201,7 @@ pub fn input_system(
                             gold.0 -= item.price;
                             combat_log.push(format!("You buy {} for ${} gold.", item.name, item.price));
                             if let SaloonEffect::Food { heal } = item.effect {
-                                input_state.water_bucket_pending = None; // reuse field for heal
+                                input_state.saloon_heal_pending = heal;
                                 combat_log.push(format!("A hot meal restores {} HP.", heal));
                             }
                         } else {
