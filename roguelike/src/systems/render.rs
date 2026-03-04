@@ -7,7 +7,7 @@ use ratatui::style::Stylize;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
 
-use crate::components::{Faction, Health, Hostile, Inventory, ItemKind, Projectile, ProjectileVisual, Stamina, Name, Player, Position, Renderable, Viewshed, display_name, item_display_name};
+use crate::components::{AiLookDir, Faction, Health, Hostile, Inventory, ItemKind, Projectile, ProjectileVisual, Stamina, Name, Player, Position, Renderable, Viewshed, display_name, item_display_name};
 use crate::graphic_trait::GraphicElement;
 use crate::grid_vec::GridVec;
 use crate::resources::{
@@ -77,7 +77,7 @@ pub fn draw_system(
         With<Player>,
     >,
     item_query: Query<(Option<&Name>, Option<&ItemKind>), With<crate::components::Item>>,
-    hostile_viewsheds: Query<(&Viewshed, Option<&Faction>, &Position), With<Hostile>>,
+    hostile_viewsheds: Query<(&Viewshed, Option<&Faction>, &Position, Option<&AiLookDir>), With<Hostile>>,
     projectiles: Query<(&Position, &Renderable, &Projectile)>,
     state: Res<State<GameState>>,
     combat_log: Res<CombatLog>,
@@ -86,7 +86,7 @@ pub fn draw_system(
     spell_particles: Res<SpellParticles>,
     input_state: Res<InputState>,
     cursor: Res<CursorPosition>,
-    collectibles: Res<Collectibles>,
+    (collectibles, bullet_anims): (Res<Collectibles>, Res<crate::resources::BulletAnimations>),
 ) -> Result {
     context.draw(|frame| {
         let area = frame.area();
@@ -151,23 +151,44 @@ pub fn draw_system(
                 && (0..render_height as CoordinateUnit).contains(&screen.y)
         }
 
-        // Tint tiles visible to hostile entities with a red hue (enemy FOV cone).
-        // Only show FOV for NPCs that are visible to the player (within player's FOV).
-        // Animals (Wildlife) are excluded from FOV highlighting.
+        // Tint the leading arc of hostile NPC field-of-view with a red hue.
+        // Only the first few tiles in the NPC's facing direction are tinted,
+        // just enough to indicate facing direction without revealing the full FOV.
+        // Animals (Wildlife) and Civilians are excluded from FOV highlighting.
         {
+            /// Maximum Chebyshev distance from the NPC to tint (leading arc radius).
+            const FOV_TINT_ARC_RADIUS: i32 = 5;
+
             let mut enemy_visible: HashSet<MyPoint> = HashSet::new();
-            for (vs, faction, npc_pos) in &hostile_viewsheds {
+            for (vs, faction, npc_pos, ai_look) in &hostile_viewsheds {
                 if faction.is_some_and(|f| matches!(f, Faction::Wildlife | Faction::Civilians)) {
                     continue;
                 }
                 // Only tint FOV for NPCs that the player can currently see
+                let npc_gv = npc_pos.as_grid_vec();
                 let npc_in_player_view = visible_tiles
-                    .map(|vt| vt.contains(&npc_pos.as_grid_vec()))
+                    .map(|vt| vt.contains(&npc_gv))
                     .unwrap_or(false);
                 if !npc_in_player_view {
                     continue;
                 }
-                enemy_visible.extend(&vs.visible_tiles);
+                // Only include tiles within the leading arc: close to the NPC
+                // and within its visible set.
+                for &tile in &vs.visible_tiles {
+                    let diff = tile - npc_gv;
+                    if diff.x.abs().max(diff.y.abs()) <= FOV_TINT_ARC_RADIUS {
+                        // If the NPC has a look direction, only tint tiles in
+                        // the forward half-plane (dot product > 0).
+                        if let Some(look) = ai_look {
+                            let dot = diff.x as i64 * look.0.x as i64
+                                    + diff.y as i64 * look.0.y as i64;
+                            if dot <= 0 && diff != GridVec::ZERO {
+                                continue;
+                            }
+                        }
+                        enemy_visible.insert(tile);
+                    }
+                }
             }
             for (screen_y, row) in render_packet.iter_mut().enumerate() {
                 for (screen_x, cell) in row.iter_mut().enumerate() {
@@ -343,6 +364,56 @@ pub fn draw_system(
                                     render_packet[tail_screen.y as usize][tail_screen.x as usize] =
                                         ("·".into(), tail_fg, tail_bg);
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Render in-progress bullet travel animations (intra-tick).
+        // These show the bullet moving one tile at a time between game ticks.
+        for trail in &bullet_anims.trails {
+            if trail.positions.is_empty() {
+                continue;
+            }
+            let idx = trail.render_index.min(trail.positions.len() - 1);
+            let anim_pos = trail.positions[idx];
+            let screen = anim_pos - bottom_left;
+            if in_bounds(screen, render_width, render_height) {
+                let visible = visible_tiles
+                    .map(|vt| vt.contains(&anim_pos))
+                    .unwrap_or(true);
+                if visible {
+                    let bg = render_packet[screen.y as usize][screen.x as usize].2;
+                    let blink_bright = (cursor.blink_frame() / 3).is_multiple_of(2);
+                    let fg = if blink_bright {
+                        trail.fg
+                    } else if let RatColor::Rgb(r, g, b) = trail.fg {
+                        RatColor::Rgb(r / 2, g / 2, b / 2)
+                    } else {
+                        trail.fg
+                    };
+                    render_packet[screen.y as usize][screen.x as usize] =
+                        (trail.symbol.clone(), fg, bg);
+
+                    // Render tail dot at previous position
+                    if trail.has_tail && idx > 0 {
+                        let tail_pos = trail.positions[idx - 1];
+                        let tail_screen = tail_pos - bottom_left;
+                        if in_bounds(tail_screen, render_width, render_height) {
+                            let tail_visible = visible_tiles
+                                .map(|vt| vt.contains(&tail_pos))
+                                .unwrap_or(true);
+                            if tail_visible {
+                                let tail_bg = render_packet[tail_screen.y as usize][tail_screen.x as usize].2;
+                                let tail_fg = if let RatColor::Rgb(r, g, b) = trail.fg {
+                                    RatColor::Rgb(r.saturating_sub(60), g.saturating_sub(60), b.saturating_sub(60))
+                                } else {
+                                    trail.fg
+                                };
+                                render_packet[tail_screen.y as usize][tail_screen.x as usize] =
+                                    ("·".into(), tail_fg, tail_bg);
                             }
                         }
                     }

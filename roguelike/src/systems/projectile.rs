@@ -4,13 +4,13 @@ use crate::components::{Health, Hostile, Name, Player, Position, Projectile, Pro
 use crate::events::DamageEvent;
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
-use crate::resources::{CombatLog, GameMapResource, SoundEvents};
+use crate::resources::{BulletAnimations, CombatLog, GameMapResource, SoundEvents};
 use crate::typedefs::RatColor;
 
 /// Bullet travel speed in tiles per game turn.
-/// Bullets are the fastest projectile but slow enough to be visible as
-/// they cross the map (3 tiles per tick ≈ clearly trackable at 20 Hz).
-pub const BULLET_TILES_PER_TICK: usize = 3;
+/// Bullets cross 12 tiles per tick; intra-tick animation renders each tile
+/// individually with a short delay so the player can watch the bullet travel.
+pub const BULLET_TILES_PER_TICK: usize = 12;
 
 /// Shrapnel travel speed in tiles per tick.
 pub const SHRAPNEL_TILES_PER_TICK: usize = 2;
@@ -234,6 +234,7 @@ pub fn projectile_system(
     mut combat_log: ResMut<CombatLog>,
     mut sound_events: ResMut<SoundEvents>,
     turn_state: Option<Res<State<crate::resources::TurnState>>>,
+    mut bullet_anims: ResMut<BulletAnimations>,
 ) {
     // Projectiles only advance during actual game turns (PlayerTurn / WorldTurn).
     // During AwaitingInput they freeze in mid-air with the blinking render.
@@ -259,6 +260,8 @@ pub fn projectile_system(
     for (proj_entity, mut proj_pos, mut proj, mut renderable, thrown_item) in &mut projectiles {
         let mut despawn = false;
         let steps = proj.tiles_per_tick;
+        let is_bullet_anim = proj.is_bullet && proj.visual == ProjectileVisual::BulletTrail;
+        let mut anim_positions: Vec<GridVec> = Vec::new();
 
         // Look up the name of the entity that fired this projectile.
         let source_name = display_name(source_names.get(proj.source).ok().flatten());
@@ -275,6 +278,11 @@ pub fn projectile_system(
             let tile = proj.path[proj.path_index];
             proj_pos.x = tile.x;
             proj_pos.y = tile.y;
+
+            // Record position for bullet travel animation.
+            if is_bullet_anim {
+                anim_positions.push(tile);
+            }
 
             // Stop if hitting an impassable wall.
             if !game_map.0.is_passable(&tile) {
@@ -451,6 +459,17 @@ pub fn projectile_system(
             }
         }
 
+        // Queue bullet travel animation trail for intra-tick rendering.
+        if is_bullet_anim && anim_positions.len() > 1 {
+            bullet_anims.trails.push(crate::resources::BulletTrail {
+                positions: anim_positions,
+                render_index: 0,
+                fg: renderable.fg,
+                symbol: renderable.symbol.clone(),
+                has_tail: true,
+            });
+        }
+
         if despawn {
             // If this projectile carries a thrown item, place it at the
             // landing position so the player can recover it.
@@ -463,5 +482,21 @@ pub fn projectile_system(
             }
             commands.entity(proj_entity).despawn();
         }
+    }
+}
+
+/// Advances bullet travel animations by one step every few render frames.
+/// Runs every frame (not gated by turn state) so animations play smoothly
+/// even while awaiting input.
+pub fn bullet_animation_tick_system(
+    mut bullet_anims: ResMut<BulletAnimations>,
+    cursor: Res<crate::resources::CursorPosition>,
+) {
+    if bullet_anims.trails.is_empty() {
+        return;
+    }
+    // Advance one step every BULLET_ANIM_FRAMES_PER_STEP render frames.
+    if cursor.blink_frame().wrapping_rem(crate::resources::BULLET_ANIM_FRAMES_PER_STEP) == 0 {
+        bullet_anims.advance();
     }
 }

@@ -364,20 +364,18 @@ fn detonate_dynamite(
 }
 
 /// Detonates a molotov at the given position: sets area on fire and generates smoke.
+/// Molotovs produce fire only — no shrapnel.
 fn detonate_molotov(
-    commands: &mut Commands,
+    _commands: &mut Commands,
     game_map: &mut ResMut<GameMapResource>,
     combat_log: &mut ResMut<CombatLog>,
     spell_particles: &mut ResMut<SpellParticles>,
     turn_counter: &Res<TurnCounter>,
     origin: GridVec,
-    damage: i32,
+    _damage: i32,
     radius: i32,
-    source: Entity,
+    _source: Entity,
 ) {
-    // Spawn fire shrapnel
-    crate::systems::projectile::spawn_shrapnel(commands, origin, radius.min(2), damage, source);
-
     spell_particles.add_aoe(origin, 6);
 
     let mut fire_count = 0;
