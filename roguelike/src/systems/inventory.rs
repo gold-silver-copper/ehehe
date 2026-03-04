@@ -1,12 +1,12 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    CollectibleKind, Health, Hostile, Inventory, Item, ItemKind, Name, Player, Position,
-    Thrown, display_name, item_display_name,
+    CollectibleKind, Health, Inventory, Item, ItemKind, Name, Player, Position,
+    item_display_name,
 };
 use crate::events::{PickupItemIntent, ThrowItemIntent, UseItemIntent};
 use crate::grid_vec::GridVec;
-use crate::resources::{Collectibles, CombatLog, GameMapResource, InputState, SpellParticles, SpatialIndex};
+use crate::resources::{Collectibles, CombatLog, InputState, SpatialIndex};
 
 /// Maximum inventory capacity (unified for players and NPCs).
 pub const MAX_INVENTORY_SLOTS: usize = 9;
@@ -259,17 +259,14 @@ pub fn auto_pickup_system(
 }
 
 /// Processes throw-item intents: removes a knife/tomahawk from inventory and
-/// traces a Bresenham line toward the target. Damages the first hostile hit,
-/// then places the item at the landing position with a Thrown marker.
+/// spawns a projectile that travels toward the target using the unified
+/// animation system. Damage is applied when the projectile hits a hostile,
+/// and the item is placed at the landing position with a Thrown marker.
 pub fn throw_system(
     mut intents: MessageReader<ThrowItemIntent>,
     mut commands: Commands,
-    mut damage_events: MessageWriter<crate::events::DamageEvent>,
     mut inventory_query: Query<(&mut Inventory, &Position), With<Player>>,
-    targets: Query<(Entity, &Position, Option<&Name>), With<Hostile>>,
     mut combat_log: ResMut<CombatLog>,
-    mut spell_particles: ResMut<SpellParticles>,
-    game_map: Res<GameMapResource>,
     name_query: Query<Option<&Name>>,
 ) {
     for intent in intents.read() {
@@ -290,53 +287,16 @@ pub fn throw_system(
 
         let origin = player_pos.as_grid_vec();
         let endpoint = origin + GridVec::new(intent.dx * intent.range, intent.dy * intent.range);
-        let path = origin.bresenham_line(endpoint);
 
-        // Build hostile lookup
-        let mut target_by_pos: std::collections::HashMap<GridVec, (Entity, String)> =
-            std::collections::HashMap::new();
-        for (target_entity, target_pos, target_name) in &targets {
-            let t_name = display_name(target_name).to_string();
-            target_by_pos.insert(target_pos.as_grid_vec(), (target_entity, t_name));
-        }
+        combat_log.push(format!("Threw {item_name}!"));
 
-        let mut landing = origin;
-        let mut hit = false;
-
-        for (step_idx, &tile) in path.iter().enumerate().skip(1) {
-            spell_particles.particles.push((tile, 3, (step_idx as u32).saturating_sub(1), false, 0, 0));
-
-            if !game_map.0.is_passable(&tile) {
-                break;
-            }
-
-            landing = tile;
-
-            if let Some((target_entity, t_name)) = target_by_pos.get(&tile) {
-                let dmg = intent.damage.max(0);
-                if dmg > 0 {
-                    damage_events.write(crate::events::DamageEvent {
-                        target: *target_entity,
-                        amount: dmg,
-                        source: Some(intent.thrower),
-                    });
-                    combat_log.push(format!("Threw {item_name} at {t_name} for {dmg} damage!"));
-                } else {
-                    combat_log.push(format!("Threw {item_name} at {t_name} but dealt no damage"));
-                }
-                hit = true;
-                break;
-            }
-        }
-
-        if !hit {
-            combat_log.push(format!("Threw {item_name} but hit nothing"));
-        }
-
-        // Place the item at the landing position with Thrown marker
-        commands.entity(intent.item_entity).insert((
-            Position { x: landing.x, y: landing.y },
-            Thrown,
-        ));
+        crate::systems::projectile::spawn_thrown_projectile(
+            &mut commands,
+            origin,
+            endpoint,
+            intent.damage,
+            intent.thrower,
+            intent.item_entity,
+        );
     }
 }

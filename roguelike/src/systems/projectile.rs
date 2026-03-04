@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::{Health, Hostile, Name, Player, Position, Projectile, Renderable, display_name};
+use crate::components::{Health, Hostile, Name, Player, Position, Projectile, ProjectileVisual, Renderable, Thrown, ThrownItemProjectile, display_name};
 use crate::events::DamageEvent;
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
@@ -8,19 +8,18 @@ use crate::resources::{CombatLog, GameMapResource, SoundEvents};
 use crate::typedefs::RatColor;
 
 /// Bullet travel speed in tiles per game turn.
-/// Each time the player or world takes a turn the bullet advances this many
-/// tiles along its Bresenham path, then freezes in mid-air (with a blinking
-/// render) until the next turn.
-pub const BULLET_TILES_PER_TICK: usize = 12;
+/// Bullets are the fastest projectile but slow enough to be visible as
+/// they cross the map (3 tiles per tick ≈ clearly trackable at 20 Hz).
+pub const BULLET_TILES_PER_TICK: usize = 3;
 
 /// Shrapnel travel speed in tiles per tick.
-pub const SHRAPNEL_TILES_PER_TICK: usize = 1;
+pub const SHRAPNEL_TILES_PER_TICK: usize = 2;
 
 /// Knife/Tomahawk travel speed in tiles per tick.
 pub const THROWN_TILES_PER_TICK: usize = 2;
 
-/// Arrow travel speed in tiles per tick (faster than thrown, slower than bullets).
-pub const ARROW_TILES_PER_TICK: usize = 4;
+/// Arrow travel speed in tiles per tick (same as bullets for bows).
+pub const ARROW_TILES_PER_TICK: usize = 3;
 
 /// Maximum range for thrown knives and tomahawks (in tiles).
 pub const THROWN_RANGE: i32 = 12;
@@ -94,6 +93,8 @@ pub fn spawn_bullet(
             penetration: damage,
             source,
             tail_pos: None,
+            visual: ProjectileVisual::BulletTrail,
+            is_bullet: true,
         },
     ));
 }
@@ -127,6 +128,8 @@ pub fn spawn_arrow(
             penetration: damage,
             source,
             tail_pos: None,
+            visual: ProjectileVisual::BulletTrail,
+            is_bullet: false,
         },
     ));
 }
@@ -167,10 +170,53 @@ pub fn spawn_shrapnel(
                     penetration: damage,
                     source,
                     tail_pos: None,
+                    // Shrapnel shares BulletTrail visual (center dots + tail)
+                    // per the animation spec — same style as bullets.
+                    visual: ProjectileVisual::BulletTrail,
+                    is_bullet: false,
                 },
             ));
         }
     }
+}
+
+/// Spawns a thrown-item projectile (knife or tomahawk) along a Bresenham line.
+/// The projectile travels at `THROWN_TILES_PER_TICK` and uses the spinning-blade
+/// visual. When it reaches a hostile or the end of its path, the item entity is
+/// placed at the landing position with a `Thrown` marker for recovery.
+pub fn spawn_thrown_projectile(
+    commands: &mut Commands,
+    origin: GridVec,
+    endpoint: GridVec,
+    damage: i32,
+    source: Entity,
+    item_entity: Entity,
+) {
+    let path = origin.bresenham_line(endpoint);
+    if path.len() <= 1 {
+        return;
+    }
+    let start_pos = path.get(1).copied().unwrap_or(origin);
+    commands.spawn((
+        Position { x: start_pos.x, y: start_pos.y },
+        Renderable {
+            symbol: "/".into(),
+            fg: RatColor::Rgb(200, 200, 200),
+            bg: RatColor::Black,
+        },
+        Projectile {
+            path,
+            path_index: 1,
+            tiles_per_tick: THROWN_TILES_PER_TICK,
+            damage,
+            penetration: damage,
+            source,
+            tail_pos: None,
+            visual: ProjectileVisual::SpinningBlade,
+            is_bullet: false,
+        },
+        ThrownItemProjectile { item_entity },
+    ));
 }
 
 /// Advances all projectile entities along their paths each tick.
@@ -179,7 +225,7 @@ pub fn spawn_shrapnel(
 /// or run out of penetration power.
 pub fn projectile_system(
     mut commands: Commands,
-    mut projectiles: Query<(Entity, &mut Position, &mut Projectile, &mut Renderable), Without<crate::components::ThrownExplosive>>,
+    mut projectiles: Query<(Entity, &mut Position, &mut Projectile, &mut Renderable, Option<&ThrownItemProjectile>), Without<crate::components::ThrownExplosive>>,
     mut damage_events: MessageWriter<DamageEvent>,
     targets: Query<(Entity, &Position, &Health, Option<&Name>), (With<Hostile>, Without<Projectile>)>,
     player_query: Query<(Entity, &Position, &Health, Option<&Name>), (With<Player>, Without<Projectile>)>,
@@ -210,12 +256,19 @@ pub fn projectile_system(
     // Player position for NPC bullet hits and shrapnel self-damage.
     let player_info = player_query.single().ok();
 
-    for (proj_entity, mut proj_pos, mut proj, mut renderable) in &mut projectiles {
+    for (proj_entity, mut proj_pos, mut proj, mut renderable, thrown_item) in &mut projectiles {
         let mut despawn = false;
         let steps = proj.tiles_per_tick;
 
         // Look up the name of the entity that fired this projectile.
         let source_name = display_name(source_names.get(proj.source).ok().flatten());
+
+        // Label for combat log messages based on projectile type.
+        let proj_label = match proj.visual {
+            ProjectileVisual::SpinningBlade => "thrown weapon",
+            ProjectileVisual::BulletTrail if proj.is_bullet => "bullet",
+            _ => "shrapnel",
+        };
 
         for _ in 0..steps {
             // Check current tile for damage before advancing.
@@ -239,8 +292,8 @@ pub fn projectile_system(
                         break;
                     }
 
-                    // Chance-to-hit for bullets (shrapnel always hits).
-                    let is_bullet = proj.tiles_per_tick == BULLET_TILES_PER_TICK;
+                    // Chance-to-hit for bullets (shrapnel/thrown always hits).
+                    let is_bullet = proj.is_bullet;
                     if is_bullet {
                         let aim_point = proj.path.last().copied().unwrap_or(tile);
                         match resolve_bullet_hit(tile, aim_point, proj.path_index, *t_max_hp, proj.penetration) {
@@ -278,7 +331,7 @@ pub fn projectile_system(
                         source: Some(proj.source),
                     });
                     combat_log.push_at(
-                        format!("{source_name}'s bullet hits {t_name} for {hit_damage} damage!"),
+                        format!("{source_name}'s {proj_label} hits {t_name} for {hit_damage} damage!"),
                         tile,
                     );
                     sound_events.add(tile);
@@ -298,8 +351,8 @@ pub fn projectile_system(
                 && tile == player_pos.as_grid_vec()
                 && proj.penetration > 0
             {
-                // Chance-to-hit for bullets (shrapnel always hits).
-                let is_bullet = proj.tiles_per_tick == BULLET_TILES_PER_TICK;
+                // Chance-to-hit for bullets (shrapnel/thrown always hits).
+                let is_bullet = proj.is_bullet;
                 if is_bullet {
                     let aim_point = proj.path.last().copied().unwrap_or(tile);
                     let p_name = display_name(*player_name);
@@ -332,7 +385,7 @@ pub fn projectile_system(
                         }
                     }
                 } else {
-                    // Non-bullet (shrapnel) always hits.
+                    // Non-bullet projectile always hits.
                     let hit_damage = proj.penetration;
                     damage_events.write(DamageEvent {
                         target: *player_entity,
@@ -340,7 +393,7 @@ pub fn projectile_system(
                         source: Some(proj.source),
                     });
                     let p_name = display_name(*player_name);
-                    combat_log.push(format!("Shrapnel hits {p_name} for {hit_damage} damage!"));
+                    combat_log.push(format!("{source_name}'s {proj_label} hits {p_name} for {hit_damage} damage!"));
                     sound_events.add(tile);
                     despawn = true;
                     break;
@@ -375,17 +428,39 @@ pub fn projectile_system(
             }
         }
 
-        // Fade the renderable as projectile nears end of path.
-        let remaining = proj.path.len().saturating_sub(proj.path_index);
-        if remaining <= 2 {
-            renderable.symbol = "·".into();
-            renderable.fg = RatColor::Rgb(180, 120, 0);
-        } else if remaining <= 4 {
-            renderable.symbol = "·".into();
-            renderable.fg = RatColor::Rgb(255, 180, 40);
+        // Visual updates based on projectile type.
+        match proj.visual {
+            ProjectileVisual::BulletTrail => {
+                // Fade the renderable as projectile nears end of path.
+                let remaining = proj.path.len().saturating_sub(proj.path_index);
+                if remaining <= 2 {
+                    renderable.symbol = "·".into();
+                    renderable.fg = RatColor::Rgb(180, 120, 0);
+                } else if remaining <= 4 {
+                    renderable.symbol = "·".into();
+                    renderable.fg = RatColor::Rgb(255, 180, 40);
+                }
+            }
+            ProjectileVisual::SpinningBlade => {
+                // Cycle through spinning slash/dash frames.
+                const SPIN_FRAMES: [&str; 4] = ["/", "—", "\\", "|"];
+                renderable.symbol = SPIN_FRAMES[proj.path_index % SPIN_FRAMES.len()].into();
+            }
+            ProjectileVisual::Asterisk => {
+                // Asterisk stays constant.
+            }
         }
 
         if despawn {
+            // If this projectile carries a thrown item, place it at the
+            // landing position so the player can recover it.
+            if let Some(thrown) = thrown_item {
+                let landing = GridVec::new(proj_pos.x, proj_pos.y);
+                commands.entity(thrown.item_entity).insert((
+                    Position { x: landing.x, y: landing.y },
+                    Thrown,
+                ));
+            }
             commands.entity(proj_entity).despawn();
         }
     }

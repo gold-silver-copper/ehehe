@@ -7,7 +7,7 @@ use ratatui::style::Stylize;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
 
-use crate::components::{Faction, Health, Hostile, Inventory, ItemKind, Projectile, Stamina, Name, Player, Position, Renderable, Viewshed, display_name, item_display_name};
+use crate::components::{Faction, Health, Hostile, Inventory, ItemKind, Projectile, ProjectileVisual, Stamina, Name, Player, Position, Renderable, Viewshed, display_name, item_display_name};
 use crate::graphic_trait::GraphicElement;
 use crate::grid_vec::GridVec;
 use crate::resources::{
@@ -321,26 +321,28 @@ pub fn draw_system(
                     render_packet[screen.y as usize][screen.x as usize] =
                         (proj_render.symbol.clone(), fg, bg);
 
-                    // Render tail
-                    if let Some(tail) = proj.tail_pos {
-                        let tail_screen = tail - bottom_left;
-                        if in_bounds(tail_screen, render_width, render_height) {
-                            let tail_visible = visible_tiles
-                                .map(|vt| vt.contains(&tail))
-                                .unwrap_or(true);
-                            if tail_visible {
-                                let tail_bg = render_packet[tail_screen.y as usize][tail_screen.x as usize].2;
-                                let tail_fg = if let RatColor::Rgb(r, g, b) = proj_render.fg {
-                                    if blink_bright {
-                                        RatColor::Rgb(r.saturating_sub(60), g.saturating_sub(60), b.saturating_sub(60))
+                    // Render tail (only for BulletTrail visuals)
+                    if proj.visual == ProjectileVisual::BulletTrail {
+                        if let Some(tail) = proj.tail_pos {
+                            let tail_screen = tail - bottom_left;
+                            if in_bounds(tail_screen, render_width, render_height) {
+                                let tail_visible = visible_tiles
+                                    .map(|vt| vt.contains(&tail))
+                                    .unwrap_or(true);
+                                if tail_visible {
+                                    let tail_bg = render_packet[tail_screen.y as usize][tail_screen.x as usize].2;
+                                    let tail_fg = if let RatColor::Rgb(r, g, b) = proj_render.fg {
+                                        if blink_bright {
+                                            RatColor::Rgb(r.saturating_sub(60), g.saturating_sub(60), b.saturating_sub(60))
+                                        } else {
+                                            RatColor::Rgb(r / 3, g / 3, b / 3)
+                                        }
                                     } else {
-                                        RatColor::Rgb(r / 3, g / 3, b / 3)
-                                    }
-                                } else {
-                                    proj_render.fg
-                                };
-                                render_packet[tail_screen.y as usize][tail_screen.x as usize] =
-                                    ("·".into(), tail_fg, tail_bg);
+                                        proj_render.fg
+                                    };
+                                    render_packet[tail_screen.y as usize][tail_screen.x as usize] =
+                                        ("·".into(), tail_fg, tail_bg);
+                                }
                             }
                         }
                     }

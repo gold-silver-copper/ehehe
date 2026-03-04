@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::{CombatStats, Inventory, Item, ItemKind, Player, Projectile, SPELL_STAMINA_COST, Stamina, ThrownExplosive, Name, Position, Renderable, display_name};
+use crate::components::{CombatStats, Inventory, Item, ItemKind, Player, Projectile, ProjectileVisual, SPELL_STAMINA_COST, Stamina, ThrownExplosive, Name, Position, Renderable, display_name};
 use crate::events::{MolotovCastIntent, SpellCastIntent};
 use crate::grid_vec::GridVec;
 use crate::resources::{CombatLog, GameMapResource, InputState, MapSeed, SpellParticles, TurnCounter};
@@ -232,6 +232,8 @@ fn spawn_explosive_projectile(
             penetration: 0,
             source,
             tail_pos: None,
+            visual: ProjectileVisual::Asterisk,
+            is_bullet: false,
         },
         explosive,
     ));
