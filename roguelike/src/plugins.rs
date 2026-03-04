@@ -8,16 +8,16 @@ use crate::components::{
     Health, Inventory, Item, ItemKind, Stamina, Name, Player, Position,
     Renderable, Speed, Viewshed, ACTION_COST,
 };
-use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
+use crate::events::{AiRangedAttackIntent, AttackIntent, BrawlEscalation, CrimeEvent, DamageEvent, HideIntent, InteractionIntent, MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
 use crate::gamemap::GameMap;
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
 use crate::resources::{
-    BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameMapResource, GameState, InputState,
+    BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameMapResource, GameState, Gold, InputState,
     KillCount, MapSeed, RestartRequested, SoundEvents, SpectatingAfterDeath, SpatialIndex, SpellParticles, TurnCounter,
     TurnState,
 };
-use crate::systems::{ai, camera, combat, input, inventory, movement, projectile, render, spawn, spatial_index, spell, turn, visibility};
+use crate::systems::{ai, brawl, camera, combat, hiding, input, interaction, inventory, movement, projectile, render, spawn, spatial_index, spell, turn, visibility, wanted};
 use crate::systems::spawn::MONSTER_TEMPLATES;
 use crate::typedefs::{RatColor, SPAWN_POINT, SPAWN_X, SPAWN_Y};
 
@@ -85,6 +85,10 @@ impl Plugin for RoguelikePlugin {
             .add_message::<AiRangedAttackIntent>()
             .add_message::<ThrowItemIntent>()
             .add_message::<MolotovCastIntent>()
+            .add_message::<InteractionIntent>()
+            .add_message::<CrimeEvent>()
+            .add_message::<HideIntent>()
+            .add_message::<BrawlEscalation>()
             // ── Resources ──
             .insert_resource(MapSeed(seed))
             .insert_resource(GameMapResource(game_map))
@@ -106,6 +110,7 @@ impl Plugin for RoguelikePlugin {
             .init_resource::<crate::resources::GodMode>()
             .init_resource::<crate::resources::StarLevel>()
             .init_resource::<crate::resources::PropHealth>()
+            .init_resource::<Gold>()
             // ── States ──
             .init_state::<GameState>()
             .add_sub_state::<TurnState>()
@@ -168,6 +173,20 @@ impl Plugin for RoguelikePlugin {
                     .in_set(RoguelikeSet::Action)
                     .run_if(in_state(GameState::Playing)),
             )
+            // ── Interaction & Hiding (gated on Playing state) ──
+            .add_systems(
+                Update,
+                (
+                    interaction::interaction_system,
+                    hiding::hide_system,
+                    hiding::hiding_detection_system,
+                    wanted::crime_system,
+                    brawl::brawl_escalation_system,
+                )
+                    .chain()
+                    .in_set(RoguelikeSet::Action)
+                    .run_if(in_state(GameState::Playing)),
+            )
             // ── Consequence (gated on Playing state) ──
             .add_systems(
                 Update,
@@ -196,6 +215,9 @@ impl Plugin for RoguelikePlugin {
                     combat::ai_ranged_attack_system,
                     turn::fire_system,
                     turn::star_level_system,
+                    interaction::drunk_tick_system,
+                    interaction::mood_system,
+                    brawl::brawl_witness_system,
                 )
                     .chain()
                     .after(RoguelikeSet::Consequence)
@@ -204,7 +226,7 @@ impl Plugin for RoguelikePlugin {
             .add_systems(
                 Update,
                 turn::end_world_turn
-                    .after(turn::star_level_system)
+                    .after(brawl::brawl_witness_system)
                     .run_if(in_state(TurnState::WorldTurn)),
             )
             // ── Render (always runs — shows PAUSED overlay when paused) ──

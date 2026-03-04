@@ -404,12 +404,27 @@ pub struct GodMode(pub bool);
 
 /// GTA-style star (wanted) level. Higher stars = more sheriffs spawn.
 /// Decays when the player is not in hostile or sheriff vision for a while.
+///
+/// Wanted levels:
+/// - 0: Peaceful — no law enforcement attention.
+/// - 1: Sheriff is alerted and investigates your last known position.
+/// - 2: Sheriff and a deputy pursue actively.
+/// - 3: A posse spawns at the town edge and joins the chase.
+/// - 4-5: Maximum heat — multiple posse members.
+///
+/// Crimes that raise wanted level: assault, murder, arson, theft,
+/// shooting within town limits.
+///
+/// Decay: level drops by 1 after `STAR_DECAY_TURNS` (30) unseen turns,
+/// where "unseen" means no law NPC has the player in their FOV.
 #[derive(Resource, Debug, Default)]
 pub struct StarLevel {
-    /// Current wanted level (0 = peaceful, 1+ = wanted).
+    /// Current wanted level (0 = peaceful, 1-5 = wanted).
     pub level: u32,
     /// Turns since last seen by a hostile or sheriff NPC.
     pub unseen_turns: u32,
+    /// Whether the player is currently hidden (affects decay rate).
+    pub player_hidden: bool,
 }
 
 /// Prop health map: tracks damage dealt to props.
@@ -691,6 +706,60 @@ impl BulletAnimations {
     }
 }
 
+// ─── Economy & Saloon ───────────────────────────────────────────
+
+/// Player's gold currency. Used for saloon purchases and trading.
+#[derive(Resource, Debug)]
+pub struct Gold(pub i32);
+
+impl Default for Gold {
+    fn default() -> Self {
+        Self(20) // Starting gold
+    }
+}
+
+/// Saloon menu item for the bartender's shop.
+#[derive(Clone, Debug)]
+pub struct SaloonMenuItem {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub price: i32,
+    pub effect: SaloonEffect,
+}
+
+/// Effects of saloon purchases.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SaloonEffect {
+    /// Whiskey: makes the player drunk, reduces accuracy.
+    Whiskey,
+    /// Food: restores health.
+    Food { heal: i32 },
+    /// Information: reveals a map location or NPC rumor.
+    Information,
+}
+
+/// The bartender's menu — fixed prices for the 1850s.
+pub const SALOON_MENU: &[SaloonMenuItem] = &[
+    SaloonMenuItem {
+        name: "Whiskey",
+        description: "Burns going down. Reduces accuracy for 30 turns.",
+        price: 2,
+        effect: SaloonEffect::Whiskey,
+    },
+    SaloonMenuItem {
+        name: "Stew & Bread",
+        description: "Hot meal. Restores 20 HP.",
+        price: 3,
+        effect: SaloonEffect::Food { heal: 20 },
+    },
+    SaloonMenuItem {
+        name: "Information",
+        description: "The barkeep shares a rumor or map location.",
+        price: 5,
+        effect: SaloonEffect::Information,
+    },
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -901,5 +970,35 @@ mod tests {
         }
         // Should be visible again (full cycle)
         assert!(cursor.blink_visible());
+    }
+
+    // ─── Gold & Economy tests ────────────────────────────────────
+
+    #[test]
+    fn gold_default_starting_amount() {
+        let gold = Gold::default();
+        assert_eq!(gold.0, 20);
+    }
+
+    #[test]
+    fn saloon_menu_has_items() {
+        assert!(!SALOON_MENU.is_empty());
+        // All items have positive prices
+        for item in SALOON_MENU {
+            assert!(item.price > 0, "Menu item '{}' should have positive price", item.name);
+        }
+    }
+
+    #[test]
+    fn saloon_menu_contains_whiskey() {
+        assert!(SALOON_MENU.iter().any(|item| item.effect == SaloonEffect::Whiskey));
+    }
+
+    #[test]
+    fn star_level_default_is_peaceful() {
+        let sl = StarLevel::default();
+        assert_eq!(sl.level, 0);
+        assert_eq!(sl.unseen_turns, 0);
+        assert!(!sl.player_hidden);
     }
 }
