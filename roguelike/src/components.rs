@@ -494,6 +494,8 @@ pub enum ItemKind {
     Bow { attack: i32, blunt_damage: i32 },
     /// A water bucket. Splashes water around the player, extinguishing fires.
     WaterBucket { uses: i32, radius: i32, blunt_damage: i32 },
+    /// A box of matches. Used to set fire to flammable objects at the cursor.
+    Matches { uses: i32, blunt_damage: i32 },
 }
 
 impl ItemKind {
@@ -508,6 +510,7 @@ impl ItemKind {
             ItemKind::Molotov { blunt_damage, .. } => *blunt_damage,
             ItemKind::Bow { blunt_damage, .. } => *blunt_damage,
             ItemKind::WaterBucket { blunt_damage, .. } => *blunt_damage,
+            ItemKind::Matches { blunt_damage, .. } => *blunt_damage,
         }
     }
 
@@ -522,6 +525,7 @@ impl ItemKind {
             ItemKind::Molotov { .. } => "Molotov".into(),
             ItemKind::Bow { .. } => "Bow".into(),
             ItemKind::WaterBucket { .. } => "Water Bucket".into(),
+            ItemKind::Matches { .. } => "Matches".into(),
         }
     }
 }

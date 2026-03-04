@@ -1817,6 +1817,7 @@ fn test_app_with_ai() -> App {
     app.add_message::<ThrowItemIntent>();
     app.add_message::<UseItemIntent>();
     app.add_message::<PickupItemIntent>();
+    app.add_message::<CrimeEvent>();
     app.init_resource::<SpatialIndex>();
     app.init_resource::<CombatLog>();
     app.init_resource::<KillCount>();

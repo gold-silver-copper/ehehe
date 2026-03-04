@@ -331,6 +331,18 @@ fn do_spawn_player(commands: &mut Commands, map: &GameMapResource) {
         ItemKind::WaterBucket { uses: 3, radius: 2, blunt_damage: 3 },
     )).id();
 
+    // Spawn starting matches
+    let matches = commands.spawn((
+        Item,
+        Name("Matches".into()),
+        Renderable {
+            symbol: "m".into(),
+            fg: RatColor::Rgb(255, 160, 60),
+            bg: RatColor::Black,
+        },
+        ItemKind::Matches { uses: 5, blunt_damage: 1 },
+    )).id();
+
     commands.spawn((
         Position {
             x: spawn_pos.x,
@@ -360,7 +372,7 @@ fn do_spawn_player(commands: &mut Commands, map: &GameMapResource) {
         Speed(ACTION_COST),
         Energy(0),
     )).insert((
-        Inventory { items: vec![colt_pocket, knife, whiskey, molotov, water_bucket] },
+        Inventory { items: vec![colt_pocket, knife, whiskey, molotov, water_bucket, matches] },
         Viewshed {
             range: 40,
             visible_tiles: HashSet::new(),
@@ -480,6 +492,30 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
         }
     }
 
+    // ── Bartender NPCs inside saloon buildings ─────────────────────
+    // Saloons are anchored to Outlaws; place a civilian "Barman" NPC inside.
+    for (anchor_pos, _faction, anchor_name) in &map.0.faction_anchors {
+        if anchor_name != "Cantina" { continue; }
+        // Find a spawnable tile inside the saloon (near the bar / back wall)
+        for dy in -3i32..=3 {
+            for dx in -3i32..=3 {
+                let pos = GridVec::new(anchor_pos.x + dx, anchor_pos.y + dy);
+                if !map.0.is_spawnable(&pos) { continue; }
+                // Place on wood planks (inside building)
+                let on_wood = map.0.get_voxel_at(&pos).is_some_and(|v|
+                    matches!(v.floor, Some(crate::typeenums::Floor::WoodPlanks)));
+                if !on_wood { continue; }
+                let template = &MONSTER_TEMPLATES[6]; // Civilian template
+                let ent = spawn::spawn_monster(commands, template, pos.x, pos.y, 0, 0);
+                commands.entity(ent).insert(crate::components::Name("Barman Jack".into()));
+                commands.entity(ent).insert(crate::components::NpcMood::Calm);
+                commands.entity(ent).insert(crate::components::Hostility::default());
+                break;
+            }
+            break;
+        }
+    }
+
     // ── Sheriffs near sheriff office buildings ──────────────────────
     for (anchor_pos, faction, _name) in &map.0.faction_anchors {
         let templates: &[usize] = match faction {
@@ -547,7 +583,7 @@ fn restart_system(
     mut cursor: ResMut<CursorPosition>,
     mut collectibles: ResMut<Collectibles>,
     (mut extra_ticks, mut blood_map, mut spectating, mut dynamic_rng, mut god_mode): (ResMut<ExtraWorldTicks>, ResMut<BloodMap>, ResMut<SpectatingAfterDeath>, ResMut<DynamicRng>, ResMut<crate::resources::GodMode>),
-    (mut star_level, mut prop_health): (ResMut<crate::resources::StarLevel>, ResMut<crate::resources::PropHealth>),
+    (mut star_level, mut prop_health, mut gold): (ResMut<crate::resources::StarLevel>, ResMut<crate::resources::PropHealth>, ResMut<crate::resources::Gold>),
 ) {
     if !restart.0 {
         return;
@@ -583,6 +619,7 @@ fn restart_system(
     dynamic_rng.reset();
     *star_level = crate::resources::StarLevel::default();
     prop_health.hp.clear();
+    *gold = crate::resources::Gold::default();
 
     next_game_state.set(GameState::Playing);
 

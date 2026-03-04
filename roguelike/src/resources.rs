@@ -109,6 +109,8 @@ pub struct InputState {
     pub ability_stamina_pending: i32,
     /// Pending water bucket splash: (inventory_index, radius).
     pub water_bucket_pending: Option<(usize, i32)>,
+    /// Entity the player is currently interacting with (NPC talk menu).
+    pub interact_target: Option<Entity>,
 }
 
 impl Default for InputState {
@@ -122,6 +124,7 @@ impl Default for InputState {
             dive_stamina_pending: 0,
             ability_stamina_pending: 0,
             water_bucket_pending: None,
+            interact_target: None,
         }
     }
 }
@@ -132,6 +135,10 @@ pub enum InputMode {
     Game,
     Inventory,
     EscMenu,
+    /// Saloon buy menu: player is browsing the bartender's wares.
+    SaloonMenu,
+    /// NPC interaction menu: player picks how to talk to an adjacent NPC.
+    InteractMenu,
 }
 
 /// Turn-phase sub-state that controls the flow within `GameState::Playing`.

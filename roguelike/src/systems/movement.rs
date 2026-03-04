@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 
-use crate::components::{BlocksMovement, Dead, Health, Player, Position, Stamina, Viewshed};
+use crate::components::{BlocksMovement, Dead, DrunkStatus, Health, Player, Position, Stamina, Viewshed};
 use crate::events::MoveIntent;
 use crate::grid_vec::GridVec;
-use crate::resources::{BloodMap, CombatLog, CursorPosition, GameMapResource, GameState, InputState, SpatialIndex, TurnCounter, TurnState};
+use crate::resources::{BloodMap, CombatLog, CursorPosition, DynamicRng, GameMapResource, GameState, InputState, MapSeed, SpatialIndex, TurnCounter, TurnState};
 use crate::typeenums::{Floor, Props};
 
 /// Health threshold below which entities leave blood trails when moving.
@@ -42,13 +42,28 @@ pub fn movement_system(
     mut healths: Query<&mut Health>,
     mut movers: Query<(&mut Position, Option<&mut Viewshed>)>,
     dead_query: Query<(), With<Dead>>,
+    drunk_query: Query<&DrunkStatus>,
+    (dynamic_rng, seed): (Res<DynamicRng>, Res<MapSeed>),
 ) {
     for intent in intents.read() {
         let Ok((mut pos, viewshed)) = movers.get_mut(intent.entity) else {
             continue;
         };
 
-        let target = pos.as_grid_vec() + GridVec::new(intent.dx, intent.dy);
+        let mut target = pos.as_grid_vec() + GridVec::new(intent.dx, intent.dy);
+
+        // Drunk stagger: 33% chance to move in a random adjacent direction instead
+        if drunk_query.contains(intent.entity) {
+            let stagger_key = intent.entity.to_bits() ^ turn_counter.0 as u64;
+            let stagger_roll = dynamic_rng.random_index(seed.0, stagger_key, 3);
+            if stagger_roll == 0 {
+                // Pick a random orthogonal deviation
+                let deviation_roll = dynamic_rng.random_index(seed.0, stagger_key ^ 0xABCD, 4);
+                let offsets = [(0, 1), (0, -1), (1, 0), (-1, 0)];
+                let (dx, dy) = offsets[deviation_roll];
+                target = pos.as_grid_vec() + GridVec::new(dx, dy);
+            }
+        }
 
         // 1. Check map tile walkability (no blocking props).
         let tile_passable = game_map.0.is_passable(&target);

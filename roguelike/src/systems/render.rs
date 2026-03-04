@@ -10,8 +10,8 @@ use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
 use crate::components::{AiLookDir, Faction, Health, Hostile, Inventory, ItemKind, Projectile, ProjectileVisual, Stamina, Name, Player, Position, Renderable, Viewshed, display_name, item_display_name};
 use crate::grid_vec::GridVec;
 use crate::resources::{
-    BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, GameMapResource, GameState, InputMode,
-    InputState, KillCount, SoundEvents, SpellParticles, TurnCounter, SOUND_RANGE,
+    BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, GameMapResource, GameState, Gold, InputMode,
+    InputState, KillCount, SALOON_MENU, SoundEvents, SpellParticles, TurnCounter, SOUND_RANGE,
 };
 use crate::systems::input::KEYBINDINGS;
 use crate::typedefs::{CoordinateUnit, MyPoint, RatColor};
@@ -88,7 +88,7 @@ pub fn draw_system(
     (turn_counter, kill_count, blood_map): (Res<TurnCounter>, Res<KillCount>, Res<BloodMap>),
     spell_particles: Res<SpellParticles>,
     input_state: Res<InputState>,
-    (cursor, collectibles, star_level): (Res<CursorPosition>, Res<Collectibles>, Res<crate::resources::StarLevel>),
+    (cursor, collectibles, star_level, gold): (Res<CursorPosition>, Res<Collectibles>, Res<crate::resources::StarLevel>, Res<Gold>),
 ) -> Result {
     context.draw(|frame| {
         let area = frame.area();
@@ -531,6 +531,7 @@ pub fn draw_system(
                                 ItemKind::Molotov { damage, radius, .. } => format!("{damage} dmg r{radius} 🔥"),
                                 ItemKind::Bow { .. } => "Bow".to_string(),
                                 ItemKind::WaterBucket { uses, radius, .. } => format!("{uses} uses r{radius} 💧"),
+                                ItemKind::Matches { uses, .. } => format!("{uses} uses 🔥"),
                             });
                         (name_str, desc)
                     })
@@ -614,6 +615,7 @@ pub fn draw_system(
             &kill_count,
             &collectibles,
             &star_level,
+            &gold,
             // cursor info
             &cursor_ground,
             &cursor_prop,
@@ -637,6 +639,16 @@ pub fn draw_system(
         // Show ESC menu overlay when in EscMenu mode (replaces old PAUSED overlay)
         if input_state.mode == InputMode::EscMenu {
             render_esc_menu_overlay(frame, game_area);
+        }
+
+        // Show saloon buy menu overlay
+        if input_state.mode == InputMode::SaloonMenu {
+            render_saloon_menu_overlay(frame, game_area, &gold);
+        }
+
+        // Show NPC interaction menu overlay
+        if input_state.mode == InputMode::InteractMenu {
+            render_interact_menu_overlay(frame, game_area);
         }
 
         // Show "VICTORY" overlay centered on game area when the gate is destroyed
@@ -703,6 +715,7 @@ fn render_bottom_panel(
     kill_count: &KillCount,
     collectibles: &Collectibles,
     star_level: &crate::resources::StarLevel,
+    gold: &Gold,
     // Cursor info
     cursor_ground: &str,
     cursor_prop: &str,
@@ -729,7 +742,7 @@ fn render_bottom_panel(
     let cursor_info_area = horiz_chunks[2];
 
     // ── Stats Column (left) ─────────────────────────────────────
-    render_stats_column(frame, stats_area, player_hp, player_stamina, collectibles, star_level);
+    render_stats_column(frame, stats_area, player_hp, player_stamina, collectibles, star_level, gold);
 
     // ── Central Log (middle) ────────────────────────────────────
     let log_height = log_area.height.saturating_sub(2) as usize;
@@ -764,6 +777,7 @@ fn render_stats_column(
     player_stamina: Option<&Stamina>,
     collectibles: &Collectibles,
     star_level: &crate::resources::StarLevel,
+    gold: &Gold,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -771,6 +785,7 @@ fn render_stats_column(
             Constraint::Length(1), // HP gauge (compact, no border)
             Constraint::Length(1), // Stamina gauge
             Constraint::Length(1), // Star level
+            Constraint::Length(1), // Gold
             Constraint::Length(1), // Collectibles row 1
             Constraint::Length(1), // Collectibles row 2
             Constraint::Length(1), // Collectibles row 3
@@ -818,6 +833,14 @@ fn render_stats_column(
         chunks[2],
     );
 
+    // Gold
+    let gold_text = format!("Gold: ${}", gold.0);
+    let gold_color = if gold.0 > 0 { ratatui::style::Color::Yellow } else { ratatui::style::Color::DarkGray };
+    frame.render_widget(
+        Paragraph::new(Line::from(gold_text).fg(gold_color)),
+        chunks[3],
+    );
+
     // Collectibles — 3 entries per row
     let row1 = format!(
         "Cap:{} Pdr:{} .31:{}",
@@ -831,9 +854,9 @@ fn render_stats_column(
         ".58:{} .577:{} .69:{}",
         collectibles.bullets_58, collectibles.bullets_577, collectibles.bullets_69,
     );
-    frame.render_widget(Paragraph::new(Line::from(row1).dark_gray()), chunks[3]);
-    frame.render_widget(Paragraph::new(Line::from(row2).dark_gray()), chunks[4]);
-    frame.render_widget(Paragraph::new(Line::from(row3).dark_gray()), chunks[5]);
+    frame.render_widget(Paragraph::new(Line::from(row1).dark_gray()), chunks[4]);
+    frame.render_widget(Paragraph::new(Line::from(row2).dark_gray()), chunks[5]);
+    frame.render_widget(Paragraph::new(Line::from(row3).dark_gray()), chunks[6]);
 }
 
 /// Renders the cursor info panel as a two-column display.
@@ -953,25 +976,43 @@ fn render_inventory_bar(
 
 /// Renders the command bar at the very bottom of the screen showing all key commands.
 fn render_command_bar(frame: &mut ratatui::Frame, area: Rect, input_state: &InputState) {
-    let spans = if input_state.mode == InputMode::EscMenu {
-        vec![
-            Span::from(" Q").bold().yellow(), Span::from(":Resume ").dark_gray(),
-            Span::from("R").bold().yellow(), Span::from(":Restart ").dark_gray(),
-        ]
-    } else {
-        vec![
-            Span::from(" WASD").bold().yellow(), Span::from(":Move ").dark_gray(),
-            Span::from("IJKL").bold().yellow(), Span::from(":Cursor ").dark_gray(),
-            Span::from("G").bold().yellow(), Span::from(":Punch ").dark_gray(),
-            Span::from("F").bold().yellow(), Span::from(":Kick ").dark_gray(),
-            Span::from("C").bold().yellow(), Span::from(":Center ").dark_gray(),
-            Span::from("V").bold().yellow(), Span::from(":Autoaim ").dark_gray(),
-            Span::from("R").bold().yellow(), Span::from(":Reload ").dark_gray(),
-            Span::from("E").bold().yellow(), Span::from(":Pickup ").dark_gray(),
-            Span::from("Z").bold().yellow(), Span::from(":Dive ").dark_gray(),
-            Span::from("T").bold().yellow(), Span::from(":Wait ").dark_gray(),
-            Span::from("Q").bold().yellow(), Span::from(":Menu").dark_gray(),
-        ]
+    let spans = match input_state.mode {
+        InputMode::EscMenu => {
+            vec![
+                Span::from(" Q").bold().yellow(), Span::from(":Resume ").dark_gray(),
+                Span::from("R").bold().yellow(), Span::from(":Restart ").dark_gray(),
+            ]
+        }
+        InputMode::SaloonMenu => {
+            vec![
+                Span::from(" 1-3").bold().yellow(), Span::from(":Buy ").dark_gray(),
+                Span::from("Q").bold().yellow(), Span::from(":Leave ").dark_gray(),
+            ]
+        }
+        InputMode::InteractMenu => {
+            vec![
+                Span::from(" 1").bold().yellow(), Span::from(":Greet ").dark_gray(),
+                Span::from("2").bold().yellow(), Span::from(":Taunt ").dark_gray(),
+                Span::from("3").bold().yellow(), Span::from(":Threaten ").dark_gray(),
+                Span::from("4").bold().yellow(), Span::from(":Ask ").dark_gray(),
+                Span::from("Q").bold().yellow(), Span::from(":Leave ").dark_gray(),
+            ]
+        }
+        _ => {
+            vec![
+                Span::from(" WASD").bold().yellow(), Span::from(":Move ").dark_gray(),
+                Span::from("IJKL").bold().yellow(), Span::from(":Cursor ").dark_gray(),
+                Span::from("G").bold().yellow(), Span::from(":Punch ").dark_gray(),
+                Span::from("F").bold().yellow(), Span::from(":Kick ").dark_gray(),
+                Span::from("X").bold().yellow(), Span::from(":Talk ").dark_gray(),
+                Span::from("H").bold().yellow(), Span::from(":Hide ").dark_gray(),
+                Span::from("R").bold().yellow(), Span::from(":Reload ").dark_gray(),
+                Span::from("E").bold().yellow(), Span::from(":Pickup ").dark_gray(),
+                Span::from("Z").bold().yellow(), Span::from(":Dive ").dark_gray(),
+                Span::from("T").bold().yellow(), Span::from(":Wait ").dark_gray(),
+                Span::from("Q").bold().yellow(), Span::from(":Menu").dark_gray(),
+            ]
+        }
     };
     let line = Line::from(spans);
     frame.render_widget(Paragraph::new(line).on_black(), area);
@@ -1004,15 +1045,14 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
         Line::from("  -*-  DEAD MAN'S HAND  -*-").bold().yellow(),
         Line::from(""),
         Line::from("  Welcome to a peaceful frontier town.").white(),
-        Line::from("  Walk around, talk to folks, visit the").white(),
-        Line::from("  saloon for a drink. Everyone minds").white(),
-        Line::from("  their own business... unless you start").white(),
-        Line::from("  trouble.").white(),
+        Line::from("  Walk around, talk to folks (X), visit").white(),
+        Line::from("  the saloon for a drink. Hide in barrels").white(),
+        Line::from("  (H) or start fires with matches.").white(),
         Line::from(""),
         Line::from("  Punch (G) or Kick (F) someone to start").yellow(),
-        Line::from("  a brawl! Their faction will aggro.").yellow(),
-        Line::from("  Cause too much chaos and sheriffs will").yellow(),
-        Line::from("  come after you (star level).").yellow(),
+        Line::from("  a brawl! Taunt (X→2) to provoke. Cause").yellow(),
+        Line::from("  too much chaos and sheriffs come for").yellow(),
+        Line::from("  you. Hide (H) to break pursuit.").yellow(),
         Line::from(""),
     ];
     for binding in KEYBINDINGS {
@@ -1073,6 +1113,92 @@ fn render_esc_menu_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
                 Block::default()
                     .borders(Borders::ALL)
                     .title(" Menu ")
+                    .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Yellow)),
+            )
+            .wrap(Wrap { trim: false })
+            .on_black(),
+        menu_area,
+    );
+}
+
+/// Renders the saloon buy menu overlay.
+fn render_saloon_menu_overlay(frame: &mut ratatui::Frame, game_area: Rect, gold: &Gold) {
+    let w = 44u16.min(game_area.width.saturating_sub(4));
+    let h = (SALOON_MENU.len() as u16 + 7).min(game_area.height.saturating_sub(4));
+
+    if w < 20 || h < 5 {
+        return;
+    }
+
+    let cx = game_area.x + (game_area.width.saturating_sub(w)) / 2;
+    let cy = game_area.y + (game_area.height.saturating_sub(h)) / 2;
+    let menu_area = Rect { x: cx, y: cy, width: w, height: h };
+
+    frame.render_widget(Clear, menu_area);
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from("  SALOON — What'll it be?").bold().yellow(),
+        Line::from(format!("  Your gold: ${}", gold.0)).white(),
+        Line::from(""),
+    ];
+    for (i, item) in SALOON_MENU.iter().enumerate() {
+        lines.push(Line::from(vec![
+            Span::from(format!("  {}  ", i + 1)).bold().yellow(),
+            Span::from(format!("{:<20} ${}", item.name, item.price)).white(),
+            Span::from(format!("  {}", item.description)).dark_gray(),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from("  Q — Leave").dark_gray());
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Saloon ")
+                    .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Yellow)),
+            )
+            .wrap(Wrap { trim: false })
+            .on_black(),
+        menu_area,
+    );
+}
+
+/// Renders the NPC interaction menu overlay.
+fn render_interact_menu_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
+    let w = 40u16.min(game_area.width.saturating_sub(4));
+    let h = 10u16.min(game_area.height.saturating_sub(4));
+
+    if w < 20 || h < 5 {
+        return;
+    }
+
+    let cx = game_area.x + (game_area.width.saturating_sub(w)) / 2;
+    let cy = game_area.y + (game_area.height.saturating_sub(h)) / 2;
+    let menu_area = Rect { x: cx, y: cy, width: w, height: h };
+
+    frame.render_widget(Clear, menu_area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from("  How do you address them?").bold().yellow(),
+        Line::from(""),
+        Line::from(vec![Span::from("  1").bold().yellow(), Span::from("  Greet (friendly)").white()]),
+        Line::from(vec![Span::from("  2").bold().yellow(), Span::from("  Taunt (hostile)").white()]),
+        Line::from(vec![Span::from("  3").bold().yellow(), Span::from("  Threaten (very hostile)").white()]),
+        Line::from(vec![Span::from("  4").bold().yellow(), Span::from("  Ask about town").white()]),
+        Line::from(""),
+        Line::from("  Q — Walk away").dark_gray(),
+    ];
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Talk ")
                     .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Yellow)),
             )
             .wrap(Wrap { trim: false })
