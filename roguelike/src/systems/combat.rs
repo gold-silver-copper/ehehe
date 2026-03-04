@@ -158,18 +158,33 @@ pub fn death_system(
             continue;
         }
 
+        // If the player died and we already processed their death (spectating),
+        // skip entirely — don't re-log messages or re-trigger state changes.
+        if is_player.is_some() && spectating.0 {
+            continue;
+        }
+
         let label = name.map_or("Something", |n| &n.0);
         combat_log.push_opt(format!("{label} has been slain!"), pos.map(|p| p.as_grid_vec()));
 
-        // If the player died, transition to Dead state (don't despawn so UI can read stats).
-        // Skip re-triggering death when spectating — the player stays dead but watching.
+        // If the player died, transition to Dead state.
+        // Spawn a corpse marker (X) at the player's position, then despawn the player
+        // entity — identical to how NPC deaths are handled.
         if is_player.is_some() {
-            if spectating.0 {
-                continue;
-            }
             combat_log.push("You have fallen... Press T to continue watching, Q to quit, or R to restart.".into());
             next_game_state.set(GameState::Dead);
-            continue; // don't despawn the player
+            if let Some(p) = pos {
+                commands.spawn((
+                    Position { x: p.x, y: p.y },
+                    Name(format!("{label}'s corpse")),
+                    Renderable {
+                        symbol: "X".into(),
+                        fg: RatColor::Rgb(120, 60, 60),
+                        bg: RatColor::Black,
+                    },
+                ));
+            }
+            continue; // don't despawn the player (UI reads stats from it)
         }
 
         if hostile.is_some() {

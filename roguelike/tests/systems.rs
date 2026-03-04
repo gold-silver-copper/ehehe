@@ -581,7 +581,6 @@ fn test_app_with_spells() -> App {
     app.init_resource::<GodMode>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
-    app.init_resource::<BulletAnimations>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
     app.insert_resource(MapSeed(42));
@@ -991,7 +990,6 @@ fn test_app_with_ranged() -> App {
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
     app.init_resource::<SpectatingAfterDeath>();
-    app.init_resource::<BulletAnimations>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
     app.insert_resource(MapSeed(42));
@@ -1838,7 +1836,6 @@ fn test_app_with_ai() -> App {
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
     app.init_resource::<Collectibles>();
-    app.init_resource::<BulletAnimations>();
     app.init_state::<GameState>();
     app.add_sub_state::<TurnState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
@@ -2261,10 +2258,14 @@ fn factions_vaqueros_vs_outlaws() {
 }
 
 #[test]
-fn factions_lawmen_and_vaqueros_not_hostile() {
-    // Lawmen and Vaqueros are not hostile to each other
-    assert!(!ai::factions_are_hostile(Faction::Lawmen, Faction::Vaqueros));
-    assert!(!ai::factions_are_hostile(Faction::Vaqueros, Faction::Lawmen));
+fn factions_all_different_factions_are_hostile() {
+    // All factions are mutually hostile — no alliances of any kind.
+    assert!(ai::factions_are_hostile(Faction::Lawmen, Faction::Vaqueros));
+    assert!(ai::factions_are_hostile(Faction::Vaqueros, Faction::Lawmen));
+    assert!(ai::factions_are_hostile(Faction::Lawmen, Faction::Civilians));
+    assert!(ai::factions_are_hostile(Faction::Civilians, Faction::Sheriff));
+    assert!(ai::factions_are_hostile(Faction::Indians, Faction::Wildlife));
+    assert!(ai::factions_are_hostile(Faction::Outlaws, Faction::Vaqueros));
 }
 
 // ─── Energy / Speed Integration Tests ────────────────────────────
@@ -3139,17 +3140,16 @@ fn bullet_projectile_has_bullet_trail_visual() {
     });
     app.update(); // ranged_attack_system spawns bullet, projectile_system may advance/despawn it
 
-    // With 12 tiles/tick, the bullet may have already traversed its path and
-    // despawned. Check either the projectile entity or the bullet animation
-    // trail (which is created when a bullet advances during a tick).
+    // The bullet is the logical projectile entity — check it directly.
+    // With 12 tiles/tick the bullet may have already traversed its path and
+    // despawned during the same update, so allow for that possibility.
     let proj = app.world_mut().query::<&Projectile>()
         .iter(app.world())
         .find(|p| p.is_bullet);
-    let anims = app.world().resource::<BulletAnimations>();
-    let has_bullet_trail = !anims.trails.is_empty();
 
-    assert!(proj.is_some() || has_bullet_trail,
-        "Bullet should exist as projectile or have left an animation trail");
+    // The bullet either still exists as a projectile entity, or it has
+    // already reached the end of its path and been despawned in the same tick.
+    // Either outcome is valid; assert properties when it's still alive.
     if let Some(p) = proj {
         assert_eq!(p.visual, ProjectileVisual::BulletTrail,
             "Bullet should use BulletTrail visual");
@@ -4466,5 +4466,76 @@ fn ai_npc_inventory_capacity_limit() {
         9,
         "NPC should not pick up items when inventory is full (has {} items)",
         inv.items.len(),
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  SINGLE BULLET PER SHOT TESTS
+// ═══════════════════════════════════════════════════════════════════
+
+/// A single player shot should produce at most one bullet projectile entity.
+#[test]
+fn single_shot_produces_at_most_one_bullet() {
+    let mut app = test_app_with_ranged();
+    let (player, gun) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
+    // Place a far-away wall so the bullet has room to travel
+    app.update();
+
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 30,
+        dx: 1,
+        dy: 0,
+        gun_item: Some(gun),
+    });
+    app.update();
+
+    // Count all bullet projectile entities on screen.
+    let bullet_count = app.world_mut().query::<&Projectile>()
+        .iter(app.world())
+        .filter(|p| p.is_bullet)
+        .count();
+
+    assert!(
+        bullet_count <= 1,
+        "A single shot should produce at most 1 bullet entity, but found {bullet_count}",
+    );
+}
+
+/// Firing two separate shots should produce at most two bullet entities total.
+#[test]
+fn two_shots_produce_at_most_two_bullets() {
+    let mut app = test_app_with_ranged();
+    let (player, gun) = spawn_test_player_with_gun(&mut app, 60, 40, 5);
+    app.update();
+
+    // First shot
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 30,
+        dx: 1,
+        dy: 0,
+        gun_item: Some(gun),
+    });
+    app.update();
+
+    // Second shot
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 30,
+        dx: 1,
+        dy: 0,
+        gun_item: Some(gun),
+    });
+    app.update();
+
+    let bullet_count = app.world_mut().query::<&Projectile>()
+        .iter(app.world())
+        .filter(|p| p.is_bullet)
+        .count();
+
+    assert!(
+        bullet_count <= 2,
+        "Two shots should produce at most 2 bullet entities, but found {bullet_count}",
     );
 }

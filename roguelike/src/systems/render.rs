@@ -86,7 +86,7 @@ pub fn draw_system(
     spell_particles: Res<SpellParticles>,
     input_state: Res<InputState>,
     cursor: Res<CursorPosition>,
-    (collectibles, bullet_anims): (Res<Collectibles>, Res<crate::resources::BulletAnimations>),
+    (collectibles,): (Res<Collectibles>,),
 ) -> Result {
     context.draw(|frame| {
         let area = frame.area();
@@ -364,56 +364,6 @@ pub fn draw_system(
                                     render_packet[tail_screen.y as usize][tail_screen.x as usize] =
                                         ("·".into(), tail_fg, tail_bg);
                                 }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Render in-progress bullet travel animations (intra-tick).
-        // These show the bullet moving one tile at a time between game ticks.
-        for trail in &bullet_anims.trails {
-            if trail.positions.is_empty() {
-                continue;
-            }
-            let idx = trail.render_index.min(trail.positions.len() - 1);
-            let anim_pos = trail.positions[idx];
-            let screen = anim_pos - bottom_left;
-            if in_bounds(screen, render_width, render_height) {
-                let visible = visible_tiles
-                    .map(|vt| vt.contains(&anim_pos))
-                    .unwrap_or(true);
-                if visible {
-                    let bg = render_packet[screen.y as usize][screen.x as usize].2;
-                    let blink_bright = (cursor.blink_frame() / 3).is_multiple_of(2);
-                    let fg = if blink_bright {
-                        trail.fg
-                    } else if let RatColor::Rgb(r, g, b) = trail.fg {
-                        RatColor::Rgb(r / 2, g / 2, b / 2)
-                    } else {
-                        trail.fg
-                    };
-                    render_packet[screen.y as usize][screen.x as usize] =
-                        (trail.symbol.clone(), fg, bg);
-
-                    // Render tail dot at previous position
-                    if trail.has_tail && idx > 0 {
-                        let tail_pos = trail.positions[idx - 1];
-                        let tail_screen = tail_pos - bottom_left;
-                        if in_bounds(tail_screen, render_width, render_height) {
-                            let tail_visible = visible_tiles
-                                .map(|vt| vt.contains(&tail_pos))
-                                .unwrap_or(true);
-                            if tail_visible {
-                                let tail_bg = render_packet[tail_screen.y as usize][tail_screen.x as usize].2;
-                                let tail_fg = if let RatColor::Rgb(r, g, b) = trail.fg {
-                                    RatColor::Rgb(r.saturating_sub(60), g.saturating_sub(60), b.saturating_sub(60))
-                                } else {
-                                    trail.fg
-                                };
-                                render_packet[tail_screen.y as usize][tail_screen.x as usize] =
-                                    ("·".into(), tail_fg, tail_bg);
                             }
                         }
                     }
@@ -887,11 +837,9 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
         Line::from("  Head to the ★ at the top-right!").dark_gray(),
         Line::from("  Watch out for enemies and the river.").dark_gray(),
         Line::from(""),
-        Line::from("  Faction Alliances:").bold().yellow(),
-        Line::from("  You are a Civilian. Allies:").white(),
-        Line::from("    Civilians <-> Lawmen <-> Sheriff").dark_gray(),
-        Line::from("    Outlaws   <-> Vaqueros").dark_gray(),
-        Line::from("    Wildlife  <-> Indians").dark_gray(),
+        Line::from("  Faction Hostility:").bold().yellow(),
+        Line::from("  You are a Civilian — no allies.").white(),
+        Line::from("    All factions are mutually hostile.").dark_gray(),
         Line::from(""),
         Line::from("  Roundhouse kick (F) destroys").white(),
         Line::from("  everything around you — props,").white(),

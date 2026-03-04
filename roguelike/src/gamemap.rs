@@ -193,17 +193,27 @@ impl GameMap {
             }
         }
 
-        // Place bridges across the river at regular intervals
-        let bridge_spacing = 40;
-        let first_bridge_y = 30;
-        let mut bridge_ys: Vec<CoordinateUnit> = Vec::new();
+        // ── Step 3: Curved street grid with sidewalks ────────────────
+        // Horizontal avenues: wide dirt carriage roads flanked by sidewalks
+        // Avenue spacing varies per seed for unique city feel.
+        // Compute avenue Y positions first so bridges can align to them.
+        let spacing_noise = value_noise(0, 0, seed.wrapping_add(99900));
+        let avenue_spacing = 32 + (spacing_noise * 12.0) as CoordinateUnit; // 32-44
+        let avenue_half_width = 3; // carriage road half-width (7 tiles total)
+        let sidewalk_width = 2; // sidewalk on each side of the road
+        let mut avenue_ys: Vec<CoordinateUnit> = Vec::new();
+        let curve_seed = seed.wrapping_add(55500);
         {
-            let mut by = first_bridge_y;
-            while by < height - 30 {
-                bridge_ys.push(by);
-                by += bridge_spacing;
+            let first_avenue = 40; // start inside the forest margin
+            let mut ay = first_avenue;
+            while ay < height - 40 {
+                avenue_ys.push(ay);
+                ay += avenue_spacing;
             }
         }
+
+        // Place bridges at avenue Y positions so they connect flush with roads.
+        let bridge_ys: Vec<CoordinateUnit> = avenue_ys.clone();
         for &by in &bridge_ys {
             for dy in -3..=3i32 {
                 let y = by + dy;
@@ -220,55 +230,41 @@ impl GameMap {
             }
         }
 
-        // ── Step 3: Curved street grid with sidewalks ────────────────
-        // Horizontal avenues: wide dirt carriage roads flanked by sidewalks
-        // Avenue spacing varies per seed for unique city feel.
-        let spacing_noise = value_noise(0, 0, seed.wrapping_add(99900));
-        let avenue_spacing = 32 + (spacing_noise * 12.0) as CoordinateUnit; // 32-44
-        let avenue_half_width = 3; // carriage road half-width (7 tiles total)
-        let sidewalk_width = 2; // sidewalk on each side of the road
-        let mut avenue_ys: Vec<CoordinateUnit> = Vec::new();
-        let curve_seed = seed.wrapping_add(55500);
-        {
-            let first_avenue = 40; // start inside the forest margin
-            let mut ay = first_avenue;
-            while ay < height - 40 {
-                avenue_ys.push(ay);
-                let curve_amp = 3.0 + value_noise(ay, 0, curve_seed) * 4.0;
-                let curve_freq = 0.015 + value_noise(0, ay, curve_seed) * 0.01;
-                for x in 1..width - 1 {
-                    let curve_offset = (x as f64 * curve_freq).sin() * curve_amp;
-                    // Sidewalk (outer band)
-                    for sw in 1..=sidewalk_width {
-                        for sign in [-1i32, 1] {
-                            let y = ay + sign * (avenue_half_width + sw) + curve_offset as CoordinateUnit;
-                            if y <= 0 || y >= height - 1 { continue; }
-                            let pos = GridVec::new(x, y);
-                            if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                                if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Bridge)) {
-                                    continue;
-                                }
-                                voxel.floor = Some(Floor::Sidewalk);
-                                voxel.props = None;
-                            }
-                        }
-                    }
-                    // Carriage road (inner band)
-                    for hw in -avenue_half_width..=avenue_half_width {
-                        let y = ay + hw + curve_offset as CoordinateUnit;
+        // Lay avenue roads with sidewalks
+        for &ay in &avenue_ys {
+            let curve_amp = 3.0 + value_noise(ay, 0, curve_seed) * 4.0;
+            let curve_freq = 0.015 + value_noise(0, ay, curve_seed) * 0.01;
+            for x in 1..width - 1 {
+                let curve_offset = (x as f64 * curve_freq).sin() * curve_amp;
+                // Sidewalk (outer band)
+                for sw in 1..=sidewalk_width {
+                    for sign in [-1i32, 1] {
+                        let y = ay + sign * (avenue_half_width + sw) + curve_offset as CoordinateUnit;
                         if y <= 0 || y >= height - 1 { continue; }
                         let pos = GridVec::new(x, y);
                         if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                            // Don't pave over river
                             if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Bridge)) {
                                 continue;
                             }
-                            voxel.floor = Some(Floor::Dirt);
+                            voxel.floor = Some(Floor::Sidewalk);
                             voxel.props = None;
                         }
                     }
                 }
-                ay += avenue_spacing;
+                // Carriage road (inner band)
+                for hw in -avenue_half_width..=avenue_half_width {
+                    let y = ay + hw + curve_offset as CoordinateUnit;
+                    if y <= 0 || y >= height - 1 { continue; }
+                    let pos = GridVec::new(x, y);
+                    if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                        // Don't pave over river
+                        if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Bridge)) {
+                            continue;
+                        }
+                        voxel.floor = Some(Floor::Dirt);
+                        voxel.props = None;
+                    }
+                }
             }
         }
 
