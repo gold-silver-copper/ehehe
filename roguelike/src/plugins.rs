@@ -104,6 +104,8 @@ impl Plugin for RoguelikePlugin {
             .init_resource::<SpectatingAfterDeath>()
             .init_resource::<DynamicRng>()
             .init_resource::<crate::resources::GodMode>()
+            .init_resource::<crate::resources::StarLevel>()
+            .init_resource::<crate::resources::PropHealth>()
             // ── States ──
             .init_state::<GameState>()
             .add_sub_state::<TurnState>()
@@ -193,6 +195,7 @@ impl Plugin for RoguelikePlugin {
                     ai::leader_death_system,
                     combat::ai_ranged_attack_system,
                     turn::fire_system,
+                    turn::star_level_system,
                 )
                     .chain()
                     .after(RoguelikeSet::Consequence)
@@ -201,7 +204,7 @@ impl Plugin for RoguelikePlugin {
             .add_systems(
                 Update,
                 turn::end_world_turn
-                    .after(turn::fire_system)
+                    .after(turn::star_level_system)
                     .run_if(in_state(TurnState::WorldTurn)),
             )
             // ── Render (always runs — shows PAUSED overlay when paused) ──
@@ -522,6 +525,7 @@ fn restart_system(
     mut cursor: ResMut<CursorPosition>,
     mut collectibles: ResMut<Collectibles>,
     (mut extra_ticks, mut blood_map, mut spectating, mut dynamic_rng, mut god_mode): (ResMut<ExtraWorldTicks>, ResMut<BloodMap>, ResMut<SpectatingAfterDeath>, ResMut<DynamicRng>, ResMut<crate::resources::GodMode>),
+    (mut star_level, mut prop_health): (ResMut<crate::resources::StarLevel>, ResMut<crate::resources::PropHealth>),
 ) {
     if !restart.0 {
         return;
@@ -555,6 +559,8 @@ fn restart_system(
     spectating.0 = false;
     god_mode.0 = false;
     dynamic_rng.reset();
+    *star_level = crate::resources::StarLevel::default();
+    prop_health.hp.clear();
 
     next_game_state.set(GameState::Playing);
 

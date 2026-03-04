@@ -120,6 +120,19 @@ impl Props {
         }
     }
 
+    /// Returns the maximum health for this prop. Indestructible props return i32::MAX.
+    pub fn max_health(&self) -> i32 {
+        match self {
+            Props::Wall | Props::Rock | Props::Well => i32::MAX, // indestructible
+            Props::Tree | Props::DeadTree | Props::Gallows | Props::WaterTower | Props::Windmill => 30,
+            Props::Piano => 25,
+            Props::Barrel | Props::Crate | Props::Table | Props::Bench => 15,
+            Props::Chair | Props::Sign | Props::Fence | Props::HayBale => 10,
+            Props::Bush | Props::Cactus | Props::LampPost | Props::HitchingPost | Props::WaterTrough => 20,
+            Props::RailTrack => i32::MAX,
+        }
+    }
+
     /// Returns `true` if this prop can be set on fire (destroyed by fire).
     pub fn is_flammable(&self) -> bool {
         matches!(

@@ -8,7 +8,6 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
 
 use crate::components::{AiLookDir, Faction, Health, Hostile, Inventory, ItemKind, Projectile, ProjectileVisual, Stamina, Name, Player, Position, Renderable, Viewshed, display_name, item_display_name};
-use crate::graphic_trait::GraphicElement;
 use crate::grid_vec::GridVec;
 use crate::resources::{
     BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, GameMapResource, GameState, InputMode,
@@ -81,16 +80,15 @@ pub fn draw_system(
         With<Player>,
     >,
     item_query: Query<(Option<&Name>, Option<&ItemKind>), With<crate::components::Item>>,
-    hostile_viewsheds: Query<(&Viewshed, Option<&Faction>, &Position, Option<&AiLookDir>), With<Hostile>>,
+    npc_viewsheds: Query<(&Viewshed, Option<&Faction>, &Position, Option<&AiLookDir>, Option<&Hostile>)>,
+    npc_info_query: Query<(&Position, Option<&Name>, Option<&Faction>, Option<&Inventory>, Option<&Health>, Option<&Hostile>), Without<Player>>,
     projectiles: Query<(&Position, &Renderable, &Projectile)>,
     state: Res<State<GameState>>,
     combat_log: Res<CombatLog>,
-    turn_counter: Res<TurnCounter>,
-    (kill_count, blood_map): (Res<KillCount>, Res<BloodMap>),
+    (turn_counter, kill_count, blood_map): (Res<TurnCounter>, Res<KillCount>, Res<BloodMap>),
     spell_particles: Res<SpellParticles>,
     input_state: Res<InputState>,
-    cursor: Res<CursorPosition>,
-    (collectibles,): (Res<Collectibles>,),
+    (cursor, collectibles, star_level): (Res<CursorPosition>, Res<Collectibles>, Res<crate::resources::StarLevel>),
 ) -> Result {
     context.draw(|frame| {
         let area = frame.area();
@@ -213,16 +211,16 @@ pub fn draw_system(
                 && (0..render_height as CoordinateUnit).contains(&screen.y)
         }
 
-        // Tint the leading arc of hostile NPC field-of-view with a red hue.
-        // Only the first few tiles in the NPC's facing direction are tinted,
-        // just enough to indicate facing direction without revealing the full FOV.
+        // Tint NPC field-of-view with colored hues.
+        // Hostile NPCs: tint their FULL visible FOV with red.
+        // Non-hostile NPCs: tint only a small arc in their facing direction (direction indicator).
         // Animals (Wildlife) and Civilians are excluded from FOV highlighting.
         {
-            /// Maximum Chebyshev distance from the NPC to tint (leading arc radius).
+            /// Maximum Chebyshev distance from a non-hostile NPC for direction tint.
             const FOV_TINT_ARC_RADIUS: i32 = 5;
 
             let mut enemy_visible: HashSet<MyPoint> = HashSet::new();
-            for (vs, faction, npc_pos, ai_look) in &hostile_viewsheds {
+            for (vs, faction, npc_pos, ai_look, hostile) in &npc_viewsheds {
                 if faction.is_some_and(|f| matches!(f, Faction::Wildlife | Faction::Civilians)) {
                     continue;
                 }
@@ -234,21 +232,28 @@ pub fn draw_system(
                 if !npc_in_player_view {
                     continue;
                 }
-                // Only include tiles within the leading arc: close to the NPC
-                // and within its visible set.
-                for &tile in &vs.visible_tiles {
-                    let diff = tile - npc_gv;
-                    if diff.x.abs().max(diff.y.abs()) <= FOV_TINT_ARC_RADIUS {
-                        // If the NPC has a look direction, only tint tiles in
-                        // the forward half-plane (dot product > 0).
-                        if let Some(look) = ai_look {
-                            let dot = diff.x as i64 * look.0.x as i64
-                                    + diff.y as i64 * look.0.y as i64;
-                            if dot <= 0 && diff != GridVec::ZERO {
-                                continue;
-                            }
-                        }
+
+                let is_hostile = hostile.is_some();
+
+                if is_hostile {
+                    // Hostile: tint full visible FOV
+                    for &tile in &vs.visible_tiles {
                         enemy_visible.insert(tile);
+                    }
+                } else {
+                    // Non-hostile: only tint small arc in facing direction
+                    for &tile in &vs.visible_tiles {
+                        let diff = tile - npc_gv;
+                        if diff.x.abs().max(diff.y.abs()) <= FOV_TINT_ARC_RADIUS {
+                            if let Some(look) = ai_look {
+                                let dot = diff.x as i64 * look.0.x as i64
+                                        + diff.y as i64 * look.0.y as i64;
+                                if dot <= 0 && diff != GridVec::ZERO {
+                                    continue;
+                                }
+                            }
+                            enemy_visible.insert(tile);
+                        }
                     }
                 }
             }
@@ -533,41 +538,70 @@ pub fn draw_system(
             })
             .unwrap_or_default();
 
-        // Collect visible prop types for the props legend.
-        // Also includes smoke/sand clouds and fire as special entries.
-        let visible_props: Vec<(String, RatColor, String)> = {
-            let mut seen = HashSet::new();
-            let mut items = Vec::new();
-            if let Some(vt) = visible_tiles {
-                for tile in vt {
-                    if let Some(voxel) = game_map.0.get_voxel_at(tile) {
-                        if let Some(ref prop) = voxel.props {
-                            let name = format!("{prop}");
-                            if seen.insert(name.clone()) {
-                                items.push((prop.symbol(), prop.fg_color(), name));
-                            }
-                        }
-                        // Show smoke/sand clouds and fire in the props panel.
-                        if let Some(ref floor) = voxel.floor {
-                            let entry: Option<(String, RatColor, String)> = match floor {
-                                crate::typeenums::Floor::SandCloud => {
-                                    Some(("*".into(), RatColor::Rgb(210, 180, 120), "Smoke Cloud".into()))
-                                }
-                                crate::typeenums::Floor::Fire => {
-                                    Some(("^".into(), RatColor::Rgb(255, 140, 0), "Fire".into()))
-                                }
-                                _ => None,
-                            };
-                            if let Some((sym, fg, name)) = entry
-                                && seen.insert(name.clone()) {
-                                    items.push((sym, fg, name));
-                                }
+        // ── Cursor tile info (replaces old visible props + visible entities panels) ──
+        // Gather everything at the cursor position for the new two-column info panel.
+        let cursor_world = cursor.pos;
+        let cursor_ground: String;
+        let cursor_prop: String;
+        let mut cursor_effects: Vec<String> = Vec::new(); // smoke, fire, sand, etc.
+        let mut cursor_ground_items: Vec<String> = Vec::new();
+        let mut cursor_npc_name: String = String::new();
+        let mut cursor_npc_faction: String = String::new();
+        let mut cursor_npc_inv: Vec<String> = Vec::new();
+        let mut cursor_npc_hp: String = String::new();
+        let mut cursor_npc_hostile = false;
+
+        // Ground & prop from map
+        if let Some(voxel) = game_map.0.get_voxel_at(&cursor_world) {
+            cursor_ground = voxel.floor.as_ref().map_or("(void)".into(), |f| format!("{f:?}"));
+            cursor_prop = voxel.props.as_ref().map_or("(none)".into(), |p| format!("{p}"));
+            // Effects
+            if let Some(ref floor) = voxel.floor {
+                match floor {
+                    crate::typeenums::Floor::SandCloud => cursor_effects.push("Smoke Cloud".into()),
+                    crate::typeenums::Floor::Fire => cursor_effects.push("Fire".into()),
+                    crate::typeenums::Floor::ShallowWater => cursor_effects.push("Shallow Water".into()),
+                    crate::typeenums::Floor::DeepWater => cursor_effects.push("Deep Water".into()),
+                    _ => {}
+                }
+            }
+        } else {
+            cursor_ground = "(void)".into();
+            cursor_prop = "(none)".into();
+        }
+
+        // NPCs and ground items at cursor
+        for (npc_pos, npc_name, npc_fac, npc_inv, npc_hp, npc_hostile) in &npc_info_query {
+            if npc_pos.as_grid_vec() == cursor_world {
+                if cursor_npc_name.is_empty() {
+                    cursor_npc_name = display_name(npc_name).to_string();
+                    cursor_npc_faction = npc_fac.map_or("".into(), |f| format!("{f:?}"));
+                    cursor_npc_hostile = npc_hostile.is_some();
+                    if let Some(hp) = npc_hp {
+                        cursor_npc_hp = format!("{}/{}", hp.current, hp.max);
+                    }
+                    if let Some(inv) = npc_inv {
+                        for &item_ent in &inv.items {
+                            let iname = item_query.get(item_ent).ok()
+                                .and_then(|(n, _)| n)
+                                .map_or("?".into(), |n| n.0.clone());
+                            cursor_npc_inv.push(iname);
                         }
                     }
                 }
             }
-            items
-        };
+        }
+
+        // Ground items at cursor (items with Position that are NOT in NPC inventories)
+        for (pos, _renderable, name) in &renderables {
+            if pos.as_grid_vec() == cursor_world {
+                let full_name = display_name(name).to_string();
+                // Skip items that are NPCs (already shown above)
+                if full_name != cursor_npc_name && !full_name.is_empty() {
+                    cursor_ground_items.push(full_name);
+                }
+            }
+        }
 
         // ── Bottom Panel ────────────────────────────────────────
         render_bottom_panel(
@@ -575,12 +609,21 @@ pub fn draw_system(
             bottom_area,
             player_hp,
             player_stamina,
-            &visible_entity_infos,
-            &visible_props,
             &combat_log,
             &turn_counter,
             &kill_count,
             &collectibles,
+            &star_level,
+            // cursor info
+            &cursor_ground,
+            &cursor_prop,
+            &cursor_npc_name,
+            &cursor_npc_faction,
+            &cursor_npc_hp,
+            cursor_npc_hostile,
+            &cursor_npc_inv,
+            &cursor_ground_items,
+            &cursor_effects,
         );
 
         // ── Inventory Bar (wide, horizontal) ────────────────────
@@ -648,42 +691,48 @@ pub fn draw_system(
     Ok(())
 }
 
-/// Renders the bottom panel with stats, central combat log, visible entities, and props legend.
-/// Layout: [Stats | Central Log | Props | Visible]
+/// Renders the bottom panel with stats, central combat log, and cursor info.
+/// Layout: [Stats | Central Log | Cursor Info (two columns)]
 fn render_bottom_panel(
     frame: &mut ratatui::Frame,
     area: Rect,
     player_hp: Option<&Health>,
     player_stamina: Option<&Stamina>,
-    visible_entities: &[(String, RatColor, RatColor, String)],
-    visible_props: &[(String, RatColor, String)],
     combat_log: &CombatLog,
     turn_counter: &TurnCounter,
     kill_count: &KillCount,
     collectibles: &Collectibles,
+    star_level: &crate::resources::StarLevel,
+    // Cursor info
+    cursor_ground: &str,
+    cursor_prop: &str,
+    cursor_npc_name: &str,
+    cursor_npc_faction: &str,
+    cursor_npc_hp: &str,
+    cursor_npc_hostile: bool,
+    cursor_npc_inv: &[String],
+    cursor_ground_items: &[String],
+    cursor_effects: &[String],
 ) {
-    // Split bottom panel into four horizontal columns: stats | log | props | visible
+    // Split bottom panel into three horizontal columns: stats | log | cursor info
     let horiz_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(22),   // Stats column (HP, Stamina)
             Constraint::Min(1),       // Central log (wide, fills remaining space)
-            Constraint::Length(18),   // Props legend column
-            Constraint::Length(22),   // Visible entities column
+            Constraint::Length(40),   // Cursor info (two sub-columns)
         ])
         .split(area);
 
     let stats_area = horiz_chunks[0];
     let log_area = horiz_chunks[1];
-    let props_area = horiz_chunks[2];
-    let visible_area = horiz_chunks[3];
+    let cursor_info_area = horiz_chunks[2];
 
     // ── Stats Column (left) ─────────────────────────────────────
-    render_stats_column(frame, stats_area, player_hp, player_stamina, collectibles);
+    render_stats_column(frame, stats_area, player_hp, player_stamina, collectibles, star_level);
 
     // ── Central Log (middle) ────────────────────────────────────
-    // Show all recent messages — the log should persist across ticks, not reset.
-    let log_height = log_area.height.saturating_sub(2) as usize; // subtract border
+    let log_height = log_area.height.saturating_sub(2) as usize;
     let log_lines: Vec<Line> = combat_log.recent(log_height.max(1))
     .into_iter()
     .map(|s| Line::from(format!(" {s}")).dark_gray())
@@ -701,11 +750,10 @@ fn render_bottom_panel(
         log_area,
     );
 
-    // ── Props Legend Column ─────────────────────────────────
-    render_props_column(frame, props_area, visible_props);
-
-    // ── Visible Entities Column (right) ────────────────────────
-    render_visible_column(frame, visible_area, visible_entities);
+    // ── Cursor Info (right, two sub-columns) ────────────────────
+    render_cursor_info(frame, cursor_info_area, cursor_ground, cursor_prop,
+        cursor_npc_name, cursor_npc_faction, cursor_npc_hp, cursor_npc_hostile,
+        cursor_npc_inv, cursor_ground_items, cursor_effects);
 }
 
 /// Renders the stats column (HP, Stamina gauges stacked vertically).
@@ -715,12 +763,14 @@ fn render_stats_column(
     player_hp: Option<&Health>,
     player_stamina: Option<&Stamina>,
     collectibles: &Collectibles,
+    star_level: &crate::resources::StarLevel,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // HP gauge (compact, no border)
             Constraint::Length(1), // Stamina gauge
+            Constraint::Length(1), // Star level
             Constraint::Length(1), // Collectibles row 1
             Constraint::Length(1), // Collectibles row 2
             Constraint::Length(1), // Collectibles row 3
@@ -753,6 +803,21 @@ fn render_stats_column(
         frame.render_widget(gauge, chunks[1]);
     }
 
+    // Star level (wanted level)
+    let stars = "★".repeat(star_level.level as usize);
+    let star_text = if star_level.level > 0 {
+        format!("Wanted: {stars}")
+    } else {
+        "Wanted: (none)".into()
+    };
+    let star_color = if star_level.level >= 3 { ratatui::style::Color::Red }
+        else if star_level.level >= 1 { ratatui::style::Color::Yellow }
+        else { ratatui::style::Color::DarkGray };
+    frame.render_widget(
+        Paragraph::new(Line::from(star_text).fg(star_color)),
+        chunks[2],
+    );
+
     // Collectibles — 3 entries per row
     let row1 = format!(
         "Cap:{} Pdr:{} .31:{}",
@@ -766,65 +831,95 @@ fn render_stats_column(
         ".58:{} .577:{} .69:{}",
         collectibles.bullets_58, collectibles.bullets_577, collectibles.bullets_69,
     );
-    frame.render_widget(Paragraph::new(Line::from(row1).dark_gray()), chunks[2]);
-    frame.render_widget(Paragraph::new(Line::from(row2).dark_gray()), chunks[3]);
-    frame.render_widget(Paragraph::new(Line::from(row3).dark_gray()), chunks[4]);
+    frame.render_widget(Paragraph::new(Line::from(row1).dark_gray()), chunks[3]);
+    frame.render_widget(Paragraph::new(Line::from(row2).dark_gray()), chunks[4]);
+    frame.render_widget(Paragraph::new(Line::from(row3).dark_gray()), chunks[5]);
 }
 
-/// Renders the visible entities column.
-fn render_visible_column(
+/// Renders the cursor info panel as a two-column display.
+/// Left: Prop, Ground, NPC info. Right: Ground items, effects.
+fn render_cursor_info(
     frame: &mut ratatui::Frame,
     area: Rect,
-    visible_entities: &[(String, RatColor, RatColor, String)],
+    cursor_ground: &str,
+    cursor_prop: &str,
+    cursor_npc_name: &str,
+    cursor_npc_faction: &str,
+    cursor_npc_hp: &str,
+    cursor_npc_hostile: bool,
+    cursor_npc_inv: &[String],
+    cursor_ground_items: &[String],
+    cursor_effects: &[String],
 ) {
-    let max_visible = (area.height.saturating_sub(2)) as usize;
-    let mut vis_lines: Vec<Line> = Vec::new();
-    let mut seen_names: HashSet<String> = HashSet::new();
-    for (sym, fg, _bg, name) in visible_entities {
-        if seen_names.insert(name.clone()) {
-            vis_lines.push(Line::from(vec![
-                Span::from(format!(" {sym}")).fg(*fg),
-                Span::from(format!(" {name}")).white(),
+    let inner = Block::default().borders(Borders::ALL).title("Cursor").inner(area);
+    frame.render_widget(Block::default().borders(Borders::ALL).title("Cursor"), area);
+
+    // Split into two columns
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(inner);
+
+    // ── Left column: Prop, Ground, NPC ──
+    let max_lines = cols[0].height as usize;
+    let mut left_lines: Vec<Line> = Vec::new();
+    left_lines.push(Line::from(vec![
+        Span::from(" Ground:").bold().dark_gray(),
+        Span::from(format!(" {cursor_ground}")).white(),
+    ]));
+    left_lines.push(Line::from(vec![
+        Span::from(" Prop:").bold().dark_gray(),
+        Span::from(format!(" {cursor_prop}")).white(),
+    ]));
+    if !cursor_npc_name.is_empty() {
+        let hostile_tag = if cursor_npc_hostile { " [!]" } else { "" };
+        left_lines.push(Line::from(vec![
+            Span::from(" NPC:").bold().dark_gray(),
+            Span::from(format!(" {cursor_npc_name}{hostile_tag}")).yellow(),
+        ]));
+        if !cursor_npc_faction.is_empty() {
+            left_lines.push(Line::from(vec![
+                Span::from("  Fac:").dark_gray(),
+                Span::from(format!(" {cursor_npc_faction}")).white(),
             ]));
-            if vis_lines.len() >= max_visible {
-                break;
-            }
+        }
+        if !cursor_npc_hp.is_empty() {
+            left_lines.push(Line::from(vec![
+                Span::from("  HP:").dark_gray(),
+                Span::from(format!(" {cursor_npc_hp}")).white(),
+            ]));
+        }
+        for (i, item_name) in cursor_npc_inv.iter().enumerate() {
+            if left_lines.len() >= max_lines { break; }
+            left_lines.push(Line::from(vec![
+                Span::from(format!("  Inv{}:", i + 1)).dark_gray(),
+                Span::from(format!(" {item_name}")).white(),
+            ]));
         }
     }
-    if vis_lines.is_empty() {
-        vis_lines.push(Line::from(" (nothing)".dark_gray()));
-    }
+    left_lines.truncate(max_lines);
+    frame.render_widget(Paragraph::new(left_lines), cols[0]);
 
-    frame.render_widget(
-        Paragraph::new(vis_lines)
-            .block(Block::default().borders(Borders::ALL).title("Visible")),
-        area,
-    );
-}
-
-/// Renders the props legend column showing visible props symbols and names.
-fn render_props_column(
-    frame: &mut ratatui::Frame,
-    area: Rect,
-    visible_props: &[(String, RatColor, String)],
-) {
-    let max_items = (area.height.saturating_sub(2)) as usize;
-    let mut lines: Vec<Line> = Vec::new();
-    for (sym, fg, name) in visible_props.iter().take(max_items) {
-        lines.push(Line::from(vec![
-            Span::from(format!(" {sym}")).fg(*fg),
-            Span::from(format!(" {name}")).dark_gray(),
-        ]));
+    // ── Right column: Ground items, effects ──
+    let mut right_lines: Vec<Line> = Vec::new();
+    if !cursor_ground_items.is_empty() {
+        right_lines.push(Line::from(" Items:").bold().dark_gray());
+        for item in cursor_ground_items.iter().take(max_lines.saturating_sub(2)) {
+            right_lines.push(Line::from(format!("  {item}")).white());
+        }
     }
-    if lines.is_empty() {
-        lines.push(Line::from(" (none)".dark_gray()));
+    if !cursor_effects.is_empty() {
+        right_lines.push(Line::from(" Effects:").bold().dark_gray());
+        for effect in cursor_effects {
+            if right_lines.len() >= max_lines { break; }
+            right_lines.push(Line::from(format!("  {effect}")).yellow());
+        }
     }
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("Props")),
-        area,
-    );
+    if right_lines.is_empty() {
+        right_lines.push(Line::from(" (empty)").dark_gray());
+    }
+    right_lines.truncate(max_lines);
+    frame.render_widget(Paragraph::new(right_lines), cols[1]);
 }
 
 /// Renders the inventory bar as a wide horizontal bar showing usable items.
@@ -867,14 +962,13 @@ fn render_command_bar(frame: &mut ratatui::Frame, area: Rect, input_state: &Inpu
         vec![
             Span::from(" WASD").bold().yellow(), Span::from(":Move ").dark_gray(),
             Span::from("IJKL").bold().yellow(), Span::from(":Cursor ").dark_gray(),
+            Span::from("G").bold().yellow(), Span::from(":Punch ").dark_gray(),
             Span::from("F").bold().yellow(), Span::from(":Kick ").dark_gray(),
             Span::from("C").bold().yellow(), Span::from(":Center ").dark_gray(),
             Span::from("V").bold().yellow(), Span::from(":Autoaim ").dark_gray(),
             Span::from("R").bold().yellow(), Span::from(":Reload ").dark_gray(),
-            Span::from("G").bold().yellow(), Span::from(":Pickup ").dark_gray(),
+            Span::from("E").bold().yellow(), Span::from(":Pickup ").dark_gray(),
             Span::from("Z").bold().yellow(), Span::from(":Dive ").dark_gray(),
-            Span::from("X").bold().yellow(), Span::from(":WarCry ").dark_gray(),
-            Span::from("B").bold().yellow(), Span::from(":QuickDraw ").dark_gray(),
             Span::from("T").bold().yellow(), Span::from(":Wait ").dark_gray(),
             Span::from("Q").bold().yellow(), Span::from(":Menu").dark_gray(),
         ]
@@ -909,20 +1003,16 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
         Line::from(""),
         Line::from("  -*-  DEAD MAN'S HAND  -*-").bold().yellow(),
         Line::from(""),
-        Line::from("  You step outside your house to find").white(),
-        Line::from("  the town under siege! Reach the Gold").white(),
-        Line::from("  Cache (★) at the far corner to win.").white(),
+        Line::from("  Welcome to a peaceful frontier town.").white(),
+        Line::from("  Walk around, talk to folks, visit the").white(),
+        Line::from("  saloon for a drink. Everyone minds").white(),
+        Line::from("  their own business... unless you start").white(),
+        Line::from("  trouble.").white(),
         Line::from(""),
-        Line::from("  Head to the ★ at the top-right!").dark_gray(),
-        Line::from("  Watch out for enemies and the river.").dark_gray(),
-        Line::from(""),
-        Line::from("  Faction Hostility:").bold().yellow(),
-        Line::from("  You are a Civilian — no allies.").white(),
-        Line::from("    All factions are mutually hostile.").dark_gray(),
-        Line::from(""),
-        Line::from("  Roundhouse kick (F) destroys").white(),
-        Line::from("  everything around you — props,").white(),
-        Line::from("  furniture, and all adjacent enemies!").white(),
+        Line::from("  Punch (G) or Kick (F) someone to start").yellow(),
+        Line::from("  a brawl! Their faction will aggro.").yellow(),
+        Line::from("  Cause too much chaos and sheriffs will").yellow(),
+        Line::from("  come after you (star level).").yellow(),
         Line::from(""),
     ];
     for binding in KEYBINDINGS {

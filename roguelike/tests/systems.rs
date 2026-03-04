@@ -34,6 +34,8 @@ fn test_app() -> App {
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
+    app.init_resource::<roguelike::resources::StarLevel>();
+    app.init_resource::<roguelike::resources::PropHealth>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
     app.init_state::<GameState>();
@@ -567,6 +569,8 @@ fn test_app_with_spells() -> App {
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
+    app.init_resource::<roguelike::resources::StarLevel>();
+    app.init_resource::<roguelike::resources::PropHealth>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
     app.init_state::<GameState>();
@@ -975,6 +979,8 @@ fn test_app_with_ranged() -> App {
     app.init_resource::<DynamicRng>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
+    app.init_resource::<roguelike::resources::StarLevel>();
+    app.init_resource::<roguelike::resources::PropHealth>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
@@ -1195,8 +1201,8 @@ fn roundhouse_kick_hits_adjacent_enemies() {
 
     let log = app.world().resource::<CombatLog>();
     assert!(
-        log.messages.iter().any(|m| m.contains("roundhouse")),
-        "Combat log should contain roundhouse kick message"
+        log.messages.iter().any(|m| m.contains("kicks")),
+        "Combat log should contain kick message"
     );
 }
 
@@ -1444,6 +1450,8 @@ fn test_app_with_cactus() -> App {
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
+    app.init_resource::<roguelike::resources::StarLevel>();
+    app.init_resource::<roguelike::resources::PropHealth>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
     app.init_state::<GameState>();
@@ -1819,6 +1827,8 @@ fn test_app_with_ai() -> App {
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
+    app.init_resource::<roguelike::resources::StarLevel>();
+    app.init_resource::<roguelike::resources::PropHealth>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
     app.init_resource::<Collectibles>();

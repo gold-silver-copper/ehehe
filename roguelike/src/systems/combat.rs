@@ -5,7 +5,6 @@ use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIn
 use crate::noise::value_noise;
 use crate::resources::{CombatLog, DynamicRng, GameMapResource, GameState, KillCount, MapSeed, SoundEvents, TurnCounter};
 use crate::grid_vec::GridVec;
-use crate::typeenums::Props;
 use crate::typedefs::{CoordinateUnit, RatColor};
 
 /// Computes the bullet endpoint by scaling a direction vector so the
@@ -63,6 +62,8 @@ pub fn combat_system(
     mut combat_log: ResMut<CombatLog>,
     faction_query: Query<(Option<&Faction>, Option<&Position>)>,
     npc_query: Query<(Entity, &Position, Option<&Faction>), Without<Player>>,
+    player_query: Query<Entity, With<Player>>,
+    mut star_level: ResMut<crate::resources::StarLevel>,
 ) {
     // Collect aggro events to apply after processing all intents
     let mut aggro_targets: Vec<(Entity, Entity, Option<GridVec>)> = Vec::new(); // (attacker, target, target_pos)
@@ -126,9 +127,16 @@ pub fn combat_system(
     }
 
     // Apply aggro: make attacker and target Hostile, propagate to nearby NPCs
+    let player_entity = player_query.single().ok();
     for (attacker, target, target_pos) in aggro_targets {
         commands.entity(target).insert(Hostile);
         commands.entity(attacker).insert(Hostile);
+
+        // Increase star level when the player attacks someone
+        if player_entity == Some(attacker) {
+            star_level.level = (star_level.level + 1).min(5);
+            star_level.unseen_turns = 0;
+        }
 
         // Get target's faction for propagation
         let target_faction = faction_query.get(target).ok().and_then(|(f, _)| f.copied());
@@ -497,17 +505,22 @@ pub fn ai_ranged_attack_system(
     }
 }
 
-/// Resolves roundhouse kick attack intents.
-/// Hits all adjacent hostile entities (Chebyshev distance 1).
-/// This is a powerful melee attack that sweeps all enemies around the player.
-/// Uses `CombatStats::damage_against` for the formal damage model.
+/// Resolves roundhouse kick attack intents as an AoE push attack.
+/// Attempts to push all adjacent entities (Chebyshev distance 1) away from the
+/// attacker by one tile. Only pushes if the destination tile is unoccupied and passable.
+/// Deals damage to all adjacent entities (not just hostile ones).
+/// Also damages adjacent props; props are only destroyed when their health reaches zero.
 pub fn melee_wide_system(
+    mut commands: Commands,
     mut intents: MessageReader<MeleeWideIntent>,
     mut damage_events: MessageWriter<DamageEvent>,
-    attacker_query: Query<(&Position, &CombatStats, Option<&Name>)>,
-    targets: Query<(Entity, &Position, Option<&Name>), With<Hostile>>,
+    attacker_query: Query<(&Position, &CombatStats, Option<&Name>), With<Player>>,
+    mut targets: Query<(Entity, &mut Position, Option<&Name>, Option<&Health>), Without<Player>>,
+    blockers: Query<(), With<crate::components::BlocksMovement>>,
     mut combat_log: ResMut<CombatLog>,
     mut game_map: ResMut<GameMapResource>,
+    spatial: Res<crate::resources::SpatialIndex>,
+    mut prop_health: ResMut<crate::resources::PropHealth>,
 ) {
     for intent in intents.read() {
         let Ok((attacker_pos, attacker_stats, attacker_name)) = attacker_query.get(intent.attacker) else {
@@ -515,55 +528,94 @@ pub fn melee_wide_system(
         };
         let origin = attacker_pos.as_grid_vec();
         let a_name = display_name(attacker_name);
+        let damage = attacker_stats.damage_against();
         let mut hit_count = 0;
+        let mut push_count = 0;
 
-        for (target_entity, target_pos, target_name) in &targets {
-            let dist = origin.chebyshev_distance(target_pos.as_grid_vec());
-            if dist == 1 {
-                let damage = attacker_stats.damage_against();
-                let t_name = display_name(target_name);
-                if damage > 0 {
-                    damage_events.write(DamageEvent {
-                        target: target_entity,
-                        amount: damage,
-                        source: Some(intent.attacker),
-                    });
-                    combat_log.push(format!("{a_name} roundhouse kicks {t_name} for {damage} damage!"));
-                    hit_count += 1;
-                } else {
-                    combat_log.push(format!("{a_name} roundhouse kicks at {t_name} but deals no damage"));
-                }
+        // Collect entities to push (can't modify positions while iterating spatially)
+        let mut push_list: Vec<(Entity, GridVec, GridVec)> = Vec::new(); // (entity, current, push_to)
+
+        for (target_entity, target_pos, target_name, _target_hp) in &targets {
+            let tv = target_pos.as_grid_vec();
+            let dist = origin.chebyshev_distance(tv);
+            if dist != 1 || target_entity == intent.attacker {
+                continue;
+            }
+
+            // Deal damage
+            let t_name = display_name(target_name);
+            if damage > 0 {
+                damage_events.write(DamageEvent {
+                    target: target_entity,
+                    amount: damage,
+                    source: Some(intent.attacker),
+                });
+                combat_log.push(format!("{a_name} kicks {t_name} for {damage} damage!"));
+                hit_count += 1;
+            }
+
+            // Aggro the target
+            commands.entity(target_entity).insert(Hostile);
+
+            // Calculate push direction (away from attacker)
+            let push_dir = (tv - origin).king_step();
+            let push_to = tv + push_dir;
+
+            // Check if push destination is passable and unoccupied
+            let tile_passable = game_map.0.is_passable(&push_to);
+            let entity_blocked = spatial.entities_at(&push_to).iter().any(|&e| {
+                e != target_entity && blockers.contains(e)
+            });
+
+            if tile_passable && !entity_blocked {
+                push_list.push((target_entity, tv, push_to));
             }
         }
 
-        // Destroy adjacent destructible props (Chebyshev distance 1).
-        let mut props_destroyed = 0;
+        // Apply pushes
+        for (entity, _from, to) in &push_list {
+            if let Ok((_, mut pos, _, _)) = targets.get_mut(*entity) {
+                pos.x = to.x;
+                pos.y = to.y;
+                push_count += 1;
+            }
+        }
+
+        // Damage adjacent props (using prop health system)
+        let mut props_damaged = 0;
         for dx in -1..=1i32 {
             for dy in -1..=1i32 {
                 if dx == 0 && dy == 0 {
                     continue;
                 }
                 let tile = origin + GridVec::new(dx, dy);
-                if let Some(voxel) = game_map.0.get_voxel_at_mut(&tile)
-                    && let Some(ref prop) = voxel.props {
-                        let is_indestructible = matches!(
-                            prop,
-                            Props::Wall
-                            | Props::HitchingPost | Props::Rock
-                        );
-                        if !is_indestructible {
-                            voxel.props = None;
-                            props_destroyed += 1;
+                if let Some(voxel) = game_map.0.get_voxel_at(&tile) {
+                    if let Some(ref prop) = voxel.props {
+                        let max_hp = prop.max_health();
+                        if max_hp == i32::MAX {
+                            continue; // indestructible
+                        }
+                        // Initialize prop health if not yet tracked
+                        let current_hp = prop_health.hp.entry(tile).or_insert(max_hp);
+                        *current_hp -= damage.max(5); // minimum 5 damage to props
+                        props_damaged += 1;
+                        if *current_hp <= 0 {
+                            // Destroy the prop
+                            if let Some(voxel) = game_map.0.get_voxel_at_mut(&tile) {
+                                voxel.props = None;
+                            }
+                            prop_health.hp.remove(&tile);
+                            combat_log.push(format!("{a_name} destroys a prop!"));
                         }
                     }
+                }
             }
         }
-        if props_destroyed > 0 {
-            combat_log.push(format!("{a_name} smashes {props_destroyed} prop(s)!"));
-        }
 
-        if hit_count == 0 && props_destroyed == 0 {
+        if hit_count == 0 && props_damaged == 0 {
             combat_log.push(format!("{a_name} roundhouse kicks but hits nothing!"));
+        } else if push_count > 0 {
+            combat_log.push(format!("{a_name} pushes {push_count} away!"));
         }
     }
 }

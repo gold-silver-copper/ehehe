@@ -402,6 +402,24 @@ pub struct SpectatingAfterDeath(pub bool);
 #[derive(Resource, Debug, Default)]
 pub struct GodMode(pub bool);
 
+/// GTA-style star (wanted) level. Higher stars = more sheriffs spawn.
+/// Decays when the player is not in hostile or sheriff vision for a while.
+#[derive(Resource, Debug, Default)]
+pub struct StarLevel {
+    /// Current wanted level (0 = peaceful, 1+ = wanted).
+    pub level: u32,
+    /// Turns since last seen by a hostile or sheriff NPC.
+    pub unseen_turns: u32,
+}
+
+/// Prop health map: tracks damage dealt to props.
+/// When accumulated damage exceeds the prop's max HP, it is destroyed.
+#[derive(Resource, Debug, Default)]
+pub struct PropHealth {
+    /// Maps world position → current remaining HP for the prop at that tile.
+    pub hp: HashMap<GridVec, i32>,
+}
+
 /// Extra world ticks remaining after a player action. Physical movement sets
 /// this to 1 so that the world turn cycles twice (2 total ticks), making
 /// physical movement slower than cursor movement (1 tick). The `end_world_turn`
