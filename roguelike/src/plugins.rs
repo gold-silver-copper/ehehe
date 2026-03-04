@@ -13,7 +13,7 @@ use crate::gamemap::GameMap;
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
 use crate::resources::{
-    BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameMapResource, GameState, InputState,
+    BloodMap, BulletAnimations, CameraPosition, Collectibles, CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameMapResource, GameState, InputState,
     KillCount, MapSeed, RestartRequested, SoundEvents, SpectatingAfterDeath, SpatialIndex, SpellParticles, TurnCounter,
     TurnState,
 };
@@ -104,6 +104,7 @@ impl Plugin for RoguelikePlugin {
             .init_resource::<SpectatingAfterDeath>()
             .init_resource::<DynamicRng>()
             .init_resource::<crate::resources::GodMode>()
+            .init_resource::<BulletAnimations>()
             // ── States ──
             .init_state::<GameState>()
             .add_sub_state::<TurnState>()
@@ -207,7 +208,7 @@ impl Plugin for RoguelikePlugin {
             // ── Render (always runs — shows PAUSED overlay when paused) ──
             .add_systems(
                 Update,
-                (render::cursor_blink_system, render::particle_tick_system)
+                (render::cursor_blink_system, render::particle_tick_system, projectile::bullet_animation_tick_system)
                     .in_set(RoguelikeSet::Render),
             )
             .add_systems(
@@ -215,7 +216,8 @@ impl Plugin for RoguelikePlugin {
                 render::draw_system
                     .in_set(RoguelikeSet::Render)
                     .after(render::cursor_blink_system)
-                    .after(render::particle_tick_system),
+                    .after(render::particle_tick_system)
+                    .after(projectile::bullet_animation_tick_system),
             );
     }
 }

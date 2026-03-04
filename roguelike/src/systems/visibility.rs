@@ -131,6 +131,35 @@ pub fn visibility_system(
             });
         }
 
+        // Smoke attenuation: smoke particles halve remaining vision range
+        // rather than blocking it entirely. For each visible tile, trace a
+        // ray from origin and check for smoke along the path. Each smoke
+        // tile halves the remaining travel distance from that point onward.
+        // Tiles beyond the attenuated range are removed.
+        if !sand_cloud_tiles.is_empty() || !game_map.0.sand_cloud_turns.is_empty() {
+            viewshed.visible_tiles.retain(|&tile| {
+                let diff = tile - origin;
+                if diff == GridVec::ZERO {
+                    return true;
+                }
+                let ray = origin.bresenham_line(tile);
+                let mut remaining = effective_range as f64;
+                for &ray_tile in ray.iter().skip(1) {
+                    remaining -= 1.0;
+                    if remaining < 0.0 {
+                        return false;
+                    }
+                    let is_smoke = sand_cloud_tiles.contains(&ray_tile)
+                        || game_map.0.get_voxel_at(&ray_tile)
+                            .is_some_and(|v| matches!(v.floor, Some(crate::typeenums::Floor::SandCloud)));
+                    if is_smoke && ray_tile != tile {
+                        remaining /= 2.0;
+                    }
+                }
+                true
+            });
+        }
+
         // Merge visible into revealed (fog of war memory).
         let newly_visible: Vec<MyPoint> = viewshed.visible_tiles.iter().copied().collect();
         viewshed.revealed_tiles.extend(newly_visible);
@@ -190,15 +219,11 @@ impl Slope {
 }
 
 /// Returns `true` if the tile at `point` blocks line-of-sight.
-fn is_opaque(game_map: &GameMapResource, point: MyPoint, sand_clouds: &HashSet<MyPoint>) -> bool {
-    if sand_clouds.contains(&point) {
-        return true;
-    }
+/// Smoke (SandCloud) does NOT block vision — it attenuates range instead
+/// (handled in the post-filter step of `visibility_system`).
+fn is_opaque(game_map: &GameMapResource, point: MyPoint, _sand_clouds: &HashSet<MyPoint>) -> bool {
     match game_map.0.get_voxel_at(&point) {
         Some(v) => {
-            if matches!(v.floor, Some(crate::typeenums::Floor::SandCloud)) {
-                return true;
-            }
             v.props.as_ref().is_some_and(|f| f.blocks_vision())
         }
         None => true, // off-map ⇒ opaque

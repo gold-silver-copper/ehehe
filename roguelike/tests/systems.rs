@@ -581,6 +581,7 @@ fn test_app_with_spells() -> App {
     app.init_resource::<GodMode>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
+    app.init_resource::<BulletAnimations>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
     app.insert_resource(MapSeed(42));
@@ -990,6 +991,7 @@ fn test_app_with_ranged() -> App {
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
     app.init_resource::<SpectatingAfterDeath>();
+    app.init_resource::<BulletAnimations>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
     app.insert_resource(MapSeed(42));
@@ -1836,6 +1838,7 @@ fn test_app_with_ai() -> App {
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
     app.init_resource::<Collectibles>();
+    app.init_resource::<BulletAnimations>();
     app.init_state::<GameState>();
     app.add_sub_state::<TurnState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
@@ -3089,10 +3092,10 @@ fn turn_counter_starts_at_zero() {
 
 #[test]
 fn bullet_speed_is_slow_enough_to_be_visible() {
-    // Bullets advance ~3 tiles per game turn and freeze in mid-air
-    // between turns (projectile_system skips AwaitingInput frames).
-    // This makes them clearly visible as a blinking dot between player actions.
-    const { assert!(projectile::BULLET_TILES_PER_TICK <= 5) };
+    // Bullets advance 12 tiles per game turn but are animated intra-tick:
+    // each tile of movement is rendered individually with a ~50ms delay,
+    // so the player can watch the bullet travel across the map.
+    const { assert!(projectile::BULLET_TILES_PER_TICK <= 15) };
     const { assert!(projectile::BULLET_TILES_PER_TICK >= 2) };
 }
 
@@ -3134,15 +3137,24 @@ fn bullet_projectile_has_bullet_trail_visual() {
         dy: 0,
         gun_item: Some(gun),
     });
-    app.update(); // ranged_attack_system spawns bullet
+    app.update(); // ranged_attack_system spawns bullet, projectile_system may advance/despawn it
 
+    // With 12 tiles/tick, the bullet may have already traversed its path and
+    // despawned. Check either the projectile entity or the bullet animation
+    // trail (which is created when a bullet advances during a tick).
     let proj = app.world_mut().query::<&Projectile>()
         .iter(app.world())
-        .next()
-        .expect("Bullet projectile should exist");
-    assert_eq!(proj.visual, ProjectileVisual::BulletTrail,
-        "Bullet should use BulletTrail visual");
-    assert!(proj.is_bullet, "Bullet should have is_bullet=true");
+        .find(|p| p.is_bullet);
+    let anims = app.world().resource::<BulletAnimations>();
+    let has_bullet_trail = !anims.trails.is_empty();
+
+    assert!(proj.is_some() || has_bullet_trail,
+        "Bullet should exist as projectile or have left an animation trail");
+    if let Some(p) = proj {
+        assert_eq!(p.visual, ProjectileVisual::BulletTrail,
+            "Bullet should use BulletTrail visual");
+        assert!(p.is_bullet, "Bullet should have is_bullet=true");
+    }
 }
 
 #[test]
