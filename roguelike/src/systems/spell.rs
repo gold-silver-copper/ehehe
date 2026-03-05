@@ -362,27 +362,8 @@ fn detonate_dynamite(
     // Chain-react gunpowder barrels: each one explodes in a fire radius
     for gp_pos in &gunpowder_positions {
         combat_log.push("Gunpowder barrel explodes!".to_string());
-        let gp_radius: i32 = 3;
-        for gdx in -gp_radius..=gp_radius {
-            for gdy in -gp_radius..=gp_radius {
-                let gp_dist = gdx.abs().max(gdy.abs());
-                if gp_dist > gp_radius { continue; }
-                let fire_pos = *gp_pos + GridVec::new(gdx, gdy);
-                if let Some(voxel) = game_map.0.get_voxel_at_mut(&fire_pos) {
-                    if matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall)) { continue; }
-                    if let Some(ref prop) = voxel.props {
-                        if prop.is_flammable() {
-                            voxel.props = None;
-                            fire_count += 1;
-                        }
-                    }
-                    if !matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)) {
-                        voxel.floor = Some(Floor::Fire);
-                        game_map.0.fire_turns.entry(fire_pos).or_insert(turn_counter.0);
-                    }
-                }
-            }
-        }
+        let destroyed = game_map.detonate_gunpowder_barrel(*gp_pos, turn_counter.0);
+        fire_count += destroyed;
     }
     if destroyed_count > 0 {
         combat_log.push(format!("The explosion destroys {destroyed_count} obstacle(s)!"));

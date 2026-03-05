@@ -1979,6 +1979,9 @@ fn place_rock_formations(map: &mut GameMap, width: CoordinateUnit, height: Coord
     }
 }
 
+/// Noise threshold for gunpowder barrel placement. Lower = more barrels.
+const GUNPOWDER_BARREL_SPAWN_RATE: f64 = 0.015;
+
 /// Scatters gunpowder barrels across the map in strategic locations.
 /// Placed near buildings and along streets as environmental hazards.
 fn place_gunpowder_barrels(
@@ -2004,7 +2007,7 @@ fn place_gunpowder_barrels(
             // Skip near spawn
             if pos.distance_squared(SPAWN_POINT) < 100 { continue; }
             let noise = value_noise(x, y, barrel_seed);
-            if noise > 0.015 { continue; } // ~1.5% of valid tiles
+            if noise > GUNPOWDER_BARREL_SPAWN_RATE { continue; }
             // Prefer tiles near buildings (at least one adjacent wall)
             let near_wall = pos.cardinal_neighbors().iter().any(|n| {
                 map.get_voxel_at(n).is_some_and(|v| v.props.as_ref().is_some_and(|p| p.is_wall()))

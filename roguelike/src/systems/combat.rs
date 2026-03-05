@@ -6,7 +6,7 @@ use crate::noise::value_noise;
 use crate::resources::{CombatLog, DynamicRng, GameMapResource, GameState, KillCount, MapSeed, SoundEvents, TurnCounter};
 use crate::grid_vec::GridVec;
 use crate::typedefs::{CoordinateUnit, RatColor};
-use crate::typeenums::{Floor, Props};
+use crate::typeenums::Props;
 
 /// Computes the bullet endpoint by scaling a direction vector so the
 /// Bresenham line extends approximately `range` tiles along the
@@ -614,24 +614,7 @@ pub fn melee_wide_system(
                             if is_gunpowder {
                                 // Gunpowder barrel explodes — set fire in radius
                                 combat_log.push("Gunpowder barrel explodes!".to_string());
-                                let gp_radius: i32 = 3;
-                                for gdx in -gp_radius..=gp_radius {
-                                    for gdy in -gp_radius..=gp_radius {
-                                        let gp_dist = gdx.abs().max(gdy.abs());
-                                        if gp_dist > gp_radius { continue; }
-                                        let fire_pos = tile + GridVec::new(gdx, gdy);
-                                        if let Some(fv) = game_map.0.get_voxel_at_mut(&fire_pos) {
-                                            if matches!(fv.props, Some(Props::Wall) | Some(Props::StoneWall)) { continue; }
-                                            if let Some(ref fp) = fv.props {
-                                                if fp.is_flammable() { fv.props = None; }
-                                            }
-                                            if !matches!(fv.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)) {
-                                                fv.floor = Some(Floor::Fire);
-                                                game_map.0.fire_turns.entry(fire_pos).or_insert(turn_counter.0);
-                                            }
-                                        }
-                                    }
-                                }
+                                game_map.detonate_gunpowder_barrel(tile, turn_counter.0);
                             } else {
                                 combat_log.push(format!("{a_name} destroys a prop!"));
                             }
