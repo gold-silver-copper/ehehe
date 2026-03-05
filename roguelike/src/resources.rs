@@ -440,6 +440,61 @@ pub struct StarLevel {
     pub player_hidden: bool,
 }
 
+/// Persistent player reputation that lingers even after wanted stars decay.
+/// NPCs who witnessed crimes remember the player's notoriety.  This allows
+/// the town to "feel" the player's history — civilians back away, strangers
+/// whisper, and the sheriff stays on edge even at 0 stars.
+///
+/// Reputation decays much more slowly than wanted level (1 point per 60 turns)
+/// and is increased by every witnessed crime.
+#[derive(Resource, Debug)]
+pub struct PlayerReputation {
+    /// Accumulated notoriety (0 = unknown, higher = more infamous).
+    pub infamy: u32,
+    /// Turn when reputation last increased.
+    pub last_crime_turn: u32,
+}
+
+impl Default for PlayerReputation {
+    fn default() -> Self {
+        Self { infamy: 0, last_crime_turn: 0 }
+    }
+}
+
+impl PlayerReputation {
+    /// Number of turns without a crime before reputation starts decaying.
+    const DECAY_COOLDOWN: u32 = 120;
+    /// One point of infamy decays every this many turns.
+    const DECAY_INTERVAL: u32 = 60;
+
+    /// Add infamy from a witnessed crime.
+    pub fn witness_crime(&mut self, severity: u32, turn: u32) {
+        self.infamy = (self.infamy + severity).min(100);
+        self.last_crime_turn = turn;
+    }
+
+    /// Tick reputation decay each world turn.
+    pub fn decay(&mut self, current_turn: u32) {
+        if self.infamy == 0 { return; }
+        let since_crime = current_turn.saturating_sub(self.last_crime_turn);
+        if since_crime > Self::DECAY_COOLDOWN
+            && current_turn.is_multiple_of(Self::DECAY_INTERVAL)
+        {
+            self.infamy = self.infamy.saturating_sub(1);
+        }
+    }
+
+    /// Returns true if NPCs should visibly react to the player's reputation.
+    pub fn is_notorious(&self) -> bool {
+        self.infamy >= 5
+    }
+
+    /// Returns true if NPCs should be frightened of the player.
+    pub fn is_feared(&self) -> bool {
+        self.infamy >= 15
+    }
+}
+
 /// Prop health map: tracks damage dealt to props.
 /// When accumulated damage exceeds the prop's max HP, it is destroyed.
 #[derive(Resource, Debug, Default)]

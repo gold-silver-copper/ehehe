@@ -36,6 +36,7 @@ fn test_app() -> App {
     app.init_resource::<GodMode>();
     app.init_resource::<roguelike::resources::StarLevel>();
     app.init_resource::<roguelike::resources::PropHealth>();
+    app.init_resource::<roguelike::resources::PlayerReputation>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
     app.init_state::<GameState>();
@@ -571,6 +572,7 @@ fn test_app_with_spells() -> App {
     app.init_resource::<GodMode>();
     app.init_resource::<roguelike::resources::StarLevel>();
     app.init_resource::<roguelike::resources::PropHealth>();
+    app.init_resource::<roguelike::resources::PlayerReputation>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
     app.init_state::<GameState>();
@@ -981,6 +983,7 @@ fn test_app_with_ranged() -> App {
     app.init_resource::<GodMode>();
     app.init_resource::<roguelike::resources::StarLevel>();
     app.init_resource::<roguelike::resources::PropHealth>();
+    app.init_resource::<roguelike::resources::PlayerReputation>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_state::<GameState>();
     app.insert_resource(GameMapResource(GameMap::new(120, 80, 42)));
@@ -1452,6 +1455,7 @@ fn test_app_with_cactus() -> App {
     app.init_resource::<GodMode>();
     app.init_resource::<roguelike::resources::StarLevel>();
     app.init_resource::<roguelike::resources::PropHealth>();
+    app.init_resource::<roguelike::resources::PlayerReputation>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
     app.init_state::<GameState>();
@@ -1830,6 +1834,7 @@ fn test_app_with_ai() -> App {
     app.init_resource::<GodMode>();
     app.init_resource::<roguelike::resources::StarLevel>();
     app.init_resource::<roguelike::resources::PropHealth>();
+    app.init_resource::<roguelike::resources::PlayerReputation>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
     app.init_resource::<Collectibles>();
@@ -4562,6 +4567,7 @@ fn test_app_sandbox() -> App {
     app.init_resource::<GodMode>();
     app.init_resource::<StarLevel>();
     app.init_resource::<PropHealth>();
+    app.init_resource::<roguelike::resources::PlayerReputation>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
     app.init_resource::<Gold>();

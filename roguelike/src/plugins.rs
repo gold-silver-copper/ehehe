@@ -113,6 +113,7 @@ impl Plugin for RoguelikePlugin {
             .init_resource::<crate::resources::GodMode>()
             .init_resource::<crate::resources::StarLevel>()
             .init_resource::<crate::resources::PropHealth>()
+            .init_resource::<crate::resources::PlayerReputation>()
             .init_resource::<Gold>()
             // ── States ──
             .init_state::<GameState>()
@@ -185,6 +186,7 @@ impl Plugin for RoguelikePlugin {
                     hiding::hide_system,
                     hiding::hiding_detection_system,
                     wanted::crime_system,
+                    wanted::reputation_decay_system,
                     brawl::brawl_escalation_system,
                 )
                     .chain()
@@ -588,7 +590,7 @@ fn restart_system(
     mut cursor: ResMut<CursorPosition>,
     mut collectibles: ResMut<Collectibles>,
     (mut extra_ticks, mut blood_map, mut spectating, mut dynamic_rng, mut god_mode): (ResMut<ExtraWorldTicks>, ResMut<BloodMap>, ResMut<SpectatingAfterDeath>, ResMut<DynamicRng>, ResMut<crate::resources::GodMode>),
-    (mut star_level, mut prop_health, mut gold): (ResMut<crate::resources::StarLevel>, ResMut<crate::resources::PropHealth>, ResMut<crate::resources::Gold>),
+    (mut star_level, mut prop_health, mut gold, mut reputation): (ResMut<crate::resources::StarLevel>, ResMut<crate::resources::PropHealth>, ResMut<crate::resources::Gold>, ResMut<crate::resources::PlayerReputation>),
 ) {
     if !restart.0 {
         return;
@@ -625,6 +627,7 @@ fn restart_system(
     *star_level = crate::resources::StarLevel::default();
     prop_health.hp.clear();
     *gold = crate::resources::Gold::default();
+    *reputation = crate::resources::PlayerReputation::default();
 
     next_game_state.set(GameState::Playing);
 
