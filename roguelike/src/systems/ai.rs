@@ -1141,6 +1141,11 @@ pub fn ai_system(
                         //   Midday (10-16): walk around town (expand patrol radius)
                         //   Evening (16-22): drift toward origin (home / saloon area)
                         //   Night (22-6): stay close to home, pause often
+                        let civ_dir_seed = energy.0.wrapping_add(my_pos.x.wrapping_mul(5) ^ my_pos.y.wrapping_mul(9));
+                        let random_wander = || {
+                            let dir_idx = civ_dir_seed.unsigned_abs() as usize % 8;
+                            Some(GridVec::DIRECTIONS_8[dir_idx])
+                        };
                         if hour >= 22 || hour < 6 {
                             // Night: stay close to home
                             if my_pos.chebyshev_distance(origin) > 4 {
@@ -1153,27 +1158,21 @@ pub fn ai_system(
                             if my_pos.chebyshev_distance(origin) > 6 {
                                 Some((origin - my_pos).king_step())
                             } else {
-                                let dir_seed = energy.0.wrapping_add(my_pos.x.wrapping_mul(5) ^ my_pos.y.wrapping_mul(9));
-                                let dir_idx = dir_seed.unsigned_abs() as usize % 8;
-                                Some(GridVec::DIRECTIONS_8[dir_idx])
+                                random_wander()
                             }
                         } else if hour >= 10 {
                             // Midday: explore further from home
                             if my_pos.chebyshev_distance(origin) > PATROL_RADIUS + 6 {
                                 Some((origin - my_pos).king_step())
                             } else {
-                                let dir_seed = energy.0.wrapping_add(my_pos.x.wrapping_mul(5) ^ my_pos.y.wrapping_mul(9));
-                                let dir_idx = dir_seed.unsigned_abs() as usize % 8;
-                                Some(GridVec::DIRECTIONS_8[dir_idx])
+                                random_wander()
                             }
                         } else {
                             // Morning: wander near home
                             if my_pos.chebyshev_distance(origin) > PATROL_RADIUS {
                                 Some((origin - my_pos).king_step())
                             } else {
-                                let dir_seed = energy.0.wrapping_add(my_pos.x.wrapping_mul(5) ^ my_pos.y.wrapping_mul(9));
-                                let dir_idx = dir_seed.unsigned_abs() as usize % 8;
-                                Some(GridVec::DIRECTIONS_8[dir_idx])
+                                random_wander()
                             }
                         }
                     }

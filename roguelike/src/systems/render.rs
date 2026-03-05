@@ -1039,7 +1039,7 @@ fn render_command_bar(frame: &mut ratatui::Frame, area: Rect, input_state: &Inpu
                 Span::from("Z").bold().yellow(), Span::from(":Dive ").dark_gray(),
                 Span::from("T").bold().yellow(), Span::from(":Wait ").dark_gray(),
                 Span::from("Q").bold().yellow(), Span::from(":Menu ").dark_gray(),
-                Span::from("?").bold().yellow(), Span::from(":Help").dark_gray(),
+                Span::from("?").bold().yellow(), Span::from(":Help ").dark_gray(),
             ]
         }
     };
