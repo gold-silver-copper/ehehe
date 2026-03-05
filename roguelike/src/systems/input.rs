@@ -82,6 +82,7 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
     CommandBinding { key: "9", name: "Throw sand (5 sta)", docs: "Create sand cloud blocking vision toward cursor." },
     CommandBinding { key: "0", name: "Throw item (10 sta)", docs: "Throw a random inventory item toward cursor." },
     CommandBinding { key: "Q", name: "Menu", docs: "Toggle pause menu" },
+    CommandBinding { key: "?", name: "Help", docs: "Open the detailed help screen with all controls and game info." },
 ];
 
 /// Reads keyboard input. Global keys (quit, pause, help) are always handled.
@@ -288,6 +289,10 @@ pub fn input_system(
                 if *game_state.get() == GameState::Playing {
                     next_game_state.set(GameState::Paused);
                 }
+            }
+            // ── Help screen toggle (?) ──────────────────────────
+            KeyCode::Char('?') => {
+                input_state.help_visible = !input_state.help_visible;
             }
             // ── Cursor movement (IJKL) — advances one tick ─────
             KeyCode::Char('i') if awaiting_input => {

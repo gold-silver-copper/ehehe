@@ -698,6 +698,11 @@ pub fn draw_system(
         if input_state.welcome_visible {
             render_welcome_overlay(frame, game_area);
         }
+
+        // Show detailed help screen
+        if input_state.help_visible {
+            render_help_overlay(frame, game_area);
+        }
     })?;
 
     Ok(())
@@ -1010,7 +1015,8 @@ fn render_command_bar(frame: &mut ratatui::Frame, area: Rect, input_state: &Inpu
                 Span::from("E").bold().yellow(), Span::from(":Pickup ").dark_gray(),
                 Span::from("Z").bold().yellow(), Span::from(":Dive ").dark_gray(),
                 Span::from("T").bold().yellow(), Span::from(":Wait ").dark_gray(),
-                Span::from("Q").bold().yellow(), Span::from(":Menu").dark_gray(),
+                Span::from("Q").bold().yellow(), Span::from(":Menu ").dark_gray(),
+                Span::from("?").bold().yellow(), Span::from(":Help").dark_gray(),
             ]
         }
     };
@@ -1075,6 +1081,191 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
             .wrap(Wrap { trim: false })
             .on_black(),
         welcome_area,
+    );
+}
+
+/// Renders a detailed, scrollable help screen covering all controls, game
+/// mechanics, factions, and context.  Toggled by pressing `?`.
+fn render_help_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
+    // Use almost the full game area so the player can read everything.
+    let w = game_area.width.saturating_sub(4).min(78);
+    let h = game_area.height.saturating_sub(2);
+
+    if w < 30 || h < 15 {
+        return;
+    }
+
+    let cx = game_area.x + (game_area.width.saturating_sub(w)) / 2;
+    let cy = game_area.y + (game_area.height.saturating_sub(h)) / 2;
+    let help_area = Rect { x: cx, y: cy, width: w, height: h };
+
+    frame.render_widget(Clear, help_area);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(120);
+
+    // ── Title ──
+    lines.push(Line::from(""));
+    lines.push(Line::from("  ═══════════  DEAD MAN'S HAND — HELP  ═══════════").bold().yellow());
+    lines.push(Line::from(""));
+
+    // ── Overview ──
+    lines.push(Line::from("  OVERVIEW").bold().white());
+    lines.push(Line::from("  A sandbox roguelike set in an 1850s frontier town.").dark_gray());
+    lines.push(Line::from("  Walk the dusty streets, talk to townsfolk, drink at").dark_gray());
+    lines.push(Line::from("  the saloon, and try not to get killed. Every action").dark_gray());
+    lines.push(Line::from("  has consequences — provoke too many people and the").dark_gray());
+    lines.push(Line::from("  sheriff comes for you. Escape through the town gate").dark_gray());
+    lines.push(Line::from("  to win, or die trying.").dark_gray());
+    lines.push(Line::from(""));
+
+    // ── Movement ──
+    lines.push(Line::from("  MOVEMENT & NAVIGATION").bold().white());
+    lines.push(Line::from(vec![
+        Span::from("  WASD / Arrows").bold().yellow(),
+        Span::from("  Move one tile (costs 3 ticks)").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  IJKL         ").bold().yellow(),
+        Span::from("  Move cursor / aim (costs 1 tick)").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  C            ").bold().yellow(),
+        Span::from("  Center cursor on player").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  V            ").bold().yellow(),
+        Span::from("  Auto-aim at nearest enemy").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  T            ").bold().yellow(),
+        Span::from("  Wait / skip turn (1 tick)").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  Z            ").bold().yellow(),
+        Span::from("  Dive 3 tiles toward cursor (20 stamina)").dark_gray(),
+    ]));
+    lines.push(Line::from(""));
+
+    // ── Combat ──
+    lines.push(Line::from("  COMBAT").bold().white());
+    lines.push(Line::from(vec![
+        Span::from("  G            ").bold().yellow(),
+        Span::from("  Punch in cursor direction (2 ticks)").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  F            ").bold().yellow(),
+        Span::from("  Roundhouse kick all adjacent foes (2 ticks)").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  R            ").bold().yellow(),
+        Span::from("  Reload gun (needs 1 bullet + 1 cap + 1 powder, 6 ticks)").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  1-6          ").bold().yellow(),
+        Span::from("  Fire / use inventory slot (2 ticks)").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  7            ").bold().yellow(),
+        Span::from("  Dual wield — fire two revolvers at once (15 stamina)").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  8            ").bold().yellow(),
+        Span::from("  Fan shot — empty all rounds fast (20 stamina)").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  9            ").bold().yellow(),
+        Span::from("  Throw sand — create blinding cloud (5 stamina)").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  0            ").bold().yellow(),
+        Span::from("  Throw random inventory item (10 stamina)").dark_gray(),
+    ]));
+    lines.push(Line::from(""));
+
+    // ── Interaction ──
+    lines.push(Line::from("  INTERACTION & STEALTH").bold().white());
+    lines.push(Line::from(vec![
+        Span::from("  X            ").bold().yellow(),
+        Span::from("  Talk to adjacent NPC / buy at saloon bar").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  E            ").bold().yellow(),
+        Span::from("  Pick up item at your feet").dark_gray(),
+    ]));
+    lines.push(Line::from(vec![
+        Span::from("  H            ").bold().yellow(),
+        Span::from("  Hide in barrel / hay / outhouse / wardrobe").dark_gray(),
+    ]));
+    lines.push(Line::from("  When talking (X), choose: 1=Greet 2=Taunt 3=Threaten 4=Ask".dark_gray()));
+    lines.push(Line::from("  Greet calms NPCs, taunts/threats raise hostility.".dark_gray()));
+    lines.push(Line::from("  If hostility crosses their mood threshold, they fight!".dark_gray()));
+    lines.push(Line::from(""));
+
+    // ── Sandbox systems ──
+    lines.push(Line::from("  SANDBOX SYSTEMS").bold().white());
+    lines.push(Line::from("  Wanted Level (★)".bold().yellow()));
+    lines.push(Line::from("    Crimes are witnessed within 10 tiles. Each crime adds".dark_gray()));
+    lines.push(Line::from("    stars: Assault +1, Murder +2, Arson +1, Shooting +1.".dark_gray()));
+    lines.push(Line::from("    At 1★ the sheriff investigates. At 2★+ deputies join.".dark_gray()));
+    lines.push(Line::from("    At 3★+ a posse spawns at the town edge.".dark_gray()));
+    lines.push(Line::from("    Stars decay after 30 unseen turns. Hiding speeds decay.".dark_gray()));
+    lines.push(Line::from("    NPCs who witnessed your crimes remember you even after".dark_gray()));
+    lines.push(Line::from("    stars decay — they'll be nervous and back away.".dark_gray()));
+    lines.push(Line::from(""));
+    lines.push(Line::from("  Brawls".bold().yellow()));
+    lines.push(Line::from("    Punch or kick someone to start a non-lethal fistfight.".dark_gray()));
+    lines.push(Line::from("    Nearby same-faction NPCs may join in. Drawing a weapon".dark_gray()));
+    lines.push(Line::from("    during a brawl escalates to lethal combat.".dark_gray()));
+    lines.push(Line::from(""));
+    lines.push(Line::from("  NPC Moods".bold().yellow()));
+    lines.push(Line::from("    Calm → Nervous → Angry. Drunk NPCs stagger and have".dark_gray()));
+    lines.push(Line::from("    low provocation thresholds. Civilians flee from fire,".dark_gray()));
+    lines.push(Line::from("    brawls, and high-wanted players. The sheriff warns".dark_gray()));
+    lines.push(Line::from("    before shooting and tries to cut off escape routes.".dark_gray()));
+    lines.push(Line::from(""));
+    lines.push(Line::from("  Saloon".bold().yellow()));
+    lines.push(Line::from("    Walk to the bar and press X to open the buy menu.".dark_gray()));
+    lines.push(Line::from("    Whiskey makes you drunk (stagger + low accuracy).".dark_gray()));
+    lines.push(Line::from("    Food heals HP. Information reveals rumors.".dark_gray()));
+    lines.push(Line::from("    Your gold total is shown in the stats panel.".dark_gray()));
+    lines.push(Line::from(""));
+
+    // ── Factions ──
+    lines.push(Line::from("  FACTIONS").bold().white());
+    lines.push(Line::from("    Civilians  — Townsfolk. Flee from danger.".dark_gray()));
+    lines.push(Line::from("    Outlaws    — Red-orange @. Bandits outside town.".dark_gray()));
+    lines.push(Line::from("    Lawmen     — Blue @. Patrol and defend the town.".dark_gray()));
+    lines.push(Line::from("    Vaqueros   — Green @. Mexican cowboys.".dark_gray()));
+    lines.push(Line::from("    Indians    — Brown @. Territorial with bows.".dark_gray()));
+    lines.push(Line::from("    Sheriff    — Gold @. Responds to crime, warns first.".dark_gray()));
+    lines.push(Line::from("    Wildlife   — Lowercase letters. Coyotes and snakes.".dark_gray()));
+    lines.push(Line::from(""));
+
+    // ── UI guide ──
+    lines.push(Line::from("  UI GUIDE").bold().white());
+    lines.push(Line::from("    Bottom-left: HP (red) and Stamina (blue) bars.".dark_gray()));
+    lines.push(Line::from("    Bottom-left: Wanted stars (★) and Gold ($).".dark_gray()));
+    lines.push(Line::from("    Bottom-center: Combat log — recent events.".dark_gray()));
+    lines.push(Line::from("    Bottom-right: Cursor tile info.".dark_gray()));
+    lines.push(Line::from("    Very bottom: Inventory slots (1-6).".dark_gray()));
+    lines.push(Line::from("    Blood on ground decays over 20 turns.".dark_gray()));
+    lines.push(Line::from("    '!' marks = gunshot sounds outside your view.".dark_gray()));
+    lines.push(Line::from(""));
+
+    // ── Footer ──
+    lines.push(Line::from("  Press ? to close this screen.").bold().dark_gray());
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Help — Press ? to close ")
+                    .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Yellow)),
+            )
+            .wrap(Wrap { trim: false })
+            .on_black(),
+        help_area,
     );
 }
 
