@@ -4,24 +4,20 @@ use bevy::prelude::*;
 
 use crate::components::{
     BlocksMovement, Caliber, CameraFollow, CombatStats, Energy, Faction,
-    GroupLeader,
     Health, Inventory, Item, ItemKind, Stamina, Name, Player, Position,
     Renderable, Speed, Viewshed, ACTION_COST,
 };
-use crate::events::{AiRangedAttackIntent, AttackIntent, BrawlEscalation, CrimeEvent, DamageEvent, HideIntent, InteractionIntent, MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
+use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
 use crate::gamemap::GameMap;
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
 use crate::resources::{
-    BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameMapResource, GameState, Gold, InputState,
+    BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameMapResource, GameState, InputState,
     KillCount, MapSeed, RestartRequested, SoundEvents, SpectatingAfterDeath, SpatialIndex, SpellParticles, TurnCounter,
     TurnState,
 };
-use crate::systems::{ai, brawl, camera, combat, hiding, input, interaction, inventory, movement, projectile, render, spawn, spatial_index, spell, turn, visibility, wanted};
+use crate::systems::{ai, camera, combat, input, inventory, movement, projectile, render, spawn, spatial_index, spell, turn, visibility};
 use crate::systems::spawn::MONSTER_TEMPLATES;
-
-/// Index of the Civilian template in MONSTER_TEMPLATES (tier 6).
-const CIVILIAN_TEMPLATE_IDX: usize = 6;
 use crate::typedefs::{RatColor, SPAWN_POINT, SPAWN_X, SPAWN_Y};
 
 // ─────────────────────────── System Sets ───────────────────────────
@@ -88,10 +84,6 @@ impl Plugin for RoguelikePlugin {
             .add_message::<AiRangedAttackIntent>()
             .add_message::<ThrowItemIntent>()
             .add_message::<MolotovCastIntent>()
-            .add_message::<InteractionIntent>()
-            .add_message::<CrimeEvent>()
-            .add_message::<HideIntent>()
-            .add_message::<BrawlEscalation>()
             // ── Resources ──
             .insert_resource(MapSeed(seed))
             .insert_resource(GameMapResource(game_map))
@@ -113,8 +105,6 @@ impl Plugin for RoguelikePlugin {
             .init_resource::<crate::resources::GodMode>()
             .init_resource::<crate::resources::StarLevel>()
             .init_resource::<crate::resources::PropHealth>()
-            .init_resource::<crate::resources::PlayerReputation>()
-            .init_resource::<Gold>()
             // ── States ──
             .init_state::<GameState>()
             .add_sub_state::<TurnState>()
@@ -177,22 +167,6 @@ impl Plugin for RoguelikePlugin {
                     .in_set(RoguelikeSet::Action)
                     .run_if(in_state(GameState::Playing)),
             )
-            // ── Interaction & Hiding (gated on Playing state) ──
-            .add_systems(
-                Update,
-                (
-                    interaction::interaction_system,
-                    interaction::saloon_effect_system,
-                    hiding::hide_system,
-                    hiding::hiding_detection_system,
-                    wanted::crime_system,
-                    wanted::reputation_decay_system,
-                    brawl::brawl_escalation_system,
-                )
-                    .chain()
-                    .in_set(RoguelikeSet::Action)
-                    .run_if(in_state(GameState::Playing)),
-            )
             // ── Consequence (gated on Playing state) ──
             .add_systems(
                 Update,
@@ -217,13 +191,9 @@ impl Plugin for RoguelikePlugin {
                 (
                     ai::energy_accumulate_system,
                     ai::ai_system,
-                    ai::leader_death_system,
                     combat::ai_ranged_attack_system,
                     turn::fire_system,
                     turn::star_level_system,
-                    interaction::drunk_tick_system,
-                    interaction::mood_system,
-                    brawl::brawl_witness_system,
                 )
                     .chain()
                     .after(RoguelikeSet::Consequence)
@@ -232,7 +202,7 @@ impl Plugin for RoguelikePlugin {
             .add_systems(
                 Update,
                 turn::end_world_turn
-                    .after(brawl::brawl_witness_system)
+                    .after(turn::star_level_system)
                     .run_if(in_state(TurnState::WorldTurn)),
             )
             // ── Render (always runs — shows PAUSED overlay when paused) ──
@@ -337,18 +307,6 @@ fn do_spawn_player(commands: &mut Commands, map: &GameMapResource) {
         ItemKind::WaterBucket { uses: 3, radius: 2, blunt_damage: 3 },
     )).id();
 
-    // Spawn starting matches
-    let matches = commands.spawn((
-        Item,
-        Name("Matches".into()),
-        Renderable {
-            symbol: "m".into(),
-            fg: RatColor::Rgb(255, 160, 60),
-            bg: RatColor::Black,
-        },
-        ItemKind::Matches { uses: 5, blunt_damage: 1 },
-    )).id();
-
     commands.spawn((
         Position {
             x: spawn_pos.x,
@@ -378,7 +336,7 @@ fn do_spawn_player(commands: &mut Commands, map: &GameMapResource) {
         Speed(ACTION_COST),
         Energy(0),
     )).insert((
-        Inventory { items: vec![colt_pocket, knife, whiskey, molotov, water_bucket, matches] },
+        Inventory { items: vec![colt_pocket, knife, whiskey, molotov, water_bucket] },
         Viewshed {
             range: 40,
             visible_tiles: HashSet::new(),
@@ -402,7 +360,7 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
     let bridge_y = bridge_center.y;
 
     // ── Indians on left bank (x < river_center), facing right ──────
-    let indian_templates: &[usize] = &[7, 8]; // Indian Brave, Indian Scout
+    let indian_templates: &[usize] = &[2, 3]; // Indian Brave, Indian Scout
     let mut indian_count = 0;
     let target_indians = 8 + (value_noise(bridge_center.x, bridge_center.y, group_seed.wrapping_add(1111)) * 4.0) as i32;
     for dy in -15i32..=15 {
@@ -429,16 +387,13 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
             let ent = spawn::spawn_monster(commands, template, pos.x, pos.y, 0, 0);
             // Indians look right (toward Mexicans)
             commands.entity(ent).insert(crate::components::AiLookDir(GridVec::new(1, 0)));
-            if indian_count == 0 {
-                commands.entity(ent).insert(GroupLeader);
-            }
             indian_count += 1;
         }
         if indian_count >= target_indians { break; }
     }
 
     // ── Mexicans/Vaqueros on right bank (x > river_center), facing left ──
-    let vaquero_templates: &[usize] = &[3]; // Vaquero
+    let vaquero_templates: &[usize] = &[0]; // Vaquero
     let mut vaquero_count = 0;
     let target_vaqueros = 8 + (value_noise(bridge_center.x + 1, bridge_center.y, group_seed.wrapping_add(2222)) * 4.0) as i32;
     for dy in -15i32..=15 {
@@ -464,9 +419,6 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
             let ent = spawn::spawn_monster(commands, template, pos.x, pos.y, 0, 0);
             // Vaqueros look left (toward Indians)
             commands.entity(ent).insert(crate::components::AiLookDir(GridVec::new(-1, 0)));
-            if vaquero_count == 0 {
-                commands.entity(ent).insert(GroupLeader);
-            }
             vaquero_count += 1;
         }
         if vaquero_count >= target_vaqueros { break; }
@@ -476,7 +428,7 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
     let anchor_radius = 8i32;
     for (anchor_pos, faction, _name) in &map.0.faction_anchors {
         let templates: &[usize] = match faction {
-            crate::components::Faction::Civilians => &[6],
+            crate::components::Faction::Civilians => &[1],
             _ => continue,
         };
         let base_size = 3 + (value_noise(anchor_pos.x, anchor_pos.y, group_seed.wrapping_add(44444)) * 4.0) as i32;
@@ -498,35 +450,10 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
         }
     }
 
-    // ── Bartender NPCs inside saloon buildings ─────────────────────
-    // Saloons are anchored to Outlaws; place a civilian "Barman" NPC inside.
-    for (anchor_pos, _faction, anchor_name) in &map.0.faction_anchors {
-        if anchor_name != "Cantina" { continue; }
-        // Find a spawnable tile inside the saloon (near the bar / back wall)
-        for dy in -3i32..=3 {
-            for dx in -3i32..=3 {
-                let pos = GridVec::new(anchor_pos.x + dx, anchor_pos.y + dy);
-                if !map.0.is_spawnable(&pos) { continue; }
-                // Place on wood planks (inside building)
-                let on_wood = map.0.get_voxel_at(&pos).is_some_and(|v|
-                    matches!(v.floor, Some(crate::typeenums::Floor::WoodPlanks)));
-                if !on_wood { continue; }
-                let template = &MONSTER_TEMPLATES[CIVILIAN_TEMPLATE_IDX];
-                let ent = spawn::spawn_monster(commands, template, pos.x, pos.y, 0, 0);
-                commands.entity(ent).insert(crate::components::Name("Barman Jack".into()));
-                commands.entity(ent).insert(crate::components::NpcMood::Calm);
-                commands.entity(ent).insert(crate::components::Hostility::default());
-                commands.entity(ent).insert(crate::components::Bartender);
-                break;
-            }
-            break;
-        }
-    }
-
     // ── Sheriffs near sheriff office buildings ──────────────────────
     for (anchor_pos, faction, _name) in &map.0.faction_anchors {
         let templates: &[usize] = match faction {
-            crate::components::Faction::Sheriff => &[9, 10],
+            crate::components::Faction::Sheriff => &[4, 5],
             _ => continue,
         };
         let base_size = 2 + (value_noise(anchor_pos.x, anchor_pos.y, group_seed.wrapping_add(66666)) * 3.0) as i32;
@@ -551,10 +478,10 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
     // ── Flavor: scatter a few of each faction around the map ───────
     let scatter_seed = group_seed.wrapping_add(99999);
     let scatter_factions: &[(usize, u64)] = &[
-        (7, 1), (8, 2), // Indians
-        (3, 3),         // Vaqueros
-        (6, 4),         // Civilians
-        (9, 5),         // Sheriff
+        (2, 1), (3, 2), // Indians
+        (0, 3),         // Vaqueros
+        (1, 4),         // Civilians
+        (4, 5),         // Sheriff
     ];
     for &(template_idx, offset) in scatter_factions {
         let template = &MONSTER_TEMPLATES[template_idx];
@@ -590,7 +517,7 @@ fn restart_system(
     mut cursor: ResMut<CursorPosition>,
     mut collectibles: ResMut<Collectibles>,
     (mut extra_ticks, mut blood_map, mut spectating, mut dynamic_rng, mut god_mode): (ResMut<ExtraWorldTicks>, ResMut<BloodMap>, ResMut<SpectatingAfterDeath>, ResMut<DynamicRng>, ResMut<crate::resources::GodMode>),
-    (mut star_level, mut prop_health, mut gold, mut reputation): (ResMut<crate::resources::StarLevel>, ResMut<crate::resources::PropHealth>, ResMut<crate::resources::Gold>, ResMut<crate::resources::PlayerReputation>),
+    (mut star_level, mut prop_health): (ResMut<crate::resources::StarLevel>, ResMut<crate::resources::PropHealth>),
 ) {
     if !restart.0 {
         return;
@@ -626,8 +553,6 @@ fn restart_system(
     dynamic_rng.reset();
     *star_level = crate::resources::StarLevel::default();
     prop_health.hp.clear();
-    *gold = crate::resources::Gold::default();
-    *reputation = crate::resources::PlayerReputation::default();
 
     next_game_state.set(GameState::Playing);
 
