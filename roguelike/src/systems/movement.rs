@@ -1,17 +1,11 @@
 use bevy::prelude::*;
 
-use crate::components::{BlocksMovement, Dead, Health, PlayerControlled, Position, Stamina, Viewshed};
+use crate::components::{BlocksMovement, Health, PlayerControlled, Position, Stamina, Viewshed};
 use crate::events::MoveIntent;
 use crate::grid_vec::GridVec;
 use crate::resources::{BloodMap, CombatLog, CursorPosition, GameMapResource, GameState, InputState, SpatialIndex, TurnCounter, TurnState};
 /// Health threshold below which entities leave blood trails when moving.
 const BLOOD_DRIP_THRESHOLD: i32 = 40;
-
-/// HP lost per wound tick while wounded (below max HP) and moving.
-const WOUND_DAMAGE_PER_TICK: i32 = 1;
-
-/// Number of steps between wound damage ticks.
-const WOUND_DAMAGE_INTERVAL: u32 = 5;
 
 /// Processes `MoveIntent` events: checks the target tile on the `GameMap` for
 /// walkability *and* the `SpatialIndex` for entities that block movement.
@@ -37,9 +31,8 @@ pub fn movement_system(
     turn_counter: Res<TurnCounter>,
     blockers: Query<(), With<BlocksMovement>>,
     players: Query<(), With<PlayerControlled>>,
-    mut healths: Query<&mut Health>,
+    healths: Query<&Health>,
     mut movers: Query<(&mut Position, Option<&mut Viewshed>)>,
-    dead_query: Query<(), With<Dead>>,
 ) {
     for intent in intents.read() {
         let Ok((mut pos, viewshed)) = movers.get_mut(intent.entity) else {
@@ -66,15 +59,6 @@ pub fn movement_system(
                 && hp.current < BLOOD_DRIP_THRESHOLD {
                     blood_map.stains.insert(old_pos, turn_counter.0);
                 }
-
-            // ── Wound damage: wounded entities lose HP every few steps ─
-            if turn_counter.0.is_multiple_of(WOUND_DAMAGE_INTERVAL)
-                && !dead_query.contains(intent.entity)
-                    && let Ok(mut hp) = healths.get_mut(intent.entity)
-                        && hp.current < hp.max
-                        && hp.current > 0 {
-                            hp.apply_damage(WOUND_DAMAGE_PER_TICK);
-                        }
 
             let delta = GridVec::new(intent.dx, intent.dy);
             pos.x = target.x;

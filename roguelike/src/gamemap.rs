@@ -377,9 +377,9 @@ impl WorldGenPhase for InfrastructurePhase {
 
         // ── Pass 3b: Bridges where horizontal roads cross the river ──────
         // Only bridge at the specific coordinates where a horizontal avenue
-        // road band crosses water. Bridge tiles replace ShallowWater and
-        // DeepWater only — BeachSand tiles are preserved as the river bank
-        // buffer. Vertical cross streets never bridge the river.
+        // road band crosses water. Bridge tiles replace ShallowWater,
+        // DeepWater, and BeachSand so the bridge surface is clean.
+        // Vertical cross streets never bridge the river.
         let road_band = avenue_half_width + sidewalk_width;
         for &ay in &data.avenue_ys {
             let curve_amp = 3.0 + value_noise(ay, 0, curve_seed) * 4.0;
@@ -403,7 +403,7 @@ impl WorldGenPhase for InfrastructurePhase {
             }
             // Second pass: at crossing X positions, bridge only within the
             // road band so the bridge is road-width, not river-width.
-            // Only replace actual water tiles — BeachSand is preserved.
+            // Replace water and beach sand tiles so bridges have a clean surface.
             for x in 1..width - 1 {
                 if !crosses_water[x as usize] { continue; }
                 let curve_offset = (x as f64 * curve_freq).sin() * curve_amp;
@@ -413,7 +413,7 @@ impl WorldGenPhase for InfrastructurePhase {
                     if y <= 0 || y >= height - 1 { continue; }
                     let pos = GridVec::new(x, y);
                     if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                        if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)) {
+                        if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::BeachSand)) {
                             voxel.floor = Some(Floor::Bridge);
                             voxel.props = None;
                         }
@@ -2725,9 +2725,8 @@ fn verify_world(
         }
     }
 
-    // 7. No BeachSand tile has been overwritten by a bridge tile.
-    //    (BeachSand preservation is enforced by the bridge placement pass.
-    //    This is a structural invariant — verified by the bridge code itself.)
+    // 7. Bridges now override BeachSand tiles within the road band so
+    //    bridge surfaces are clean. No separate verification needed.
 
     Ok(())
 }
