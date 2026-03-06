@@ -1606,6 +1606,8 @@ fn generate_buildings_bsp(
         let pad = BSP_PADDING;
         let bx = lx + pad;
         let by = ly + pad;
+        // Cap infill buildings at modest sizes so they fit snugly in
+        // leftover lots without overwhelming the surrounding buildings.
         let bw = (lw - pad * 2).min(12);
         let bh = (lh - pad * 2).min(10);
         if bw < 4 || bh < 4 { continue; }
@@ -2770,13 +2772,13 @@ fn place_mission(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUni
         if map.has_excluded_tile(mx, my, mw, mh) { continue; }
 
         // Lay down thick stone walls and interior
-        place_mission_at(map, mx, my, mw, mh, seed);
+        place_mission_at(map, mx, my, mw, mh);
         return;
     }
 }
 
 /// Internal helper: actually places mission tiles at the given position.
-fn place_mission_at(map: &mut GameMap, mx: CoordinateUnit, my: CoordinateUnit, mw: CoordinateUnit, mh: CoordinateUnit, _seed: NoiseSeed) {
+fn place_mission_at(map: &mut GameMap, mx: CoordinateUnit, my: CoordinateUnit, mw: CoordinateUnit, mh: CoordinateUnit) {
     for y in my..my + mh {
         for x in mx..mx + mw {
             let pos = GridVec::new(x, y);
@@ -3525,9 +3527,6 @@ fn place_outposts(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUn
             for dx in 0..ow {
                 let pos = GridVec::new(ox + dx, oy + dy);
                 if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                    if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand)) {
-                        continue;
-                    }
                     let is_border = dx == 0 || dx == ow - 1 || dy == 0 || dy == oh - 1;
                     let is_door = dy == oh - 1 && dx == ow / 2;
                     if is_border && !is_door {
