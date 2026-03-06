@@ -134,6 +134,15 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
     },
 ];
 
+#[inline]
+fn inventory_slot_from_key(c: char) -> Option<usize> {
+    match c {
+        '1'..='9' => Some((c as usize) - ('1' as usize)),
+        '0' => Some(9),
+        _ => None,
+    }
+}
+
 /// Reads keyboard input. Global keys (quit, pause, help) are always handled.
 /// Movement keys are only processed while `TurnState::AwaitingInput`,
 /// which transitions the game into `PlayerTurn` so that the action is
@@ -460,10 +469,10 @@ pub fn input_system(
                     combat_log.push("God mode DISABLED.".into());
                 }
             }
-            // ── Use inventory item by slot (1-6) / Fire gun toward cursor / Throw / Grenade ──
+            // ── Use inventory item by slot (1-0) / Fire gun toward cursor / Throw / Grenade ──
             // Combat actions cost 2 ticks.
-            KeyCode::Char(c @ '1'..='6') if awaiting_input => {
-                let idx = (c as usize) - ('1' as usize);
+            KeyCode::Char(c) if awaiting_input && inventory_slot_from_key(c).is_some() => {
+                let idx = inventory_slot_from_key(c).expect("guarded above");
                 let mut handled = false;
                 if let Some(inv) = player_inv
                     && let Some(&item_entity) = inv.items.get(idx)
@@ -648,6 +657,20 @@ fn advance_turn(next_turn_state: &mut Option<ResMut<NextState<TurnState>>>) {
 fn mark_viewshed_dirty(player_viewshed: &mut Query<&mut Viewshed, With<PlayerControlled>>) {
     if let Ok(mut vs) = player_viewshed.single_mut() {
         vs.dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inventory_slot_from_key;
+
+    #[test]
+    fn inventory_keys_cover_one_through_zero() {
+        assert_eq!(inventory_slot_from_key('1'), Some(0));
+        assert_eq!(inventory_slot_from_key('5'), Some(4));
+        assert_eq!(inventory_slot_from_key('9'), Some(8));
+        assert_eq!(inventory_slot_from_key('0'), Some(9));
+        assert_eq!(inventory_slot_from_key('x'), None);
     }
 }
 
