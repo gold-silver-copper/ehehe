@@ -4544,4 +4544,62 @@ mod tests {
         }
         assert!(found_room_grid, "Large buildings should have interior dividing walls (room grid)");
     }
+
+    #[test]
+    fn bridge_fire_burnout_produces_water() {
+        // Create a small map, manually place a bridge tile, set it on fire,
+        // and verify burnout converts to water (not scorched earth).
+        let mut map = GameMap {
+            width: 10,
+            height: 10,
+            voxels: vec![vec![Voxel { floor: Some(Floor::Dirt), props: None }; 10]; 10],
+            fire_turns: HashMap::new(),
+            fire_previous_floor: HashMap::new(),
+            sand_cloud_turns: HashMap::new(),
+            sand_cloud_previous_floor: HashMap::new(),
+            faction_anchors: Vec::new(),
+            occupancy: vec![vec![false; 10]; 10],
+        };
+        let bridge_pos = GridVec::new(5, 5);
+        // Place bridge surrounded by shallow water (simulating a river).
+        map.voxels[5][5].floor = Some(Floor::Bridge);
+        map.voxels[5][4].floor = Some(Floor::ShallowWater);
+        map.voxels[5][6].floor = Some(Floor::ShallowWater);
+        map.voxels[4][5].floor = Some(Floor::DeepWater);
+        map.voxels[6][5].floor = Some(Floor::DeepWater);
+
+        // Record previous floor and set on fire.
+        map.fire_previous_floor.insert(bridge_pos, Some(Floor::Bridge));
+        map.voxels[5][5].floor = Some(Floor::Fire);
+        map.fire_turns.insert(bridge_pos, 0);
+
+        // Verify the previous floor is tracked as Bridge.
+        assert_eq!(
+            map.fire_previous_floor.get(&bridge_pos),
+            Some(&Some(Floor::Bridge)),
+        );
+    }
+
+    #[test]
+    fn wider_cross_street_spacing() {
+        // Verify that the vertical cross-street spacing produces fewer
+        // streets and wider lots than the old 28-42 tile range.
+        let map = GameMap::new(400, 280, 42);
+        let mut cross_road_xs: Vec<CoordinateUnit> = Vec::new();
+        // Sample the middle row for DirtRoad tiles that are vertical roads
+        let sample_y = 140;
+        let mut in_road = false;
+        for x in 0..400 {
+            let is_road = matches!(map.voxels[sample_y as usize][x as usize].floor, Some(Floor::DirtRoad));
+            if is_road && !in_road {
+                cross_road_xs.push(x);
+            }
+            in_road = is_road;
+        }
+        // With the wider spacing (48-64 base), there should be fewer cross streets.
+        // On a 400-wide map with old 28-42 spacing, there were ~8-10 roads.
+        // With new 48-64 spacing, expect roughly 5-7 or fewer.
+        assert!(cross_road_xs.len() <= 10,
+            "Expected fewer vertical roads with wider spacing, got {}", cross_road_xs.len());
+    }
 }

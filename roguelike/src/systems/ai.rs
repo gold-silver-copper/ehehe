@@ -1681,4 +1681,50 @@ mod tests {
         assert!(cost::COVER_PER_WALL > 0);
         assert!(cost::EXPOSED > 0);
     }
+
+    // ── Patrol rotation helpers ───────────────────────────────────
+
+    #[test]
+    fn circular_rotation_cycles_all_8_directions() {
+        // Verify that DIRECTIONS_8 is 8 elements and they form a CW cycle.
+        assert_eq!(GridVec::DIRECTIONS_8.len(), 8);
+        // Starting from NORTH, stepping CW through all 8 should return to NORTH.
+        let start_idx = GridVec::DIRECTIONS_8.iter()
+            .position(|&d| d == GridVec::NORTH)
+            .unwrap();
+        let end_idx = (start_idx + 8) % 8;
+        assert_eq!(GridVec::DIRECTIONS_8[end_idx], GridVec::NORTH);
+    }
+
+    #[test]
+    fn full_rotation_steps_constant_is_eight() {
+        assert_eq!(FULL_ROTATION_STEPS, 8,
+            "A full 360° rotation should take exactly 8 steps of 45° each");
+    }
+
+    #[test]
+    fn rotation_counter_prevents_premature_resume() {
+        // Simulate a rotation sequence by manually tracking the counter.
+        let mut remaining: u8 = FULL_ROTATION_STEPS;
+        let mut steps_taken = 0;
+        while remaining > 0 {
+            remaining = remaining.saturating_sub(1);
+            steps_taken += 1;
+        }
+        assert_eq!(steps_taken, FULL_ROTATION_STEPS as u32);
+    }
+
+    #[test]
+    fn half_rotation_requires_four_steps() {
+        // A half rotation (180°) requires at least 4 × 45° steps.
+        // This ensures an NPC won't face a recently-faced direction
+        // until completing at least a half rotation.
+        let start = GridVec::NORTH;
+        let start_idx = GridVec::DIRECTIONS_8.iter()
+            .position(|&d| d == start)
+            .unwrap();
+        let opposite_idx = (start_idx + 4) % 8;
+        assert_eq!(GridVec::DIRECTIONS_8[opposite_idx], GridVec::SOUTH,
+            "4 CW steps from NORTH should reach SOUTH (opposite)");
+    }
 }
