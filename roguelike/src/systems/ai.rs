@@ -359,7 +359,7 @@ fn dijkstra_map(
 // ───────────────────────── AI System ───────────────────────────────
 
 /// AI range for soldier ranged attacks.
-const AI_RANGED_ATTACK_RANGE: i32 = 15;
+const AI_RANGED_ATTACK_RANGE: i32 = 50;
 
 /// Knuth multiplicative hash constant (golden-ratio-derived prime) for aiming style selection.
 const HASH_KNUTH: u64 = 2654435761;
@@ -523,10 +523,10 @@ pub fn factions_are_hostile(a: Faction, b: Faction) -> bool {
 const DODGE_CHANCE: f64 = 0.20;
 
 /// Patrol radius: how far an NPC will wander from its spawn point.
-const PATROL_RADIUS: i32 = 12;
+const PATROL_RADIUS: i32 = 20;
 
 /// Absolute HP threshold below which an NPC will flee.
-const FLEE_HP_ABSOLUTE: i32 = 20;
+const FLEE_HP_ABSOLUTE: i32 = 10;
 
 /// Base number of turns between full circular look-around when idle/patrolling.
 const LOOK_AROUND_BASE_INTERVAL: u32 = 12;
@@ -539,7 +539,7 @@ const MEMORY_DURATION: u32 = 40;
 
 /// Distance within which a hostile forces immediate combat engagement,
 /// overriding any non-combat state (idle, patrol, flee).
-const PROXIMITY_OVERRIDE_RANGE: i32 = 4;
+const PROXIMITY_OVERRIDE_RANGE: i32 = 8;
 
 /// Distance threshold for immediate target reprioritization.
 /// An NPC engaged with a distant target will always switch to a hostile
@@ -557,7 +557,7 @@ const PURSUIT_AWARENESS_BOOST: i32 = 8;
 const PURSUIT_BOOST_DECAY_TURNS: u32 = 3;
 
 /// Maximum cursor steps before blind-fire is allowed.
-const BLIND_FIRE_STEPS: u8 = 4;
+const BLIND_FIRE_STEPS: u8 = 8;
 
 /// Maximum number of failed 360° sweeps before giving up the search.
 const MAX_SEARCH_SWEEPS: u8 = 2;
