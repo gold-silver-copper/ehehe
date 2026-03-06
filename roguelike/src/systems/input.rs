@@ -68,44 +68,44 @@ pub struct CommandBinding {
 pub const KEYBINDINGS: &[CommandBinding] = &[
     CommandBinding {
         key: "WASD / ↑↓←→",
-        name: "Move (3 ticks)",
-        docs: "Move the player one tile. Physical movement costs 3 ticks and 2 stamina.",
+        name: "Move",
+        docs: "Move the player one tile. Physical movement also costs stamina.",
         category: "Movement",
     },
     CommandBinding {
         key: "IJKL",
-        name: "Cursor (1 tick)",
-        docs: "Move the cursor one tile for aiming. Costs 1 tick.",
+        name: "Cursor",
+        docs: "Move the cursor one tile for aiming.",
         category: "Other",
     },
     CommandBinding {
         key: "C",
         name: "Center cursor",
-        docs: "Snap cursor onto your position. Costs 1 tick.",
+        docs: "Snap cursor onto your position.",
         category: "Other",
     },
     CommandBinding {
         key: "V",
         name: "Auto-aim",
-        docs: "Cursor steps toward nearest enemy. Costs 1 tick.",
+        docs: "Cursor steps toward nearest enemy.",
         category: "Other",
     },
     CommandBinding {
         key: "R",
-        name: "Reload (6 ticks)",
-        docs: "Reload gun (1 bullet + 1 cap + 1 powder). Costs 6 ticks.",
+        name: "Reload",
+        docs: "Reload gun using ammo, caps, and powder.",
         category: "Combat",
     },
     CommandBinding {
         key: "F",
-        name: "Roundhouse (2 ticks)",
-        docs: "Roundhouse kick all adjacent enemies. Costs 2 ticks + 10 stamina.",
+        name: "Roundhouse",
+        docs: "Roundhouse kick all adjacent enemies. Costs stamina.",
         category: "Combat",
     },
     CommandBinding {
         key: "T",
-        name: "Wait (1 tick)",
-        docs: "Skip your turn. Costs 1 tick.",
+        name: "Wait",
+        docs: "Skip your turn.",
         category: "Movement",
     },
     CommandBinding {
@@ -122,8 +122,8 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
     },
     CommandBinding {
         key: "1-0",
-        name: "Fire/Use (2 ticks)",
-        docs: "Use item by slot. Guns/grenades fire toward cursor. Costs 2 ticks.",
+        name: "Fire/Use",
+        docs: "Use item by slot. Guns and grenades fire toward the cursor.",
         category: "Inventory",
     },
     CommandBinding {

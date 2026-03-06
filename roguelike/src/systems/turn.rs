@@ -406,12 +406,13 @@ pub fn star_level_system(
         && turn_counter.0 > 0
         && turn_counter.0.is_multiple_of(POLICE_SPAWN_INTERVAL)
     {
-        // Find a spawnable tile near the player (10-15 tiles away)
+        // Find a spawnable tile near the player but outside the safe buffer.
         let spawn_hash =
             (turn_counter.0.wrapping_mul(7919) ^ star_level.level.wrapping_mul(6271)) as i32;
         let dir_idx = (spawn_hash.unsigned_abs() as usize) % 8;
         let dirs = GridVec::DIRECTIONS_8;
-        let dist = 10 + (spawn_hash.unsigned_abs() % 6) as i32;
+        let dist = crate::systems::spawn::PLAYER_SAFE_SPAWN_RADIUS
+            + (spawn_hash.unsigned_abs() % 6) as i32;
         let spawn_pos = player_gv + dirs[dir_idx] * dist;
         if game_map.0.is_spawnable(&spawn_pos) {
             // Use the police officer template (index 4)

@@ -577,7 +577,9 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
         .0
         .find_spawnable_near(GridVec::new(map.0.width / 2, map.0.height / 2), 20)
         .unwrap_or(GridVec::new(map.0.width / 2, map.0.height / 2));
-    let min_spawn_dist_sq = 8 * 8; // keep clear zone around player spawn
+    let min_spawn_dist_sq = crate::systems::spawn::PLAYER_SAFE_SPAWN_RADIUS
+        * crate::systems::spawn::PLAYER_SAFE_SPAWN_RADIUS;
+    // keep a generous clear zone around player spawn
     let max_spawn_dist_sq: i32 = 150 * 150; // non-civilian NPCs spawn within 150 tiles of player
 
     // ── Faction gang groups across the full map ──────────────────

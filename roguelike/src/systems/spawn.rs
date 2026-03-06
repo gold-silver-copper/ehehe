@@ -10,6 +10,9 @@ use crate::components::{
 use crate::grid_vec::GridVec;
 use crate::typedefs::RatColor;
 
+/// Radius around the player spawn where hostile NPCs may not appear.
+pub const PLAYER_SAFE_SPAWN_RADIUS: i32 = 15;
+
 // ───────────────────────── Procedural NPC Names ───────────────────
 //
 // All NPC names are single-word for UI readability and variety.
