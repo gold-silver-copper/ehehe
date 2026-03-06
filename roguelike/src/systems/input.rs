@@ -37,7 +37,7 @@ const THROW_ITEM_STAMINA_COST: i32 = 10;
 /// Stamina cost for the Roundhouse ability (F key).
 const ROUNDHOUSE_STAMINA_COST: i32 = 10;
 
-/// Stamina cost per tile of movement.
+/// Stamina cost per tile of movement (WASD / arrows).
 const MOVE_STAMINA_COST: i32 = 2;
 
 /// A single command binding entry: the key(s) that trigger it, a short name, and documentation.

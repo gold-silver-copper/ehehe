@@ -344,13 +344,13 @@ fn do_spawn_player(commands: &mut Commands, map: &mut GameMapResource) {
         2 => commands.spawn((
             Item,
             Name("Ale".into()),
-            Renderable { symbol: "a".into(), fg: RatColor::Rgb(180, 140, 60), bg: RatColor::Black },
+            Renderable { symbol: "a".into(), fg: RatColor::Rgb(190, 150, 70), bg: RatColor::Black },
             ItemKind::Ale { heal: 7, blunt_damage: 3 },
         )).id(),
         3 => commands.spawn((
             Item,
             Name("Stout".into()),
-            Renderable { symbol: "s".into(), fg: RatColor::Rgb(100, 70, 40), bg: RatColor::Black },
+            Renderable { symbol: "s".into(), fg: RatColor::Rgb(80, 50, 30), bg: RatColor::Black },
             ItemKind::Stout { heal: 8, blunt_damage: 4 },
         )).id(),
         4 => commands.spawn((
