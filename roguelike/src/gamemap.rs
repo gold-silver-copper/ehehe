@@ -391,6 +391,7 @@ impl WorldGenPhase for InfrastructurePhase {
         {
             let gap_seed = seed.wrapping_add(77777);
             let mut ci = 0i32;
+            let gap_range = (height - 20).max(1); // guard for small maps
             for &road_cx in &data.cross_xs {
                 let curve_amp = 2.0 + value_noise(ci, 1, cross_seed) * 3.0;
                 let curve_freq = 0.02 + value_noise(1, ci, cross_seed) * 0.01;
@@ -398,7 +399,7 @@ impl WorldGenPhase for InfrastructurePhase {
                 let gap_count = 3 + (value_noise(ci, 0, gap_seed) * 4.0) as i32;
                 for gi in 0..gap_count {
                     // Random gap start and length.
-                    let gap_start = 10 + (value_noise(ci, gi * 2 + 1, gap_seed) * (height - 20) as f64) as CoordinateUnit;
+                    let gap_start = 10 + (value_noise(ci, gi * 2 + 1, gap_seed) * gap_range as f64) as CoordinateUnit;
                     let gap_len = 8 + (value_noise(ci, gi * 2 + 2, gap_seed) * 20.0) as CoordinateUnit;
                     let gap_end = (gap_start + gap_len).min(height - 2);
 
@@ -794,7 +795,7 @@ impl GameMap {
             match verify_world(&map, &data.buildings, &data.avenue_ys, &data.cross_xs, width, height) {
                 Ok(()) => return map,
                 Err(reason) => {
-                    // Silently retry — no diagnostic text should ever reach the renderer.
+                    // Silently retry — no diagnostic text should reach the player.
                     last_reason = reason;
                     last_map = Some(map);
                 }
