@@ -241,9 +241,9 @@ pub fn death_system(
     item_query: Query<&ItemKind>,
     mut combat_log: ResMut<CombatLog>,
     mut kill_count: ResMut<KillCount>,
-    mut next_game_state: ResMut<NextState<GameState>>,
+    _next_game_state: ResMut<NextState<GameState>>,
     seed: Res<MapSeed>,
-    spectating: Res<crate::resources::SpectatingAfterDeath>,
+    mut spectating: ResMut<crate::resources::SpectatingAfterDeath>,
 ) {
     let player_entity = player_entities.single().ok();
 
@@ -261,13 +261,12 @@ pub fn death_system(
         let label = name.map_or("Something", |n| &n.0);
         combat_log.push_opt(format!("{label} has been slain!"), pos.map(|p| p.as_grid_vec()));
 
-        // If the player died, transition to Dead state.
-        // Spawn a corpse marker (X) at the player's position — same visual
-        // treatment as NPC deaths. The player entity itself is NOT despawned
-        // so the UI can continue reading stats (HP, inventory, etc.).
+        // If the player died, mark them dead and enable spectating so the
+        // world keeps ticking. The input system blocks player actions when
+        // the Dead component is present.
         if is_player.is_some() {
             combat_log.push("You have fallen... Press R to restart.".into());
-            next_game_state.set(GameState::Dead);
+            spectating.0 = true; // auto-advance turns while dead
             commands.entity(entity).insert(Dead);
             if let Some(p) = pos {
                 commands.spawn((
