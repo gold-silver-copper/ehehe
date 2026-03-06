@@ -110,6 +110,57 @@ fn tile_cost(pos: GridVec, game_map: &GameMapResource) -> Option<i32> {
     Some(c)
 }
 
+/// Chase-mode tile cost: same hazard penalties as [`tile_cost`] but
+/// **without** wall-cover bonuses or exposed-terrain penalties.
+/// NPCs in Chasing state use this so they take the fastest direct path
+/// instead of detouring through cover.
+fn tile_cost_chase(pos: GridVec, game_map: &GameMapResource) -> Option<i32> {
+    if !game_map.0.is_passable(&pos) {
+        return None;
+    }
+
+    let mut c = cost::BASE;
+
+    if let Some(voxel) = game_map.0.get_voxel_at(&pos) {
+        match &voxel.floor {
+            Some(crate::typeenums::Floor::Fire) => c += cost::FIRE,
+            Some(crate::typeenums::Floor::SandCloud) => c += cost::SAND_CLOUD,
+            Some(crate::typeenums::Floor::ShallowWater) => c += cost::SHALLOW_WATER,
+            Some(crate::typeenums::Floor::DeepWater) => c += cost::DEEP_WATER,
+            _ => {}
+        }
+    }
+
+    // Neighbor hazard scan only — no cover/exposed adjustments.
+    for neighbor in pos.all_neighbors() {
+        if let Some(voxel) = game_map.0.get_voxel_at(&neighbor) {
+            if matches!(voxel.props, Some(Props::Cactus)) {
+                c += cost::NEAR_CACTUS;
+            }
+            if matches!(voxel.floor, Some(crate::typeenums::Floor::Fire)) {
+                c += cost::NEAR_FIRE;
+            }
+        }
+    }
+
+    Some(c)
+}
+
+/// Chase-mode wrapper: combines [`tile_cost_chase`] with dynamic entity
+/// blocking from the `SpatialIndex`.
+fn tile_cost_for_ai_chase(
+    pos: GridVec,
+    self_entity: Entity,
+    game_map: &GameMapResource,
+    spatial: &SpatialIndex,
+    blockers: &Query<(), With<BlocksMovement>>,
+) -> Option<i32> {
+    if spatial.entities_at(&pos).iter().any(|&e| e != self_entity && blockers.contains(e)) {
+        return None;
+    }
+    tile_cost_chase(pos, game_map)
+}
+
 /// Returns the AI traversal cost for `pos` including dynamic entity blocking.
 /// Combines the static influence map (`tile_cost`) with per-tick entity
 /// collision checks from the `SpatialIndex`.
@@ -478,17 +529,17 @@ const PATROL_RADIUS: i32 = 12;
 const FLEE_HP_ABSOLUTE: i32 = 20;
 
 /// Base number of turns between full circular look-around when idle/patrolling.
-const LOOK_AROUND_BASE_INTERVAL: u32 = 20;
+const LOOK_AROUND_BASE_INTERVAL: u32 = 12;
 
 /// Additional random turns added to look-around interval (dice roll range).
-const LOOK_AROUND_DICE_RANGE: u32 = 20;
+const LOOK_AROUND_DICE_RANGE: u32 = 4;
 
 /// Number of turns memory persists after losing sight of a target.
 const MEMORY_DURATION: u32 = 40;
 
 /// Distance within which a hostile forces immediate combat engagement,
 /// overriding any non-combat state (idle, patrol, flee).
-const PROXIMITY_OVERRIDE_RANGE: i32 = 5;
+const PROXIMITY_OVERRIDE_RANGE: i32 = 4;
 
 /// Distance threshold for immediate target reprioritization.
 /// An NPC engaged with a distant target will always switch to a hostile
@@ -510,6 +561,23 @@ const BLIND_FIRE_STEPS: u8 = 4;
 
 /// Maximum number of failed 360° sweeps before giving up the search.
 const MAX_SEARCH_SWEEPS: u8 = 2;
+
+/// Distance within which NPCs of the same faction as an alerted ally
+/// immediately enter Chasing toward the shared target — pack behaviour.
+const PACK_ALERT_RANGE: i32 = 15;
+
+/// Every FLANK_INTERVAL turns in Chasing state the NPC attempts a
+/// perpendicular offset approach instead of a direct A* path.
+const FLANK_INTERVAL: u32 = 6;
+
+/// Minimum turns between consecutive burst fires.
+const BURST_COOLDOWN: u32 = 2;
+
+/// Number of recent turns checked for incoming damage (suppression check).
+const SUPPRESSION_WINDOW: u32 = 3;
+
+/// Maximum turns of target-velocity lead applied to predicted position.
+const LEAD_TURNS_MAX: u32 = 3;
 
 /// Macro that consolidates the "insert AiTarget locked, spend_action, continue"
 /// pattern used throughout the AI combat code.
@@ -539,11 +607,33 @@ fn has_unloaded_gun(inventory: &Option<Mut<Inventory>>, item_kinds: &Query<&mut 
     })
 }
 
-/// Returns `true` if the NPC should consider fleeing based on health.
-/// NPCs only flee when below 20 absolute HP.
-fn should_flee(health: &Option<Mut<Health>>) -> bool {
+/// Returns `true` if the NPC should consider fleeing based on health
+/// **and** the absence of healing items.  NPCs only flee when below
+/// `FLEE_HP_ABSOLUTE` HP **and** they have no consumable healing items.
+fn should_flee(health: &Option<Mut<Health>>, inventory: &Option<Mut<Inventory>>, item_kinds: &Query<&mut ItemKind>) -> bool {
     let Some(hp) = health else { return false; };
-    hp.current < FLEE_HP_ABSOLUTE
+    if hp.current >= FLEE_HP_ABSOLUTE {
+        return false;
+    }
+    // Only flee if we have NO healing items — fight to the death otherwise.
+    !has_healing_item(inventory, item_kinds)
+}
+
+/// Returns `true` if the NPC's inventory contains at least one healing
+/// consumable (whiskey, beer, ale, stout, wine, rum).
+fn has_healing_item(inventory: &Option<Mut<Inventory>>, item_kinds: &Query<&mut ItemKind>) -> bool {
+    inventory.as_ref().is_some_and(|inv| {
+        inv.items.iter().any(|&ent| {
+            item_kinds.get(ent).ok().is_some_and(|k|
+                matches!(*k, ItemKind::Whiskey { .. }
+                    | ItemKind::Beer { .. }
+                    | ItemKind::Ale { .. }
+                    | ItemKind::Stout { .. }
+                    | ItemKind::Wine { .. }
+                    | ItemKind::Rum { .. })
+            )
+        })
+    })
 }
 
 /// Threat priority score for a visible hostile target.
@@ -714,6 +804,16 @@ pub fn ai_system(
 
         let my_pos = pos.as_grid_vec();
         let my_faction = faction.copied();
+
+        // ── Stationarity tracking for flanking decisions ───────────
+        if let Some(ref mut mem) = ai_memory {
+            if mem.prev_pos == Some(my_pos) {
+                mem.stationary_turns = mem.stationary_turns.saturating_add(1);
+            } else {
+                mem.stationary_turns = 0;
+            }
+            mem.prev_pos = Some(my_pos);
+        }
 
         // ── Threat scoring: find all visible hostiles and score them ────
         // Collect all visible hostile entities with their threat scores.
@@ -914,6 +1014,8 @@ pub fn ai_system(
         // Allied target sharing: if this NPC has no direct target but a
         // nearby ally of the same faction is chasing something, adopt
         // that target into memory so we converge on the threat.
+        // NPCs within PACK_ALERT_RANGE immediately enter Chasing (pack behaviour);
+        // those within the wider ALLY_SHARE_RANGE only update memory.
         if chase_target.is_none()
             && let Some(my_f) = my_faction
                 && let Some(alerts) = faction_alerts.get(&my_f) {
@@ -927,6 +1029,18 @@ pub fn ai_system(
                             {
                                 mem.last_known_pos = Some(alert_pos);
                                 mem.last_seen_turn = turn_counter.0;
+                                // Pack behaviour: immediately enter Chasing if
+                                // within PACK_ALERT_RANGE of the alerted position.
+                                if my_pos.chebyshev_distance(alert_pos) <= PACK_ALERT_RANGE
+                                    && !matches!(*ai, AiState::Chasing)
+                                {
+                                    *ai = AiState::Chasing;
+                                    assign_aiming_style(&mut commands, entity, turn_counter.0, None, cursor.as_deref(), my_pos);
+                                    let toward = (alert_pos - my_pos).king_step();
+                                    if !toward.is_zero() {
+                                        update_look_dir(toward, &mut ai_look_dir, &mut viewshed);
+                                    }
+                                }
                             }
                 }
 
@@ -1096,7 +1210,7 @@ pub fn ai_system(
         }
 
         // Check if NPC should flee
-        if should_flee(&health) {
+        if should_flee(&health, &inventory, &item_kinds) {
             if !matches!(*ai, AiState::Fleeing) {
                 *ai = AiState::Fleeing;
             }
@@ -1338,7 +1452,7 @@ pub fn ai_system(
                     {
                         // Memory pursuit: navigate to remembered position.
                         let step = a_star_first_step(my_pos, remembered_pos, |pos| {
-                            tile_cost_for_ai(pos, entity, &game_map, &spatial, &blockers)
+                            tile_cost_for_ai_chase(pos, entity, &game_map, &spatial, &blockers)
                         })
                         .unwrap_or_else(|| {
                             let ks = (remembered_pos - my_pos).king_step();
@@ -1359,7 +1473,7 @@ pub fn ai_system(
                         if turns_since_seen < timeout {
                             if my_pos.chebyshev_distance(ai_tgt.last_pos) > 0 {
                                 let step = a_star_first_step(my_pos, ai_tgt.last_pos, |pos| {
-                                    tile_cost_for_ai(pos, entity, &game_map, &spatial, &blockers)
+                                    tile_cost_for_ai_chase(pos, entity, &game_map, &spatial, &blockers)
                                 }).unwrap_or_else(|| {
                                     let ks = (ai_tgt.last_pos - my_pos).king_step();
                                     if game_map.0.is_passable(&(my_pos + ks)) { ks } else { GridVec::ZERO }
@@ -1705,17 +1819,39 @@ pub fn ai_system(
                 }
 
                 // ── Chase: A* pathfinding toward target ────────────────
-                let flank_hash = (my_pos.x.wrapping_mul(31) ^ my_pos.y.wrapping_mul(17))
-                    .wrapping_add(turn_counter.0 as i32) as u32;
-                let flank_goal = if dist > 3 && flank_hash.is_multiple_of(3) {
-                    let perp = (target_vec - my_pos).rotate_90_cw().king_step();
-                    let candidate = target_vec + perp;
-                    if game_map.0.is_passable(&candidate) { candidate } else { target_vec }
+                // Every FLANK_INTERVAL turns OR when stationary 2+ turns,
+                // attempt a perpendicular offset to flank the target.
+                let stationary = ai_memory.as_ref().map(|m| m.stationary_turns).unwrap_or(0);
+                let flank_trigger = (turn_counter.0 > 0 && turn_counter.0.is_multiple_of(FLANK_INTERVAL))
+                    || stationary >= 2;
+                let flank_goal = if dist > 3 {
+                    // Only compute direct_blocked when needed (dist > 3).
+                    let direct_blocked = if !flank_trigger {
+                        let direct_step = a_star_first_step(my_pos, target_vec, |pos| {
+                            tile_cost_for_ai_chase(pos, entity, &game_map, &spatial, &blockers)
+                        });
+                        direct_step.is_none() || direct_step == Some(GridVec::ZERO)
+                    } else {
+                        false
+                    };
+                    if flank_trigger || direct_blocked {
+                        let bearing = (target_vec - my_pos).king_step();
+                        let perp_cw = GridVec::new(-bearing.y, bearing.x);
+                        let perp_ccw = GridVec::new(bearing.y, -bearing.x);
+                        let cand_cw = target_vec + perp_cw;
+                        let cand_ccw = target_vec + perp_ccw;
+                        // Pick whichever perpendicular candidate is passable; prefer CW.
+                        if game_map.0.is_passable(&cand_cw) { cand_cw }
+                        else if game_map.0.is_passable(&cand_ccw) { cand_ccw }
+                        else { target_vec }
+                    } else {
+                        target_vec
+                    }
                 } else {
                     target_vec
                 };
                 let step = a_star_first_step(my_pos, flank_goal, |pos| {
-                    tile_cost_for_ai(pos, entity, &game_map, &spatial, &blockers)
+                    tile_cost_for_ai_chase(pos, entity, &game_map, &spatial, &blockers)
                 })
                 .unwrap_or_else(|| {
                     let ks = (target_vec - my_pos).king_step();
@@ -2062,20 +2198,20 @@ mod tests {
 
     #[test]
     fn proximity_override_forces_combat_within_range() {
-        // Any hostile within PROXIMITY_OVERRIDE_RANGE (5) must force combat.
+        // Any hostile within PROXIMITY_OVERRIDE_RANGE (4) must force combat.
         // Verify the constant and that distances within it satisfy the check.
-        assert_eq!(PROXIMITY_OVERRIDE_RANGE, 5);
+        assert_eq!(PROXIMITY_OVERRIDE_RANGE, 4);
         let npc = GridVec::new(10, 10);
         let hostile_2 = GridVec::new(12, 10); // distance 2
+        let hostile_4 = GridVec::new(14, 10); // distance 4
         let hostile_5 = GridVec::new(15, 10); // distance 5
-        let hostile_6 = GridVec::new(16, 10); // distance 6
 
         assert!(npc.chebyshev_distance(hostile_2) <= PROXIMITY_OVERRIDE_RANGE,
             "Hostile at distance 2 must be within proximity override range");
-        assert!(npc.chebyshev_distance(hostile_5) <= PROXIMITY_OVERRIDE_RANGE,
-            "Hostile at distance 5 must be within proximity override range");
-        assert!(npc.chebyshev_distance(hostile_6) > PROXIMITY_OVERRIDE_RANGE,
-            "Hostile at distance 6 must be outside proximity override range");
+        assert!(npc.chebyshev_distance(hostile_4) <= PROXIMITY_OVERRIDE_RANGE,
+            "Hostile at distance 4 must be within proximity override range");
+        assert!(npc.chebyshev_distance(hostile_5) > PROXIMITY_OVERRIDE_RANGE,
+            "Hostile at distance 5 must be outside proximity override range");
     }
 
     #[test]
@@ -2236,5 +2372,76 @@ mod tests {
                 "LKP should update to {:?} on turn {}", tpos, turn);
             assert_eq!(last_seen_turn, turn as u32);
         }
+    }
+
+    // ── New constant sanity checks ────────────────────────────────
+
+    #[test]
+    fn pack_alert_range_within_ally_share_range() {
+        // PACK_ALERT_RANGE must be ≤ ALLY_SHARE_RANGE so pack behaviour
+        // is a subset of the general ally-sharing radius.
+        assert!(PACK_ALERT_RANGE <= 20,
+            "PACK_ALERT_RANGE ({}) must be <= ALLY_SHARE_RANGE (20)", PACK_ALERT_RANGE);
+        assert_eq!(PACK_ALERT_RANGE, 15);
+    }
+
+    #[test]
+    fn flank_interval_constant() {
+        assert_eq!(FLANK_INTERVAL, 6,
+            "Flanking should trigger every 6 turns in Chasing state");
+    }
+
+    #[test]
+    fn burst_cooldown_and_suppression_constants() {
+        assert_eq!(BURST_COOLDOWN, 2);
+        assert_eq!(SUPPRESSION_WINDOW, 3);
+        assert_eq!(LEAD_TURNS_MAX, 3);
+    }
+
+    #[test]
+    fn look_around_intervals_updated() {
+        assert_eq!(LOOK_AROUND_BASE_INTERVAL, 12);
+        assert_eq!(LOOK_AROUND_DICE_RANGE, 4);
+    }
+
+    #[test]
+    fn stationarity_counter_increments_on_same_pos() {
+        let mut mem = AiMemory::default();
+        let pos = GridVec::new(5, 5);
+
+        // First tick: prev_pos is None → counter resets to 0
+        if mem.prev_pos == Some(pos) {
+            mem.stationary_turns = mem.stationary_turns.saturating_add(1);
+        } else {
+            mem.stationary_turns = 0;
+        }
+        mem.prev_pos = Some(pos);
+        assert_eq!(mem.stationary_turns, 0);
+
+        // Second tick at same pos → counter increments
+        if mem.prev_pos == Some(pos) {
+            mem.stationary_turns = mem.stationary_turns.saturating_add(1);
+        } else {
+            mem.stationary_turns = 0;
+        }
+        assert_eq!(mem.stationary_turns, 1);
+
+        // Third tick at same pos → counter increments again
+        if mem.prev_pos == Some(pos) {
+            mem.stationary_turns = mem.stationary_turns.saturating_add(1);
+        } else {
+            mem.stationary_turns = 0;
+        }
+        assert_eq!(mem.stationary_turns, 2);
+
+        // Move to a different pos → counter resets
+        let new_pos = GridVec::new(6, 5);
+        if mem.prev_pos == Some(new_pos) {
+            mem.stationary_turns = mem.stationary_turns.saturating_add(1);
+        } else {
+            mem.stationary_turns = 0;
+        }
+        mem.prev_pos = Some(new_pos);
+        assert_eq!(mem.stationary_turns, 0);
     }
 }
