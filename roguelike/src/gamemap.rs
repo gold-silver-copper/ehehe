@@ -827,6 +827,9 @@ impl WorldGenPhase for BuildingPhase {
             }
         }
 
+        place_building_frontages(map, &data.buildings, seed);
+        place_service_yards(map, &data.buildings, seed);
+
         // Fill open lots with contextually appropriate scatter
         place_open_lot_scatter(map, &open_lots, seed);
 
@@ -3477,6 +3480,258 @@ fn set_prop(map: &mut GameMap, x: CoordinateUnit, y: CoordinateUnit, prop: Props
     }
 }
 
+#[inline]
+fn is_street_floor(floor: &Floor) -> bool {
+    matches!(
+        floor,
+        Floor::DirtRoad | Floor::Sidewalk | Floor::Bridge | Floor::Alley
+    )
+}
+
+#[inline]
+fn is_exterior_ground_floor(floor: &Floor) -> bool {
+    !matches!(
+        floor,
+        Floor::ShallowWater
+            | Floor::DeepWater
+            | Floor::Beach
+            | Floor::BeachSand
+            | Floor::Bridge
+            | Floor::WoodPlanks
+            | Floor::StoneFloor
+            | Floor::Rooftop
+            | Floor::Plaza
+    )
+}
+
+fn pave_exterior_tile(
+    map: &mut GameMap,
+    x: CoordinateUnit,
+    y: CoordinateUnit,
+    floor: Floor,
+    reserve: bool,
+) -> bool {
+    if x < 0 || x >= map.width || y < 0 || y >= map.height {
+        return false;
+    }
+
+    let pos = GridVec::new(x, y);
+    let mut changed = false;
+    if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+        if !voxel.floor.as_ref().is_some_and(is_exterior_ground_floor)
+            || voxel.props.as_ref().is_some_and(|prop| prop.is_wall())
+        {
+            return false;
+        }
+
+        voxel.floor = Some(floor);
+        if voxel.props.is_some() {
+            voxel.props = None;
+        }
+        changed = true;
+    }
+
+    if changed && reserve {
+        map.occupancy[x as usize][y as usize] = true;
+    }
+    changed
+}
+
+fn nearest_front_street_tile(
+    map: &GameMap,
+    b: &Building,
+    max_radius: CoordinateUnit,
+) -> Option<GridVec> {
+    let door_x = b.x + b.w / 2;
+    let door_y = b.y + b.h;
+    let mut best: Option<(i32, GridVec)> = None;
+
+    for dy in -2..=max_radius {
+        for dx in -max_radius..=max_radius {
+            let x = door_x + dx;
+            let y = door_y + dy;
+            if x < 0 || x >= map.width || y < 0 || y >= map.height {
+                continue;
+            }
+            let pos = GridVec::new(x, y);
+            let Some(voxel) = map.get_voxel_at(&pos) else {
+                continue;
+            };
+            let Some(floor) = voxel.floor.as_ref() else {
+                continue;
+            };
+            if !is_street_floor(floor) || !map.is_passable(&pos) {
+                continue;
+            }
+
+            let dist = (x - door_x).abs() + (y - door_y).abs();
+            let directional_penalty = if y < door_y { 6 } else { 0 };
+            let lateral_penalty = (x - door_x).abs() / 2;
+            let floor_bias = match floor {
+                Floor::Sidewalk => 0,
+                Floor::DirtRoad => 1,
+                Floor::Bridge => 2,
+                Floor::Alley => 3,
+                _ => 4,
+            };
+            let score = dist * 10 + directional_penalty + lateral_penalty + floor_bias;
+            if best.is_none_or(|current| score < current.0) {
+                best = Some((score, pos));
+            }
+        }
+    }
+
+    best.map(|(_, pos)| pos)
+}
+
+fn place_building_frontages(map: &mut GameMap, buildings: &[Building], seed: NoiseSeed) {
+    for b in buildings {
+        let door_x = b.x + b.w / 2;
+        let door_y = b.y + b.h;
+        let frontage_seed = seed.wrapping_add(b.x as u64 * 131 + b.y as u64 * 17);
+        let commercial = matches!(b.kind, 1 | 3 | 4 | 5 | 7 | 8 | 10 | 11);
+        let frontage_depth = if commercial {
+            2.min((value_noise(b.w, b.h, frontage_seed) * 2.0) as CoordinateUnit + 1)
+        } else {
+            1
+        };
+        let frontage_floor = if commercial {
+            Floor::WoodPlanks
+        } else if matches!(b.kind, 6 | 7 | 9) {
+            Floor::Sidewalk
+        } else {
+            Floor::Dirt
+        };
+
+        let span_lo = (b.x + 1).max(door_x - 2);
+        let span_hi = (b.x + b.w - 2).min(door_x + 2);
+        for depth in 0..frontage_depth {
+            for x in span_lo..=span_hi {
+                pave_exterior_tile(map, x, door_y + depth, frontage_floor.clone(), true);
+            }
+        }
+
+        let Some(target) = nearest_front_street_tile(map, b, 8) else {
+            continue;
+        };
+        let path_floor = map
+            .get_voxel_at(&target)
+            .and_then(|voxel| voxel.floor.clone())
+            .filter(is_street_floor)
+            .map_or(Floor::Dirt, |floor| match floor {
+                Floor::Sidewalk | Floor::DirtRoad => Floor::Sidewalk,
+                Floor::Bridge => Floor::Sidewalk,
+                _ => Floor::Dirt,
+            });
+
+        for step in GridVec::new(door_x, door_y).bresenham_line(target) {
+            if step == target {
+                break;
+            }
+            pave_exterior_tile(map, step.x, step.y, path_floor.clone(), true);
+            if commercial && (step.y - door_y).abs() <= 1 {
+                pave_exterior_tile(map, step.x - 1, step.y, path_floor.clone(), true);
+                pave_exterior_tile(map, step.x + 1, step.y, path_floor.clone(), true);
+            }
+        }
+    }
+}
+
+fn rect_is_clear_for_yard(
+    map: &GameMap,
+    x: CoordinateUnit,
+    y: CoordinateUnit,
+    w: CoordinateUnit,
+    h: CoordinateUnit,
+) -> bool {
+    if x < 1 || y < 1 || x + w >= map.width - 1 || y + h >= map.height - 1 {
+        return false;
+    }
+
+    for iy in y..y + h {
+        for ix in x..x + w {
+            if map.occupancy[ix as usize][iy as usize] {
+                return false;
+            }
+            let pos = GridVec::new(ix, iy);
+            let Some(voxel) = map.get_voxel_at(&pos) else {
+                return false;
+            };
+            if !voxel.floor.as_ref().is_some_and(is_exterior_ground_floor)
+                || voxel.props.as_ref().is_some_and(|prop| prop.is_wall())
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn place_service_yards(map: &mut GameMap, buildings: &[Building], seed: NoiseSeed) {
+    for b in buildings {
+        if !matches!(b.kind, 0 | 2 | 5 | 8 | 10 | 11) {
+            continue;
+        }
+
+        let yard_seed = seed.wrapping_add(b.x as u64 * 73 + b.y as u64 * 97);
+        let yard_depth = 3 + (value_noise(b.x, b.y, yard_seed) * 3.0) as CoordinateUnit;
+        let yard_x = (b.x - 1).max(1);
+        let yard_w = (b.w + 2).min(map.width - yard_x - 1);
+        let yard_y = b.y - yard_depth;
+        if yard_y < 1 || !rect_is_clear_for_yard(map, yard_x, yard_y, yard_w, yard_depth) {
+            continue;
+        }
+
+        for iy in yard_y..yard_y + yard_depth {
+            for ix in yard_x..yard_x + yard_w {
+                let floor = if matches!(b.kind, 0 | 8) {
+                    Floor::Grass
+                } else {
+                    Floor::Dirt
+                };
+                let _ = pave_exterior_tile(map, ix, iy, floor, false);
+            }
+        }
+
+        let gate_x = yard_x + yard_w / 2;
+        for ix in yard_x..yard_x + yard_w {
+            set_prop(map, ix, yard_y, Props::Fence);
+        }
+        for iy in yard_y + 1..yard_y + yard_depth {
+            set_prop(map, yard_x, iy, Props::Fence);
+            set_prop(map, yard_x + yard_w - 1, iy, Props::Fence);
+        }
+        if let Some(voxel) = map.get_voxel_at_mut(&GridVec::new(gate_x, yard_y + yard_depth - 1)) {
+            if matches!(voxel.props, Some(Props::Fence)) {
+                voxel.props = None;
+            }
+        }
+
+        match b.kind {
+            0 => {
+                set_prop(map, gate_x - 1, yard_y + 1, Props::Bush);
+                set_prop(map, gate_x + 1, yard_y + 1, Props::Bush);
+                set_prop(map, gate_x, yard_y + yard_depth / 2, Props::Well);
+            }
+            2 => {
+                set_prop(map, gate_x - 1, yard_y + 1, Props::HayBale);
+                set_prop(map, gate_x + 1, yard_y + 1, Props::HayBale);
+                set_prop(map, gate_x, yard_y + yard_depth / 2, Props::WaterTrough);
+            }
+            5 | 8 | 10 => {
+                set_prop(map, gate_x - 1, yard_y + 1, Props::Crate);
+                set_prop(map, gate_x + 1, yard_y + 1, Props::Barrel);
+                set_prop(map, gate_x, yard_y + yard_depth / 2, Props::Bench);
+            }
+            _ => {
+                set_prop(map, gate_x - 1, yard_y + 1, Props::Barrel);
+                set_prop(map, gate_x + 1, yard_y + 1, Props::Crate);
+                set_prop(map, gate_x, yard_y + yard_depth / 2, Props::WaterTrough);
+            }
+        }
+    }
+}
+
 // ── Hierarchical placement: exterior props ───────────────────────────────
 
 /// Places contextually appropriate exterior props around a building based
@@ -3550,24 +3805,71 @@ fn place_open_lot_scatter(
         let cx = lx + lw / 2;
         let cy = ly + lh / 2;
         let pick = value_noise(cx, cy, scatter_seed.wrapping_add(i as u64));
+        let large_lot = lw >= 10 && lh >= 8;
 
-        if pick < 0.25 {
-            set_prop(map, cx, cy, Props::DeadTree);
-        } else if pick < 0.50 {
-            // Broken wagon
+        if large_lot {
+            let patch_x0 = (cx - 2).max(lx + 1);
+            let patch_x1 = (cx + 2).min(lx + lw - 2);
+            let patch_y0 = (cy - 1).max(ly + 1);
+            let patch_y1 = (cy + 2).min(ly + lh - 2);
+            for y in patch_y0..=patch_y1 {
+                for x in patch_x0..=patch_x1 {
+                    let floor = if pick < 0.33 {
+                        Floor::Dirt
+                    } else if pick < 0.66 {
+                        Floor::Gravel
+                    } else {
+                        Floor::Grass
+                    };
+                    let _ = pave_exterior_tile(map, x, y, floor, false);
+                }
+            }
+        }
+
+        if pick < 0.20 {
+            // Fenced wagon or supply yard
+            let yard_x0 = (cx - 2).max(lx + 1);
+            let yard_x1 = (cx + 2).min(lx + lw - 2);
+            let yard_y0 = (cy - 1).max(ly + 1);
+            let yard_y1 = (cy + 2).min(ly + lh - 2);
+            for x in yard_x0..=yard_x1 {
+                set_prop(map, x, yard_y0, Props::Fence);
+            }
+            for y in yard_y0 + 1..=yard_y1 {
+                set_prop(map, yard_x0, y, Props::Fence);
+                set_prop(map, yard_x1, y, Props::Fence);
+            }
+            set_prop(map, cx - 1, cy, Props::Crate);
+            set_prop(map, cx + 1, cy, Props::Barrel);
+            set_prop(map, cx, cy + 1, Props::Bench);
+        } else if pick < 0.40 {
+            // Small market or camp spot
+            set_prop(map, cx, cy, Props::Table);
+            set_prop(map, cx - 1, cy, Props::Bench);
+            set_prop(map, cx + 1, cy, Props::Bench);
+            set_prop(map, cx, cy - 1, Props::Sign);
+            set_prop(map, cx, cy + 1, Props::Crate);
+        } else if pick < 0.60 {
+            // Broken wagon / supply spill
+            set_prop(map, cx - 1, cy, Props::Crate);
             set_prop(map, cx, cy, Props::Crate);
-            set_prop(map, cx + 1, cy, Props::Crate);
-        } else if pick < 0.75 {
+            set_prop(map, cx + 1, cy, Props::Barrel);
+            set_prop(map, cx, cy + 1, Props::Rock);
+        } else if pick < 0.80 {
             // Campfire ring
             set_prop(map, cx - 1, cy, Props::Rock);
             set_prop(map, cx + 1, cy, Props::Rock);
             set_prop(map, cx, cy - 1, Props::Rock);
             set_prop(map, cx, cy + 1, Props::Rock);
+            set_prop(map, cx + 1, cy + 1, Props::Bench);
         } else {
-            // Scrub patch
+            // Scrub garden
             set_prop(map, cx, cy, Props::Bush);
             set_prop(map, cx + 1, cy, Props::Bush);
             set_prop(map, cx - 1, cy + 1, Props::Bush);
+            if large_lot {
+                set_prop(map, cx + 1, cy + 1, Props::Well);
+            }
         }
     }
 }
