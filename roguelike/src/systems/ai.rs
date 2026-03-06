@@ -1824,20 +1824,29 @@ pub fn ai_system(
                 let stationary = ai_memory.as_ref().map(|m| m.stationary_turns).unwrap_or(0);
                 let flank_trigger = (turn_counter.0 > 0 && turn_counter.0.is_multiple_of(FLANK_INTERVAL))
                     || stationary >= 2;
-                let direct_step = a_star_first_step(my_pos, target_vec, |pos| {
-                    tile_cost_for_ai_chase(pos, entity, &game_map, &spatial, &blockers)
-                });
-                let direct_blocked = direct_step.is_none() || direct_step == Some(GridVec::ZERO);
-                let flank_goal = if dist > 3 && (flank_trigger || direct_blocked) {
-                    let bearing = (target_vec - my_pos).king_step();
-                    let perp_cw = GridVec::new(-bearing.y, bearing.x);
-                    let perp_ccw = GridVec::new(bearing.y, -bearing.x);
-                    let cand_cw = target_vec + perp_cw;
-                    let cand_ccw = target_vec + perp_ccw;
-                    // Pick whichever perpendicular candidate is passable; prefer CW.
-                    if game_map.0.is_passable(&cand_cw) { cand_cw }
-                    else if game_map.0.is_passable(&cand_ccw) { cand_ccw }
-                    else { target_vec }
+                let flank_goal = if dist > 3 {
+                    // Only compute direct_blocked when needed (dist > 3).
+                    let direct_blocked = if !flank_trigger {
+                        let direct_step = a_star_first_step(my_pos, target_vec, |pos| {
+                            tile_cost_for_ai_chase(pos, entity, &game_map, &spatial, &blockers)
+                        });
+                        direct_step.is_none() || direct_step == Some(GridVec::ZERO)
+                    } else {
+                        false
+                    };
+                    if flank_trigger || direct_blocked {
+                        let bearing = (target_vec - my_pos).king_step();
+                        let perp_cw = GridVec::new(-bearing.y, bearing.x);
+                        let perp_ccw = GridVec::new(bearing.y, -bearing.x);
+                        let cand_cw = target_vec + perp_cw;
+                        let cand_ccw = target_vec + perp_ccw;
+                        // Pick whichever perpendicular candidate is passable; prefer CW.
+                        if game_map.0.is_passable(&cand_cw) { cand_cw }
+                        else if game_map.0.is_passable(&cand_ccw) { cand_ccw }
+                        else { target_vec }
+                    } else {
+                        target_vec
+                    }
                 } else {
                     target_vec
                 };
