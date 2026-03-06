@@ -74,7 +74,9 @@ impl Plugin for RoguelikePlugin {
 
         let game_map = GameMap::new(400, 280, seed);
         // Compute actual player spawn position so camera+cursor start centered on it.
-        let player_spawn = game_map.find_bridge_center()
+        // Must match the spawn logic in do_spawn_player().
+        let center = GridVec::new(game_map.width / 2, game_map.height / 2);
+        let player_spawn = game_map.find_spawnable_near(center, 20)
             .unwrap_or(GridVec::new(SPAWN_X, SPAWN_Y));
 
         app.add_plugins(bevy::state::app::StatesPlugin)
@@ -539,7 +541,8 @@ fn restart_system(
     res.spell_particles.particles.clear();
     *res.input_state = InputState::default();
     *res.game_map = GameMapResource(GameMap::new(400, 280, res.seed.0));
-    let player_spawn = res.game_map.0.find_bridge_center()
+    let center = GridVec::new(res.game_map.0.width / 2, res.game_map.0.height / 2);
+    let player_spawn = res.game_map.0.find_spawnable_near(center, 20)
         .unwrap_or(GridVec::new(SPAWN_X, SPAWN_Y));
     res.camera.0 = player_spawn;
     *res.cursor = CursorPosition::at(player_spawn);

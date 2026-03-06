@@ -377,9 +377,9 @@ impl WorldGenPhase for InfrastructurePhase {
 
         // ── Pass 3b: Bridges where horizontal roads cross the river ──────
         // Only bridge at the specific coordinates where a horizontal avenue
-        // road band crosses water. Bridge tiles replace ShallowWater and
-        // DeepWater only — BeachSand tiles are preserved as the river bank
-        // buffer. Vertical cross streets never bridge the river.
+        // road band crosses water. Bridge tiles replace ShallowWater,
+        // DeepWater, and BeachSand so the bridge surface is clean.
+        // Vertical cross streets never bridge the river.
         let road_band = avenue_half_width + sidewalk_width;
         for &ay in &data.avenue_ys {
             let curve_amp = 3.0 + value_noise(ay, 0, curve_seed) * 4.0;
@@ -403,7 +403,7 @@ impl WorldGenPhase for InfrastructurePhase {
             }
             // Second pass: at crossing X positions, bridge only within the
             // road band so the bridge is road-width, not river-width.
-            // Only replace actual water tiles — BeachSand is preserved.
+            // Replace water and beach sand tiles so bridges have a clean surface.
             for x in 1..width - 1 {
                 if !crosses_water[x as usize] { continue; }
                 let curve_offset = (x as f64 * curve_freq).sin() * curve_amp;
@@ -413,7 +413,7 @@ impl WorldGenPhase for InfrastructurePhase {
                     if y <= 0 || y >= height - 1 { continue; }
                     let pos = GridVec::new(x, y);
                     if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                        if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)) {
+                        if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::BeachSand)) {
                             voxel.floor = Some(Floor::Bridge);
                             voxel.props = None;
                         }
@@ -1629,6 +1629,96 @@ fn generate_buildings_bsp(
     }
     buildings.extend(infill_buildings);
 
+    // ── Lot-based densification: fill every road-grid cell with buildings ─
+    // A "lot" is the rectangular space between consecutive avenues (horizontal)
+    // and cross streets (vertical). For each lot, find the largest clear
+    // rectangle, BSP-split it, and place a building in every sub-node.
+    let sidewalk_width: CoordinateUnit = 2;
+    let cross_sidewalk_width: CoordinateUnit = 1;
+    // Build sorted boundary lists including map edges
+    let mut y_bounds: Vec<CoordinateUnit> = Vec::new();
+    y_bounds.push(margin);
+    for &ay in avenue_ys {
+        y_bounds.push(ay);
+    }
+    y_bounds.push(height - margin);
+    y_bounds.sort();
+
+    let mut x_bounds: Vec<CoordinateUnit> = Vec::new();
+    x_bounds.push(margin);
+    for &cx in cross_xs {
+        x_bounds.push(cx);
+    }
+    x_bounds.push(width - margin);
+    x_bounds.sort();
+
+    let mut lot_buildings: Vec<Building> = Vec::new();
+    for yi in 0..y_bounds.len().saturating_sub(1) {
+        for xi in 0..x_bounds.len().saturating_sub(1) {
+            // Lot inner boundaries: inset from road edges
+            let lot_top = y_bounds[yi] + avenue_half_width + sidewalk_width + 1;
+            let lot_bot = y_bounds[yi + 1] - avenue_half_width - sidewalk_width - 1;
+            let lot_left = x_bounds[xi] + cross_half_width + cross_sidewalk_width + 1;
+            let lot_right = x_bounds[xi + 1] - cross_half_width - cross_sidewalk_width - 1;
+            let lot_w = lot_right - lot_left;
+            let lot_h = lot_bot - lot_top;
+            if lot_w < 6 || lot_h < 6 { continue; }
+
+            // Check if this lot already has sufficient building coverage
+            let lot_has_building = placed.iter().any(|&(px, py, pw, ph)| {
+                rects_overlap(lot_left, lot_top, lot_w, lot_h, px, py, pw, ph)
+            });
+            if lot_has_building { continue; }
+
+            // BSP-split this lot into sub-nodes for dense building placement.
+            // Random depth: 0 (entire lot = 1 building) to 2 (up to 4 buildings).
+            let lot_seed = bsp_seed.wrapping_add(
+                (yi as u64).wrapping_mul(1000).wrapping_add(xi as u64).wrapping_mul(7)
+            );
+            let depth_noise = value_noise(lot_left, lot_top, lot_seed);
+            let max_depth = if depth_noise < 0.3 { 0 }
+                else if depth_noise < 0.7 { 1 }
+                else { 2 };
+
+            let mut lot_root = BspNode::new(lot_left, lot_top, lot_w, lot_h);
+            if max_depth > 0 {
+                // Start at BSP_MAX_DEPTH - max_depth so exactly max_depth
+                // levels of recursion remain before the depth cap.
+                lot_root.subdivide(lot_seed, BSP_MAX_DEPTH - max_depth, avenue_ys, cross_xs);
+            }
+            let mut lot_leaves = Vec::new();
+            lot_root.collect_leaves(&mut lot_leaves);
+
+            for (li, &(lx, ly, lw, lh)) in lot_leaves.iter().enumerate() {
+                let pad = BSP_PADDING;
+                let bx = lx + pad;
+                let by = ly + pad;
+                let bw = (lw - pad * 2).min(22);
+                let bh = (lh - pad * 2).min(18);
+                if bw < 4 || bh < 4 { continue; }
+
+                let overlaps = placed.iter().any(|&(px, py, pw, ph)| {
+                    rects_overlap(bx - 1, by - 1, bw + 2, bh + 2, px, py, pw, ph)
+                });
+                if overlaps { continue; }
+
+                let leaf_cx = lx + lw / 2;
+                let leaf_cy = ly + lh / 2;
+                let zone = assign_zone(leaf_cx, leaf_cy, width, height, avenue_ys, seed);
+                let kind_noise = value_noise(
+                    li as i32 + leaf_cx,
+                    leaf_cy,
+                    lot_seed.wrapping_add(6666),
+                );
+                let kind = zone_building_kind(zone, kind_noise).min(BUILDING_TYPE_COUNT - 1);
+
+                placed.push((bx, by, bw, bh));
+                lot_buildings.push(Building { x: bx, y: by, w: bw, h: bh, kind });
+            }
+        }
+    }
+    buildings.extend(lot_buildings);
+
     (buildings, parks, open_lots)
 }
 
@@ -2725,9 +2815,8 @@ fn verify_world(
         }
     }
 
-    // 7. No BeachSand tile has been overwritten by a bridge tile.
-    //    (BeachSand preservation is enforced by the bridge placement pass.
-    //    This is a structural invariant — verified by the bridge code itself.)
+    // 7. Bridges now override BeachSand tiles within the road band so
+    //    bridge surfaces are clean. No separate verification needed.
 
     Ok(())
 }
