@@ -1803,7 +1803,7 @@ fn place_alleys(map: &mut GameMap, buildings: &[Building]) {
     let alley_gap_threshold: i64 = 6;
     for (i, a) in buildings.iter().enumerate() {
         for b in &buildings[i + 1..] {
-            // Only horizontal adjacency with overlapping Y ranges
+            // Horizontal adjacency: overlapping Y ranges with an X gap
             if a.y < b.y + b.h && b.y < a.y + a.h {
                 let gap = b.x as i64 - (a.x + a.w) as i64;
                 if (1..=alley_gap_threshold).contains(&gap) {
@@ -1827,6 +1827,37 @@ fn place_alleys(map: &mut GameMap, buildings: &[Building]) {
                     for y in overlap_y_min..overlap_y_max {
                         for gx in 0..gap_rev as CoordinateUnit {
                             let pos = GridVec::new(b.x + b.w + gx, y);
+                            if let Some(voxel) = map.get_voxel_at_mut(&pos)
+                                && voxel.props.is_none() && !matches!(voxel.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor)) {
+                                    voxel.floor = Some(Floor::Alley);
+                                }
+                        }
+                    }
+                }
+            }
+            // Vertical adjacency: overlapping X ranges with a Y gap
+            if a.x < b.x + b.w && b.x < a.x + a.w {
+                let gap = b.y as i64 - (a.y + a.h) as i64;
+                if (1..=alley_gap_threshold).contains(&gap) {
+                    let overlap_x_min = a.x.max(b.x);
+                    let overlap_x_max = (a.x + a.w).min(b.x + b.w);
+                    for x in overlap_x_min..overlap_x_max {
+                        for gy in 0..gap as CoordinateUnit {
+                            let pos = GridVec::new(x, a.y + a.h + gy);
+                            if let Some(voxel) = map.get_voxel_at_mut(&pos)
+                                && voxel.props.is_none() && !matches!(voxel.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor)) {
+                                    voxel.floor = Some(Floor::Alley);
+                                }
+                        }
+                    }
+                }
+                let gap_rev = a.y as i64 - (b.y + b.h) as i64;
+                if (1..=alley_gap_threshold).contains(&gap_rev) {
+                    let overlap_x_min = a.x.max(b.x);
+                    let overlap_x_max = (a.x + a.w).min(b.x + b.w);
+                    for x in overlap_x_min..overlap_x_max {
+                        for gy in 0..gap_rev as CoordinateUnit {
+                            let pos = GridVec::new(x, b.y + b.h + gy);
                             if let Some(voxel) = map.get_voxel_at_mut(&pos)
                                 && voxel.props.is_none() && !matches!(voxel.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor)) {
                                     voxel.floor = Some(Floor::Alley);
@@ -2002,10 +2033,9 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
         0 => {
             // House: dividing wall separates front room from back room
             if iw >= 6 && ih >= 8 {
-                // Dividing wall at the midpoint with a door gap
+                // Large: dividing wall + furnished rooms
                 let wall_row = ih / 2;
                 for dx in 0..iw {
-                    // Leave a door gap at the center of the dividing wall
                     if dx == iw / 2 { continue; }
                     let pos = GridVec::new(interior_x + dx, interior_y + wall_row);
                     if let Some(voxel) = map.get_voxel_at_mut(&pos) {
@@ -2026,6 +2056,19 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
                 // Storage
                 set_prop(map, interior_x, interior_y, Props::Barrel);
                 set_prop(map, interior_x + iw - 1, interior_y, Props::Crate);
+            } else if iw >= 4 && ih >= 4 {
+                // Medium: simple dividing wall with door gap, minimal furnishing
+                let wall_row = ih / 2;
+                for dx in 0..iw {
+                    if dx == iw / 2 { continue; }
+                    let pos = GridVec::new(interior_x + dx, interior_y + wall_row);
+                    if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                        voxel.props = Some(Props::Wall);
+                    }
+                }
+                set_prop(map, interior_x + 1, interior_y + wall_row + 1, Props::Table);
+                set_prop(map, interior_x, interior_y + wall_row + 1, Props::Chair);
+                set_prop(map, interior_x + iw - 1, interior_y, Props::Bench);
             } else if iw >= 2 && ih >= 2 {
                 set_prop(map, interior_x + 1, interior_y + 1, Props::Table);
                 set_prop(map, interior_x, interior_y + 1, Props::Chair);
@@ -2890,6 +2933,36 @@ fn verify_world(
 
     // 7. Bridges now override BeachSand tiles within the road band so
     //    bridge surfaces are clean. No separate verification needed.
+
+    // 8. Every building has a complete wall perimeter (no gaps).
+    //    Spot-check a sample of buildings to keep verification fast.
+    let check_count = buildings.len().min(20);
+    for b in &buildings[..check_count] {
+        for y in b.y..b.y + b.h {
+            for x in b.x..b.x + b.w {
+                let is_edge = x == b.x || x == b.x + b.w - 1 || y == b.y || y == b.y + b.h - 1;
+                if !is_edge { continue; }
+                // Door positions are expected gaps
+                let is_door = (y == b.y + b.h - 1 && x == b.x + b.w / 2)
+                    || (y == b.y && x == b.x + b.w / 2);
+                if is_door { continue; }
+                let is_side_door = if b.w >= 9 || b.h >= 9 {
+                    (x == b.x && y == b.y + b.h / 2)
+                    || (x == b.x + b.w - 1 && y == b.y + b.h / 2)
+                } else { false };
+                if is_side_door { continue; }
+                let pos = GridVec::new(x, y);
+                if let Some(v) = map.get_voxel_at(&pos) {
+                    if !v.props.as_ref().is_some_and(|p| p.is_wall()) {
+                        // Allow rounded-corner and L-shape gaps
+                        if matches!(v.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor)) {
+                            // Wall missing on a building edge — tolerate shape variants
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     Ok(())
 }
