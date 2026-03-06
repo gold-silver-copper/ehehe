@@ -116,22 +116,23 @@ pub fn draw_system(
         let render_height = game_area.height;
 
         // Collect the player's visible and revealed tiles.
-        let (visible_tiles, revealed_tiles, player_hp, player_stamina, player_inv): (
+        let (visible_tiles, revealed_tiles, player_hp, player_stamina, player_inv, player_world_pos): (
             Option<&HashSet<MyPoint>>,
             Option<&HashSet<MyPoint>>,
             Option<&Health>,
             Option<&Stamina>,
             Option<&Inventory>,
+            Option<GridVec>,
         ) = player_query
             .single()
             .ok()
-            .map(|(_, vs, hp, sta, inv)| {
+            .map(|(pos, vs, hp, sta, inv)| {
                 let (vis, rev) = vs
                     .map(|vs| (Some(&vs.visible_tiles), Some(&vs.revealed_tiles)))
                     .unwrap_or((None, None));
-                (vis, rev, hp, sta, inv)
+                (vis, rev, hp, sta, inv, Some(pos.as_grid_vec()))
             })
-            .unwrap_or((None, None, None, None, None));
+            .unwrap_or((None, None, None, None, None, None));
 
         let mut render_packet = game_map.0.create_render_packet_with_fog(
             &camera.0,
@@ -479,6 +480,48 @@ pub fn draw_system(
             }
         }
 
+        // ── Death darkening effect ─────────────────────────────────
+        // When the player is dead, tint the entire map background dark
+        // red and darken tiles in a circle around the player — the further
+        // a tile is from the player, the darker it becomes.
+        let player_is_dead = player_hp.is_some_and(|hp| hp.is_dead());
+        if player_is_dead {
+            let player_screen = player_world_pos
+                .map(|pw| pw - bottom_left);
+            for (screen_y, row) in render_packet.iter_mut().enumerate() {
+                for (screen_x, cell) in row.iter_mut().enumerate() {
+                    // Compute distance from the player in screen coordinates.
+                    let dist = if let Some(ps) = player_screen {
+                        let dx = (screen_x as i32 - ps.x).abs();
+                        let dy = (screen_y as i32 - ps.y).abs();
+                        dx.max(dy) // Chebyshev distance
+                    } else {
+                        // Player off-screen — treat all tiles as very far.
+                        40
+                    };
+
+                    // Darkening factor: 1.0 at player, 0.0 at ≥ DEATH_DARK_RADIUS.
+                    const DEATH_DARK_RADIUS: i32 = 20;
+                    let factor = 1.0 - (dist as f32 / DEATH_DARK_RADIUS as f32).min(1.0);
+
+                    // Tint both fg and bg toward dark red.
+                    // Dark red base: (80, 0, 0).
+                    if let RatColor::Rgb(r, g, b) = cell.1 {
+                        let nr = ((r as f32 * factor) as u8).max((80.0 * (1.0 - factor)) as u8);
+                        let ng = (g as f32 * factor * 0.3) as u8;
+                        let nb = (b as f32 * factor * 0.3) as u8;
+                        cell.1 = RatColor::Rgb(nr, ng, nb);
+                    }
+                    if let RatColor::Rgb(r, g, b) = cell.2 {
+                        let nr = ((r as f32 * factor) as u8).max((80.0 * (1.0 - factor)) as u8);
+                        let ng = (g as f32 * factor * 0.3) as u8;
+                        let nb = (b as f32 * factor * 0.3) as u8;
+                        cell.2 = RatColor::Rgb(nr, ng, nb);
+                    }
+                }
+            }
+        }
+
         let mut render_lines = Vec::new();
 
         for y in 0..render_height as usize {
@@ -496,7 +539,12 @@ pub fn draw_system(
         // Reverse so that higher Y values are at the top (standard roguelike convention)
         render_lines.reverse();
 
-        frame.render_widget(Paragraph::new(Text::from(render_lines)).on_black(), game_area);
+        let game_bg = if player_is_dead {
+            RatColor::Rgb(80, 0, 0) // dark red when dead
+        } else {
+            RatColor::Black
+        };
+        frame.render_widget(Paragraph::new(Text::from(render_lines)).bg(game_bg), game_area);
 
         // Collect inventory item names and kinds for the bottom panel and inventory overlay.
         let inv_item_info: Vec<(String, String)> = player_inv
@@ -656,7 +704,6 @@ pub fn draw_system(
 
         // Show "YOU DIED" overlay when the player has fallen.
         // Show it right above the UI panel, not in the center of the screen.
-        let player_is_dead = player_hp.is_some_and(|hp| hp.is_dead());
         if *state.get() == GameState::Dead || player_is_dead {
             let label = " YOU DIED — Press R to restart ";
             let label_width = label.len() as u16;

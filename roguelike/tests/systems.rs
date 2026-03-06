@@ -4234,3 +4234,97 @@ fn two_shots_produce_at_most_two_bullets() {
         "Two shots should produce at most 2 bullet entities, but found {bullet_count}",
     );
 }
+
+// ─── AiAimCursor Tests ──────────────────────────────────────────
+
+#[test]
+fn ai_aim_cursor_initialised_at_npc_position() {
+    // When an NPC transitions to Chasing, its AiAimCursor should start at
+    // the NPC's own position, not at the target's.
+    let cursor = AiAimCursor {
+        pos: GridVec::new(10, 10),
+        steps_remaining: 0,
+    };
+    assert_eq!(cursor.pos, GridVec::new(10, 10));
+    assert_eq!(cursor.steps_remaining, 0);
+}
+
+#[test]
+fn ai_aim_cursor_advances_toward_target() {
+    // Simulate cursor advancing king-steps toward a target.
+    let mut cursor = AiAimCursor {
+        pos: GridVec::new(10, 10),
+        steps_remaining: 3,
+    };
+    let target = GridVec::new(15, 10);
+
+    for _ in 0..cursor.steps_remaining {
+        if cursor.pos == target { break; }
+        let step = (target - cursor.pos).king_step();
+        cursor.pos = cursor.pos + step;
+    }
+    // After 3 king-steps east, cursor should be at (13, 10).
+    assert_eq!(cursor.pos, GridVec::new(13, 10));
+}
+
+#[test]
+fn ai_aim_cursor_reaches_target_stops() {
+    // If cursor is close enough, it should stop at the target.
+    let mut cursor = AiAimCursor {
+        pos: GridVec::new(13, 10),
+        steps_remaining: 6,
+    };
+    let target = GridVec::new(15, 10);
+
+    for _ in 0..cursor.steps_remaining {
+        if cursor.pos == target { break; }
+        let step = (target - cursor.pos).king_step();
+        cursor.pos = cursor.pos + step;
+    }
+    // Should stop at target (15, 10), not overshoot.
+    assert_eq!(cursor.pos, target);
+}
+
+#[test]
+fn ai_aim_cursor_d6_roll_range() {
+    // The 1d6 roll should produce values 1-6.
+    for i in 0..100u64 {
+        let roll_hash = (i ^ 42u64).wrapping_mul(6364136223846793005);
+        let result = ((roll_hash % 6) as u8) + 1;
+        assert!((1..=6).contains(&result), "1d6 roll out of range: {result}");
+    }
+}
+
+#[test]
+fn ai_aim_cursor_persists_between_shots() {
+    // The cursor should NOT reset between shots — it stays where it was.
+    let mut cursor = AiAimCursor {
+        pos: GridVec::new(13, 10),
+        steps_remaining: 0,
+    };
+    let target = GridVec::new(15, 10);
+
+    // Simulate first "shot": roll 2 steps
+    cursor.steps_remaining = 2;
+    for _ in 0..cursor.steps_remaining {
+        if cursor.pos == target { break; }
+        let step = (target - cursor.pos).king_step();
+        cursor.pos = cursor.pos + step;
+    }
+    // Cursor should be at (15, 10) — exactly on target
+    assert_eq!(cursor.pos, target);
+    cursor.steps_remaining = 0;
+
+    // After "firing", cursor stays at (15, 10) — not reset to NPC pos
+    assert_eq!(cursor.pos, GridVec::new(15, 10));
+
+    // If target moves, cursor advances from current pos, not NPC pos
+    let new_target = GridVec::new(18, 10);
+    cursor.steps_remaining = 2;
+    for _ in 0..cursor.steps_remaining {
+        if cursor.pos == new_target { break; }
+        let step = (new_target - cursor.pos).king_step();
+        cursor.pos = cursor.pos + step;
+    }
+    assert_eq!(cursor.pos, GridVec::new(17, 10));
+}

@@ -3,7 +3,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use bevy::prelude::*;
 
-use crate::components::{AiLookDir, AiMemory, AiPersonality, AiState, AiTarget, AimingStyle, BlocksMovement, CombatStats, Energy, Faction, Health, Inventory, Item, ItemKind, PatrolOrigin, PlayerControlled, Position, Speed, Stamina, Viewshed};
+use crate::components::{AiAimCursor, AiLookDir, AiMemory, AiPersonality, AiState, AiTarget, AimingStyle, BlocksMovement, CombatStats, Energy, Faction, Health, Inventory, Item, ItemKind, PatrolOrigin, PlayerControlled, Position, Speed, Stamina, Viewshed};
 use crate::events::{AttackIntent, MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
 use crate::grid_vec::GridVec;
 use crate::resources::{GameMapResource, SpatialIndex, TurnCounter};
@@ -315,13 +315,16 @@ const HASH_KNUTH: u64 = 2654435761;
 /// LCG multiplier (from PCG family) for pseudo-random spread calculations.
 const HASH_LCG: u64 = 6364136223846793005;
 
-/// Assigns a random [`AimingStyle`] and sets [`AiTarget`] on an entity
-/// transitioning to [`AiState::Chasing`].
+/// Assigns a random [`AimingStyle`], sets [`AiTarget`], and initialises
+/// the [`AiAimCursor`] on an entity transitioning to [`AiState::Chasing`].
+/// The cursor starts at the NPC's own position so it must advance toward
+/// the target before a shot can land accurately.
 fn assign_aiming_style(
     commands: &mut Commands,
     entity: Entity,
     turn: u32,
     chase_target: Option<(Entity, GridVec)>,
+    npc_pos: GridVec,
 ) {
     let aim_hash = (entity.to_bits() ^ turn as u64).wrapping_mul(HASH_KNUTH);
     let style = match aim_hash % 3 {
@@ -330,6 +333,9 @@ fn assign_aiming_style(
         _ => AimingStyle::Suppression,
     };
     commands.entity(entity).insert(style);
+    // Initialise the aim cursor at the NPC's own position with 0 steps
+    // remaining — the first shot turn will roll 1d6 fresh.
+    commands.entity(entity).insert(AiAimCursor { pos: npc_pos, steps_remaining: 0 });
     if let Some((te, tv)) = chase_target {
         commands.entity(entity).insert(AiTarget { entity: te, last_pos: tv, last_seen: turn });
     }
@@ -566,7 +572,7 @@ fn flee_direction(
 pub fn ai_system(
     mut commands: Commands,
     mut ai_query: Query<
-        ((Entity, &Position, &mut AiState, Option<&mut Viewshed>, &mut Energy, Option<&Faction>, Option<&mut AiLookDir>, Option<&PatrolOrigin>), (Option<&mut Inventory>, Option<&mut Health>, Option<&mut Stamina>, Option<&CombatStats>, Option<&mut AiMemory>, Option<&AiPersonality>, Option<&AiTarget>, Option<&AimingStyle>)),
+        ((Entity, &Position, &mut AiState, Option<&mut Viewshed>, &mut Energy, Option<&Faction>, Option<&mut AiLookDir>, Option<&PatrolOrigin>), (Option<&mut Inventory>, Option<&mut Health>, Option<&mut Stamina>, Option<&CombatStats>, Option<&mut AiMemory>, Option<&AiPersonality>, Option<&AiTarget>, Option<&AimingStyle>, Option<&mut AiAimCursor>)),
         Without<PlayerControlled>,
     >,
     player_query: Query<(Entity, &Position, &Health), With<PlayerControlled>>,
@@ -595,7 +601,7 @@ pub fn ai_system(
     // When the player is dead, clear all NPC memory so they stop
     // pathfinding toward the player's last known position.
     if !player_alive {
-        for ((_, _, mut ai_state, _, _, _, _, _), (_, _, _, _, mut mem_opt, _, _, _)) in &mut ai_query {
+        for ((_, _, mut ai_state, _, _, _, _, _), (_, _, _, _, mut mem_opt, _, _, _, _)) in &mut ai_query {
             if let Some(ref mut mem) = mem_opt {
                 mem.last_known_pos = None;
             }
@@ -617,7 +623,7 @@ pub fn ai_system(
     // faction response (e.g., lawmen converging on a shooter).
     const ALLY_SHARE_RANGE: i32 = 20;
     let mut faction_alerts: HashMap<Faction, Vec<GridVec>> = HashMap::new();
-    for ((_, _pos_ref, ai_state, _, _, faction_opt, _, _), (_, _, _, _, mem_opt, _, _, _)) in &ai_query {
+    for ((_, _pos_ref, ai_state, _, _, faction_opt, _, _), (_, _, _, _, mem_opt, _, _, _, _)) in &ai_query {
         if !matches!(*ai_state, AiState::Chasing) { continue; }
         let Some(&f) = faction_opt else { continue; };
         if let Some(mem) = mem_opt
@@ -629,7 +635,7 @@ pub fn ai_system(
             }
     }
 
-    for ((entity, pos, mut ai, mut viewshed, mut energy, faction, mut ai_look_dir, patrol_origin), (mut inventory, health, mut stamina, combat_stats, mut ai_memory, _personality, ai_target, aiming_style)) in &mut ai_query {
+    for ((entity, pos, mut ai, mut viewshed, mut energy, faction, mut ai_look_dir, patrol_origin), (mut inventory, health, mut stamina, combat_stats, mut ai_memory, _personality, ai_target, aiming_style, mut ai_aim_cursor)) in &mut ai_query {
         if !energy.can_act() {
             continue;
         }
@@ -699,6 +705,7 @@ pub fn ai_system(
             if !target_alive || my_pos.chebyshev_distance(ai_tgt.last_pos) > viewshed_range * 2 {
                 // Target dead or escaped awareness range entirely — clear AiTarget
                 commands.entity(entity).remove::<AiTarget>();
+                commands.entity(entity).remove::<AiAimCursor>();
                 None
             } else if viewshed.as_ref().is_some_and(|vs| vs.visible_tiles.contains(&ai_tgt.last_pos)) {
                 // Target visible at last known pos — use it
@@ -708,6 +715,7 @@ pub fn ai_system(
                 Some((ai_tgt.entity, ai_tgt.last_pos))
             } else {
                 commands.entity(entity).remove::<AiTarget>();
+                commands.entity(entity).remove::<AiAimCursor>();
                 None
             }
         } else {
@@ -923,7 +931,7 @@ pub fn ai_system(
             AiState::Idle => {
                 if chase_target.is_some() {
                     *ai = AiState::Chasing;
-                    assign_aiming_style(&mut commands, entity, turn_counter.0, chase_target);
+                    assign_aiming_style(&mut commands, entity, turn_counter.0, chase_target, my_pos);
                     if let Some((_, tv)) = chase_target {
                         let toward = (tv - my_pos).king_step();
                         if !toward.is_zero() {
@@ -1004,7 +1012,7 @@ pub fn ai_system(
             AiState::Patrolling => {
                 if chase_target.is_some() {
                     *ai = AiState::Chasing;
-                    assign_aiming_style(&mut commands, entity, turn_counter.0, chase_target);
+                    assign_aiming_style(&mut commands, entity, turn_counter.0, chase_target, my_pos);
                     continue;
                 }
 
@@ -1238,6 +1246,21 @@ pub fn ai_system(
                                 energy.spend_action();
                                 continue;
                             }
+                            // Reached last known position — sweep the area by
+                            // performing a circular rotation before giving up.
+                            if is_rotating(&ai_look_dir) {
+                                rotate_look_dir(&mut ai_look_dir, &mut viewshed);
+                                energy.spend_action();
+                                continue;
+                            }
+                            // Start a full 360° sweep if we haven't done one yet
+                            // since arriving at the target's last position.
+                            let time_since_seen = turn_counter.0.saturating_sub(ai_tgt.last_seen);
+                            if time_since_seen < FULL_ROTATION_STEPS as u32 + 2 {
+                                begin_circular_rotation(&mut ai_look_dir, &mut viewshed);
+                                energy.spend_action();
+                                continue;
+                            }
                         }
                         // Only now fall back to patrolling
                         *ai = if patrol_origin.is_some() { AiState::Patrolling } else { AiState::Idle };
@@ -1246,6 +1269,7 @@ pub fn ai_system(
                         }
                         commands.entity(entity).remove::<AiTarget>();
                         commands.entity(entity).remove::<AimingStyle>();
+                        commands.entity(entity).remove::<AiAimCursor>();
                         energy.spend_action();
                         continue;
                     }
@@ -1279,6 +1303,39 @@ pub fn ai_system(
                         energy.spend_action();
                         continue;
                     }
+                }
+
+                // ── Aim-cursor cadence ──────────────────────────────────
+                // Before firing, advance the NPC's internal aim cursor
+                // toward the target.  Roll 1d6 to decide how many
+                // king-steps the cursor takes this turn.  The cursor is
+                // persistent — it does NOT reset between shots.
+                if let Some(ref mut cursor) = ai_aim_cursor {
+                    if cursor.steps_remaining == 0 {
+                        // Roll 1d6 for new step budget
+                        let roll_hash = (entity.to_bits() ^ turn_counter.0 as u64)
+                            .wrapping_mul(HASH_LCG);
+                        cursor.steps_remaining = ((roll_hash % 6) as u8) + 1; // 1-6
+                    }
+                    // Advance cursor toward target
+                    let steps_to_take = cursor.steps_remaining;
+                    for _ in 0..steps_to_take {
+                        if cursor.pos == target_vec {
+                            break;
+                        }
+                        let step = (target_vec - cursor.pos).king_step();
+                        cursor.pos = cursor.pos + step;
+                        cursor.steps_remaining = cursor.steps_remaining.saturating_sub(1);
+                    }
+                    // If cursor hasn't reached the target yet, spend the
+                    // turn aiming and don't fire.
+                    if cursor.pos != target_vec {
+                        energy.spend_action();
+                        continue;
+                    }
+                    // Cursor is on target — proceed to fire. Reset budget
+                    // so next shot rolls fresh.
+                    cursor.steps_remaining = 0;
                 }
 
                 let dist = my_pos.chebyshev_distance(target_vec);
