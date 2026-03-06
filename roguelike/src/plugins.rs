@@ -162,7 +162,7 @@ impl Plugin for ActionPlugin {
                 Update,
                 (
                     movement::movement_system,
-                    movement::dive_stamina_system,
+
                     inventory::pickup_system,
                     inventory::auto_pickup_system,
                     inventory::use_item_system,
@@ -187,7 +187,7 @@ impl Plugin for ActionPlugin {
                     combat::apply_damage_system,
                     combat::death_system,
                     movement::victory_check_system,
-                    movement::water_slowdown_system,
+
                 )
                     .chain()
                     .after(projectile::projectile_system)

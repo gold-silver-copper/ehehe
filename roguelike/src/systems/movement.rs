@@ -125,37 +125,3 @@ pub fn victory_check_system(
         next_state.set(GameState::Victory);
     }
 }
-
-/// Water tiles now block movement entirely (no swimming), so there is
-/// nothing to slow down. This system is kept as a no-op stub so the
-/// plugin's system registration doesn't need to change.
-pub fn water_slowdown_system(
-    _player_pos: Single<&Position, With<PlayerControlled>>,
-    _game_map: Res<GameMapResource>,
-    _extra_ticks: ResMut<crate::resources::ExtraWorldTicks>,
-    _combat_log: ResMut<CombatLog>,
-    _turn_state: Option<Res<State<TurnState>>>,
-) {
-    // Water is impassable; this system is intentionally a no-op.
-}
-
-/// Consumes pending dive stamina after movement is processed.
-/// The input system sets `dive_stamina_pending` and the movement system
-/// processes the move intents. This system deducts the stamina.
-pub fn dive_stamina_system(
-    mut input_state: ResMut<InputState>,
-    mut player_query: Query<&mut Stamina, With<PlayerControlled>>,
-) {
-    if input_state.dive_stamina_pending > 0 {
-        if let Ok(mut stamina) = player_query.single_mut() {
-            stamina.spend(input_state.dive_stamina_pending);
-        }
-        input_state.dive_stamina_pending = 0;
-    }
-    if input_state.ability_stamina_pending > 0 {
-        if let Ok(mut stamina) = player_query.single_mut() {
-            stamina.spend(input_state.ability_stamina_pending);
-        }
-        input_state.ability_stamina_pending = 0;
-    }
-}
