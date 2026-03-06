@@ -558,26 +558,76 @@ impl WorldGenPhase for InfrastructurePhase {
             for y in 1..height - 1 {
                 for x in 1..width - 1 {
                     let pos = GridVec::new(x, y);
-                    if let Some(voxel) = map.get_voxel_at(&pos) {
-                        if !matches!(voxel.floor, Some(Floor::BeachSand)) {
-                            continue;
+                    if !map
+                        .get_voxel_at(&pos)
+                        .is_some_and(|voxel| matches!(voxel.floor, Some(Floor::BeachSand)))
+                    {
+                        continue;
+                    }
+
+                    let mut saw_bridge = false;
+                    let mut fill_floor: Option<(u32, Floor)> = None;
+                    for dy in -2..=2i32 {
+                        for dx in -2..=2i32 {
+                            let sample = GridVec::new(x + dx, y + dy);
+                            if sample.x < 0
+                                || sample.x >= width
+                                || sample.y < 0
+                                || sample.y >= height
+                            {
+                                continue;
+                            }
+                            let dist = dx.abs() + dy.abs();
+                            if dist > 3 {
+                                continue;
+                            }
+                            if let Some(neighbor) = map.get_voxel_at(&sample) {
+                                match neighbor.floor {
+                                    Some(Floor::Bridge) => saw_bridge = true,
+                                    Some(Floor::DirtRoad) => {
+                                        let score = dist as u32 * 10;
+                                        if fill_floor
+                                            .as_ref()
+                                            .is_none_or(|current| score < current.0)
+                                        {
+                                            fill_floor = Some((score, Floor::DirtRoad));
+                                        }
+                                    }
+                                    Some(Floor::Sidewalk) => {
+                                        let score = dist as u32 * 10 + 1;
+                                        if fill_floor
+                                            .as_ref()
+                                            .is_none_or(|current| score < current.0)
+                                        {
+                                            fill_floor = Some((score, Floor::Sidewalk));
+                                        }
+                                    }
+                                    Some(Floor::Dirt) => {
+                                        let score = dist as u32 * 10 + 2;
+                                        if fill_floor
+                                            .as_ref()
+                                            .is_none_or(|current| score < current.0)
+                                        {
+                                            fill_floor = Some((score, Floor::Dirt));
+                                        }
+                                    }
+                                    Some(Floor::Gravel) => {
+                                        let score = dist as u32 * 10 + 3;
+                                        if fill_floor
+                                            .as_ref()
+                                            .is_none_or(|current| score < current.0)
+                                        {
+                                            fill_floor = Some((score, Floor::Gravel));
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
                         }
-                        let near_bridge = pos.cardinal_neighbors().iter().any(|n| {
-                            map.get_voxel_at(n)
-                                .is_some_and(|v| matches!(v.floor, Some(Floor::Bridge)))
-                        });
-                        if near_bridge {
-                            // Deterministic choice: use value_noise to pick Dirt, Gravel, or Sidewalk
-                            let n = value_noise(x, y, seed.wrapping_add(88888));
-                            let floor = if n < 0.33 {
-                                Floor::Dirt
-                            } else if n < 0.66 {
-                                Floor::Gravel
-                            } else {
-                                Floor::Sidewalk
-                            };
-                            to_fill.push((pos, floor));
-                        }
+                    }
+
+                    if saw_bridge && let Some((_, floor)) = fill_floor {
+                        to_fill.push((pos, floor));
                     }
                 }
             }
@@ -862,6 +912,10 @@ impl WorldGenPhase for FinalizationPhase {
         height: CoordinateUnit,
         _seed: NoiseSeed,
     ) {
+        for building in &data.buildings {
+            clear_building_entrance(map, building);
+        }
+
         // Post-pass coherence: verify every building can reach the main street
         check_connectivity(
             map,
@@ -1777,7 +1831,7 @@ const LOT_MIN_DIM: CoordinateUnit = 14;
 const ANCHOR_MIN_DIM: CoordinateUnit = 10;
 
 /// Minimum side length for smaller filler buildings placed in strips around the anchor.
-const FILLER_MIN_DIM: CoordinateUnit = 5;
+const FILLER_MIN_DIM: CoordinateUnit = 4;
 
 /// Gap in tiles enforced between every pair of adjacent buildings.
 const GAP: CoordinateUnit = 1;
@@ -1793,7 +1847,7 @@ const BSP_PADDING_LOCAL: CoordinateUnit = BSP_PADDING;
 const ALLEY_GAP_MAX: i64 = 6;
 
 /// Fraction of BSP leaves that become parks instead of buildings.
-const PARK_NOISE_THRESHOLD: f64 = 0.10;
+const PARK_NOISE_THRESHOLD: f64 = 0.06;
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -1878,6 +1932,57 @@ fn try_place(
         kind,
     });
     true
+}
+
+/// Reserves and clears the tiles directly outside a building's main doorway
+/// so later decoration passes cannot block the entrance.
+fn reserve_building_entrance(map: &mut GameMap, b: &Building) {
+    let door_x = b.x + b.w / 2;
+    let door_y = b.y + b.h;
+    for dy in 0..=1 {
+        map.mark_occupied(door_x, door_y + dy, 1, 1);
+    }
+}
+
+/// Clears blocking props from the small apron outside a building entrance.
+fn clear_building_entrance(map: &mut GameMap, b: &Building) {
+    let door_x = b.x + b.w / 2;
+    let door_y = b.y + b.h;
+    let apron = [
+        GridVec::new(door_x, door_y),
+        GridVec::new(door_x, door_y + 1),
+        GridVec::new(door_x - 1, door_y),
+        GridVec::new(door_x + 1, door_y),
+    ];
+
+    for pos in apron {
+        if pos.x < 0 || pos.x >= map.width || pos.y < 0 || pos.y >= map.height {
+            continue;
+        }
+        if let Some(voxel) = map.get_voxel_at_mut(&pos)
+            && voxel
+                .props
+                .as_ref()
+                .is_some_and(|prop| prop.blocks_movement() && !prop.is_wall())
+        {
+            voxel.props = None;
+        }
+    }
+}
+
+#[inline]
+fn building_shape_type(b: &Building, seed: NoiseSeed) -> u32 {
+    let shape_noise = value_noise(b.x + b.y, b.w + b.h, seed.wrapping_add(77777));
+    if b.w >= 8 && b.h >= 8 {
+        (shape_noise * 3.0) as u32
+    } else {
+        SHAPE_RECT
+    }
+}
+
+#[inline]
+fn building_has_side_door(b: &Building) -> bool {
+    (b.w >= 12 || b.h >= 12) && matches!(b.kind, 1 | 3 | 4 | 5 | 7 | 8 | 9 | 11)
 }
 
 /// Derives the inner lot boundary from a pair of boundary coordinates.
@@ -1986,8 +2091,8 @@ fn place_lot_buildings(
     // complementary fractions so tall lots get wide anchors and vice versa,
     // producing natural variety rather than a uniform aspect ratio.
     let size_n = value_noise(lot.cx(), lot.cy(), lot_seed.wrapping_add(1111));
-    let frac_w = 0.48 + size_n * 0.20;
-    let frac_h = 0.48 + (1.0 - size_n) * 0.20;
+    let frac_w = 0.40 + size_n * 0.18;
+    let frac_h = 0.40 + (1.0 - size_n) * 0.18;
 
     let anchor_w = ((lot.w as f64 * frac_w) as CoordinateUnit)
         .max(ANCHOR_MIN_DIM)
@@ -2195,62 +2300,152 @@ fn fill_strip(
 
     // Divide along the longer axis; cap at 3 segments to avoid tiny slivers.
     let segments: CoordinateUnit = if sw >= sh {
-        (sw / (FILLER_MIN_DIM + GAP)).min(4).max(1)
+        (sw / (FILLER_MIN_DIM + GAP)).min(5).max(1)
     } else {
-        (sh / (FILLER_MIN_DIM + GAP)).min(4).max(1)
+        (sh / (FILLER_MIN_DIM + GAP)).min(5).max(1)
     };
 
     if sw >= sh {
         // Horizontal division: `segments` columns.
         let seg_w = sw / segments;
         for s in 0..segments {
-            let bx = sx + s * seg_w + if s > 0 { GAP } else { 0 };
-            let by = sy;
-            let bw = (if s == segments - 1 {
+            let base_bx = sx + s * seg_w + if s > 0 { GAP } else { 0 };
+            let base_by = sy;
+            let seg_bw = (if s == segments - 1 {
                 sw - s * seg_w
             } else {
                 seg_w
             })
             .saturating_sub(if s < segments - 1 { GAP } else { 0 });
-            let bh = sh;
+            let seg_bh = sh;
+            if seg_bw < FILLER_MIN_DIM || seg_bh < FILLER_MIN_DIM {
+                continue;
+            }
+            let seg_seed = strip_seed.wrapping_add(s as u64 * 31);
+            let shrink_x_max = seg_bw.saturating_sub(FILLER_MIN_DIM).min(2);
+            let shrink_y_max = seg_bh.saturating_sub(FILLER_MIN_DIM).min(4);
+            let shrink_x = if shrink_x_max > 0 {
+                (value_noise(base_bx, base_by, seg_seed) * (shrink_x_max + 1) as f64)
+                    as CoordinateUnit
+            } else {
+                0
+            };
+            let shrink_y = if shrink_y_max > 0 {
+                (value_noise(base_by, base_bx, seg_seed.wrapping_add(1))
+                    * (shrink_y_max + 1) as f64) as CoordinateUnit
+            } else {
+                0
+            };
+            let bw = seg_bw - shrink_x;
+            let bh = seg_bh - shrink_y;
+            let jitter_x = if seg_bw > bw {
+                (value_noise(seg_bw, seg_bh, seg_seed.wrapping_add(2)) * (seg_bw - bw + 1) as f64)
+                    as CoordinateUnit
+            } else {
+                0
+            };
+            let jitter_y = if seg_bh > bh {
+                (value_noise(seg_bh, seg_bw, seg_seed.wrapping_add(3)) * (seg_bh - bh + 1) as f64)
+                    as CoordinateUnit
+            } else {
+                0
+            };
+            let bx = base_bx + jitter_x;
+            let by = base_by + jitter_y;
             let kind = pick_kind(
                 bx + bw / 2,
                 by + bh / 2,
                 bx,
                 by,
-                strip_seed.wrapping_add(s as u64 * 31),
+                seg_seed,
                 width,
                 height,
                 avenue_ys,
                 seed,
             );
-            try_place(bx, by, bw, bh, FILLER_MIN_DIM, kind, placed, out);
+            if !try_place(bx, by, bw, bh, FILLER_MIN_DIM, kind, placed, out) {
+                try_place(
+                    base_bx,
+                    base_by,
+                    seg_bw,
+                    seg_bh,
+                    FILLER_MIN_DIM,
+                    kind,
+                    placed,
+                    out,
+                );
+            }
         }
     } else {
         // Vertical division: `segments` rows.
         let seg_h = sh / segments;
         for s in 0..segments {
-            let bx = sx;
-            let by = sy + s * seg_h + if s > 0 { GAP } else { 0 };
-            let bw = sw;
-            let bh = (if s == segments - 1 {
+            let base_bx = sx;
+            let base_by = sy + s * seg_h + if s > 0 { GAP } else { 0 };
+            let seg_bw = sw;
+            let seg_bh = (if s == segments - 1 {
                 sh - s * seg_h
             } else {
                 seg_h
             })
             .saturating_sub(if s < segments - 1 { GAP } else { 0 });
+            if seg_bw < FILLER_MIN_DIM || seg_bh < FILLER_MIN_DIM {
+                continue;
+            }
+            let seg_seed = strip_seed.wrapping_add(s as u64 * 37);
+            let shrink_x_max = seg_bw.saturating_sub(FILLER_MIN_DIM).min(4);
+            let shrink_y_max = seg_bh.saturating_sub(FILLER_MIN_DIM).min(2);
+            let shrink_x = if shrink_x_max > 0 {
+                (value_noise(base_bx, base_by, seg_seed) * (shrink_x_max + 1) as f64)
+                    as CoordinateUnit
+            } else {
+                0
+            };
+            let shrink_y = if shrink_y_max > 0 {
+                (value_noise(base_by, base_bx, seg_seed.wrapping_add(1))
+                    * (shrink_y_max + 1) as f64) as CoordinateUnit
+            } else {
+                0
+            };
+            let bw = seg_bw - shrink_x;
+            let bh = seg_bh - shrink_y;
+            let jitter_x = if seg_bw > bw {
+                (value_noise(seg_bw, seg_bh, seg_seed.wrapping_add(2)) * (seg_bw - bw + 1) as f64)
+                    as CoordinateUnit
+            } else {
+                0
+            };
+            let jitter_y = if seg_bh > bh {
+                (value_noise(seg_bh, seg_bw, seg_seed.wrapping_add(3)) * (seg_bh - bh + 1) as f64)
+                    as CoordinateUnit
+            } else {
+                0
+            };
+            let bx = base_bx + jitter_x;
+            let by = base_by + jitter_y;
             let kind = pick_kind(
                 bx + bw / 2,
                 by + bh / 2,
                 bx,
                 by,
-                strip_seed.wrapping_add(s as u64 * 37),
+                seg_seed,
                 width,
                 height,
                 avenue_ys,
                 seed,
             );
-            try_place(bx, by, bw, bh, FILLER_MIN_DIM, kind, placed, out);
+            if !try_place(bx, by, bw, bh, FILLER_MIN_DIM, kind, placed, out) {
+                try_place(
+                    base_bx,
+                    base_by,
+                    seg_bw,
+                    seg_bh,
+                    FILLER_MIN_DIM,
+                    kind,
+                    placed,
+                    out,
+                );
+            }
         }
     }
 }
@@ -2305,7 +2500,7 @@ fn generate_buildings_bsp(
     )> = Vec::new();
 
     let bsp_seed = seed.wrapping_add(11111);
-    let margin = (30 as CoordinateUnit).min(width / 8).min(height / 8).max(6);
+    let margin = (26 as CoordinateUnit).min(width / 8).min(height / 8).max(5);
     let build_w = width - margin * 2;
     let build_h = height - margin * 2;
 
@@ -2363,15 +2558,34 @@ fn generate_buildings_bsp(
         }
 
         let pad = BSP_PADDING_LOCAL;
-        let bx = lx + pad;
-        let by = ly + pad;
-        let bw = (lw - pad * 2).min(BSP_MAX_W);
-        let bh = (lh - pad * 2).min(BSP_MAX_H);
+        let leaf_inner_w = lw - pad * 2;
+        let leaf_inner_h = lh - pad * 2;
+        let bw = leaf_inner_w.min(BSP_MAX_W);
+        let bh = leaf_inner_h.min(BSP_MAX_H);
 
         if bw < ANCHOR_MIN_DIM || bh < ANCHOR_MIN_DIM {
             open_lots.push((lx, ly, lw, lh));
             continue;
         }
+
+        let leaf_seed = bsp_seed.wrapping_add(i as u64 * 53);
+        let free_x = leaf_inner_w.saturating_sub(bw);
+        let free_y = leaf_inner_h.saturating_sub(bh);
+        let bx = lx
+            + pad
+            + if free_x > 0 {
+                (value_noise(lx, ly, leaf_seed) * (free_x + 1) as f64) as CoordinateUnit
+            } else {
+                0
+            };
+        let by = ly
+            + pad
+            + if free_y > 0 {
+                (value_noise(ly, lx, leaf_seed.wrapping_add(1)) * (free_y + 1) as f64)
+                    as CoordinateUnit
+            } else {
+                0
+            };
 
         let (bx, bw) = match fit_beside_cross_streets(bx, bw, lx, cross_xs, cross_half_width) {
             Some(fit) => fit,
@@ -2731,12 +2945,7 @@ const L_SHAPE_NOTCH_DIVISOR: CoordinateUnit = 3;
 
 fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
     // Determine building shape based on noise
-    let shape_noise = value_noise(b.x + b.y, b.w + b.h, seed.wrapping_add(77777));
-    let shape_type = if b.w >= 8 && b.h >= 8 {
-        (shape_noise * 3.0) as u32 // SHAPE_RECT, SHAPE_ROUNDED, or SHAPE_L
-    } else {
-        SHAPE_RECT
-    };
+    let shape_type = building_shape_type(b, seed);
 
     // For L-shape, compute notch dimensions
     let notch_w = b.w / L_SHAPE_NOTCH_DIVISOR;
@@ -2785,17 +2994,15 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
                 }
 
                 // Door positions
-                let is_door = (y == b.y + b.h - 1
+                let is_door = y == b.y + b.h - 1
                     && x == b.x + b.w / 2
-                    && (shape_type != SHAPE_L || x < notch_x_start))
-                    || (y == b.y && x == b.x + b.w / 2);
+                    && (shape_type != SHAPE_L || x < notch_x_start);
 
                 // Side doors for bigger buildings
-                let is_side_door = if b.w >= 9 || b.h >= 9 {
-                    (x == b.x && y == b.y + b.h / 2)
-                        || (x == b.x + b.w - 1
-                            && y == b.y + b.h / 2
-                            && (shape_type != SHAPE_L || y < notch_y_start))
+                let is_side_door = if building_has_side_door(b) {
+                    x == b.x + b.w - 1
+                        && y == b.y + b.h / 2
+                        && (shape_type != SHAPE_L || y < notch_y_start)
                 } else {
                     false
                 };
@@ -3178,21 +3385,17 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
         }
     }
     // ── Wall integrity: repair any gaps in the perimeter ───────────────
-    validate_building_walls(map, b);
+    validate_building_walls(map, b, seed);
     map.mark_occupied(b.x, b.y, b.w, b.h);
+    reserve_building_entrance(map, b);
 }
 
 /// Validates and repairs the wall perimeter of a building. Ensures every
 /// edge tile that should be a wall (except doors and rounded corners) is
 /// filled. Called immediately after placement to fix BSP-clipping or
 /// late occupancy conflicts.
-fn validate_building_walls(map: &mut GameMap, b: &Building) {
-    let shape_noise = value_noise(b.x + b.y, b.w + b.h, 0u64.wrapping_add(77777));
-    let shape_type = if b.w >= 8 && b.h >= 8 {
-        (shape_noise * 3.0) as u32
-    } else {
-        SHAPE_RECT
-    };
+fn validate_building_walls(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
+    let shape_type = building_shape_type(b, seed);
     let notch_w = b.w / L_SHAPE_NOTCH_DIVISOR;
     let notch_h = b.h / L_SHAPE_NOTCH_DIVISOR;
     let notch_x_start = b.x + b.w - notch_w;
@@ -3219,15 +3422,13 @@ fn validate_building_walls(map: &mut GameMap, b: &Building) {
                 false
             };
             // Door positions
-            let is_door = (y == b.y + b.h - 1
+            let is_door = y == b.y + b.h - 1
                 && x == b.x + b.w / 2
-                && (shape_type != SHAPE_L || x < notch_x_start))
-                || (y == b.y && x == b.x + b.w / 2);
-            let is_side_door = if b.w >= 9 || b.h >= 9 {
-                (x == b.x && y == b.y + b.h / 2)
-                    || (x == b.x + b.w - 1
-                        && y == b.y + b.h / 2
-                        && (shape_type != SHAPE_L || y < notch_y_start))
+                && (shape_type != SHAPE_L || x < notch_x_start);
+            let is_side_door = if building_has_side_door(b) {
+                x == b.x + b.w - 1
+                    && y == b.y + b.h / 2
+                    && (shape_type != SHAPE_L || y < notch_y_start)
             } else {
                 false
             };
@@ -3928,6 +4129,26 @@ fn place_mission(
         // Lay down thick stone walls and interior
         place_mission_at(map, mx, my, mw, mh);
         return;
+    }
+
+    let mut fallback: Option<(CoordinateUnit, CoordinateUnit, CoordinateUnit)> = None;
+    let center_x = width / 2 - mw / 2;
+    let center_y = height / 2 - mh / 2;
+    for my in (2..=height - mh - 2).step_by(6) {
+        for mx in (2..=width - mw - 2).step_by(6) {
+            if overlaps_any_building(mx, my, mw, mh, buildings)
+                || map.has_excluded_tile(mx, my, mw, mh)
+            {
+                continue;
+            }
+            let score = (mx - center_x).abs() + (my - center_y).abs();
+            if fallback.is_none_or(|current| score < current.0) {
+                fallback = Some((score, mx, my));
+            }
+        }
+    }
+    if let Some((_, mx, my)) = fallback {
+        place_mission_at(map, mx, my, mw, mh);
     }
 }
 
@@ -4808,6 +5029,74 @@ fn place_stone_church(
             map.mark_occupied(bx, by, cw, ch);
             break 'search;
         }
+    }
+
+    let mut fallback: Option<(CoordinateUnit, CoordinateUnit, CoordinateUnit)> = None;
+    let center_x = width / 2 - cw / 2;
+    let center_y = height / 2 - ch / 2;
+    for by in (2..=height - ch - 2).step_by(6) {
+        for bx in (2..=width - cw - 2).step_by(6) {
+            if overlaps_any_building(bx, by, cw, ch, buildings)
+                || map.has_excluded_tile(bx, by, cw, ch)
+            {
+                continue;
+            }
+            let score = (bx - center_x).abs() + (by - center_y).abs();
+            if fallback.is_none_or(|current| score < current.0) {
+                fallback = Some((score, bx, by));
+            }
+        }
+    }
+    if let Some((_, bx, by)) = fallback {
+        for y in by..by + ch {
+            for x in bx..bx + cw {
+                let pos = GridVec::new(x, y);
+                if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                    let is_border = x == bx || x == bx + cw - 1 || y == by || y == by + ch - 1;
+                    let is_main_door =
+                        y == by + ch - 1 && (x == bx + cw / 2 || x == bx + cw / 2 - 1);
+                    let is_back_door = y == by && x == bx + cw / 2;
+                    if is_border && !is_main_door && !is_back_door {
+                        voxel.props = Some(Props::StoneWall);
+                        voxel.floor = Some(Floor::StoneFloor);
+                    } else {
+                        voxel.props = None;
+                        voxel.floor = Some(Floor::StoneFloor);
+                    }
+                }
+            }
+        }
+
+        let ix = bx + 1;
+        let iy = by + 1;
+        let iw = cw - 2;
+        let ih = ch - 2;
+
+        set_prop(map, ix + iw / 2, iy, Props::Table);
+        set_prop(map, ix + iw / 2 - 1, iy, Props::Sign);
+        set_prop(map, ix + iw / 2 + 1, iy, Props::Sign);
+
+        for row in 3..ih.min(14) {
+            set_prop(map, ix + 2, iy + row, Props::Bench);
+            if iw >= 8 {
+                set_prop(map, ix + iw - 3, iy + row, Props::Bench);
+            }
+        }
+
+        for row in (2..ih - 2).step_by(3) {
+            set_prop(map, ix, iy + row, Props::Sign);
+            set_prop(map, ix + iw - 1, iy + row, Props::Sign);
+        }
+
+        for dy in 0..3i32 {
+            for dx in 0..3i32 {
+                let pos = GridVec::new(ix + dx, iy + dy);
+                if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                    voxel.floor = Some(Floor::Rooftop);
+                }
+            }
+        }
+        map.mark_occupied(bx, by, cw, ch);
     }
 }
 
