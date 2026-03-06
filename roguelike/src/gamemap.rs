@@ -586,6 +586,9 @@ impl WorldGenPhase for BuildingPhase {
         // Place narrow alleys between adjacent buildings within blocks
         place_alleys(map, &data.buildings);
 
+        // Ensure every alley region connects to a road or sidewalk
+        ensure_alley_connectivity(map, width, height);
+
         // Assign faction anchors from building kinds
         assign_faction_anchors(map, &data.buildings);
 
@@ -1660,24 +1663,43 @@ fn generate_buildings_bsp(
     const PLOT_TARGET: CoordinateUnit = 9;
 
     let mut lot_buildings: Vec<Building> = Vec::new();
+    // Efficient lookup for distinguishing road boundaries from map edges
+    let avenue_set: HashSet<CoordinateUnit> = avenue_ys.iter().copied().collect();
+    let cross_set: HashSet<CoordinateUnit> = cross_xs.iter().copied().collect();
     for yi in 0..y_bounds.len().saturating_sub(1) {
         for xi in 0..x_bounds.len().saturating_sub(1) {
-            // Lot inner boundaries: first non-road tile + 1-tile sidewalk
-            let lot_top = y_bounds[yi] + avenue_half_width + sidewalk_width + 1;
-            let lot_bot = y_bounds[yi + 1] - avenue_half_width - sidewalk_width - 1;
-            let lot_left = x_bounds[xi] + cross_half_width + cross_sidewalk_width + 1;
-            let lot_right = x_bounds[xi + 1] - cross_half_width - cross_sidewalk_width - 1;
+            // Lot inner boundaries: for road-bounded edges, skip road + 1-tile
+            // sidewalk. For map-edge boundaries (no adjacent road), use a
+            // minimal 1-tile buffer so edge lots aren't unnecessarily shrunk.
+            let lot_top = if avenue_set.contains(&y_bounds[yi]) {
+                y_bounds[yi] + avenue_half_width + sidewalk_width + 1
+            } else {
+                y_bounds[yi] + 1
+            };
+            let lot_bot = if avenue_set.contains(&y_bounds[yi + 1]) {
+                y_bounds[yi + 1] - avenue_half_width - sidewalk_width - 1
+            } else {
+                y_bounds[yi + 1] - 1
+            };
+            let lot_left = if cross_set.contains(&x_bounds[xi]) {
+                x_bounds[xi] + cross_half_width + cross_sidewalk_width + 1
+            } else {
+                x_bounds[xi] + 1
+            };
+            let lot_right = if cross_set.contains(&x_bounds[xi + 1]) {
+                x_bounds[xi + 1] - cross_half_width - cross_sidewalk_width - 1
+            } else {
+                x_bounds[xi + 1] - 1
+            };
             let lot_w = lot_right - lot_left;
             let lot_h = lot_bot - lot_top;
 
             // Skip lots below minimum size
             if lot_w < LOT_MIN_DIM || lot_h < LOT_MIN_DIM { continue; }
 
-            // Skip lots that already have building coverage from BSP passes
-            let lot_has_building = placed.iter().any(|&(px, py, pw, ph)| {
-                rects_overlap(lot_left, lot_top, lot_w, lot_h, px, py, pw, ph)
-            });
-            if lot_has_building { continue; }
+            // Lots with partial BSP coverage are still partitioned — the
+            // per-plot overlap check will skip individual plots that collide
+            // with existing buildings while filling the remainder.
 
             let lot_seed = bsp_seed.wrapping_add(
                 (yi as u64).wrapping_mul(1000).wrapping_add(xi as u64).wrapping_mul(7)
@@ -1688,10 +1710,10 @@ fn generate_buildings_bsp(
 
             // Small lots just above the minimum: single building filling the lot
             if lot_w < PLOT_MIN_DIM * 2 && lot_h < PLOT_MIN_DIM * 2 {
-                let bx = lot_left + 1;
-                let by = lot_top + 1;
-                let bw = (lot_w - 2).max(4);
-                let bh = (lot_h - 2).max(4);
+                let bx = lot_left;
+                let by = lot_top;
+                let bw = lot_w;
+                let bh = lot_h;
                 if bw < 4 || bh < 4 { continue; }
                 let overlaps = placed.iter().any(|&(px, py, pw, ph)| {
                     rects_overlap(bx - 1, by - 1, bw + 2, bh + 2, px, py, pw, ph)
@@ -1870,6 +1892,92 @@ fn place_alleys(map: &mut GameMap, buildings: &[Building]) {
     }
 }
 
+/// Ensures every alley region connects to a road or sidewalk. If an alley
+/// is fully enclosed by building walls on both ends, clears one adjacent
+/// wall tile to create a passage so the alley remains reachable.
+fn ensure_alley_connectivity(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit) {
+    // Collect all Alley tiles
+    let mut alley_tiles: Vec<GridVec> = Vec::new();
+    for y in 0..height {
+        for x in 0..width {
+            let pos = GridVec::new(x, y);
+            if let Some(v) = map.get_voxel_at(&pos) {
+                if matches!(v.floor, Some(Floor::Alley)) {
+                    alley_tiles.push(pos);
+                }
+            }
+        }
+    }
+    if alley_tiles.is_empty() { return; }
+
+    // Flood-fill connected regions of alley tiles
+    let w = width as usize;
+    let mut visited = vec![false; w * height as usize];
+    let mut regions: Vec<Vec<GridVec>> = Vec::new();
+
+    for &start in &alley_tiles {
+        let idx = start.y as usize * w + start.x as usize;
+        if visited[idx] { continue; }
+        let mut region = Vec::new();
+        let mut queue = std::collections::VecDeque::new();
+        visited[idx] = true;
+        queue.push_back(start);
+        while let Some(pos) = queue.pop_front() {
+            region.push(pos);
+            for nb in pos.cardinal_neighbors() {
+                if nb.x >= 0 && nb.x < width && nb.y >= 0 && nb.y < height {
+                    let ni = nb.y as usize * w + nb.x as usize;
+                    if !visited[ni] {
+                        if let Some(v) = map.get_voxel_at(&nb) {
+                            if matches!(v.floor, Some(Floor::Alley)) {
+                                visited[ni] = true;
+                                queue.push_back(nb);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        regions.push(region);
+    }
+
+    // For each region, check if any tile is adjacent to a non-wall passable
+    // tile (road, sidewalk, dirt). If not, clear one adjacent wall tile.
+    for region in &regions {
+        let connected = region.iter().any(|pos| {
+            pos.cardinal_neighbors().iter().any(|nb| {
+                if nb.x >= 0 && nb.x < width && nb.y >= 0 && nb.y < height {
+                    if let Some(v) = map.get_voxel_at(nb) {
+                        return matches!(v.floor, Some(Floor::DirtRoad) | Some(Floor::Sidewalk)
+                            | Some(Floor::Dirt) | Some(Floor::Bridge))
+                            && !v.props.as_ref().is_some_and(|p| p.is_wall());
+                    }
+                }
+                false
+            })
+        });
+        if connected { continue; }
+
+        // Enclosed region — find a wall tile adjacent to any region tile
+        // and clear it to create a passage.
+        'outer: for pos in region {
+            for nb in pos.cardinal_neighbors() {
+                if nb.x >= 0 && nb.x < width && nb.y >= 0 && nb.y < height {
+                    if let Some(v) = map.get_voxel_at(&nb) {
+                        if v.props.as_ref().is_some_and(|p| p.is_wall()) {
+                            // Clear the wall to make a passage
+                            if let Some(voxel) = map.get_voxel_at_mut(&nb) {
+                                voxel.props = None;
+                            }
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Assigns faction anchor buildings — each faction seeds from a specific
 /// defensible building type rather than spawning randomly.
 fn assign_faction_anchors(map: &mut GameMap, buildings: &[Building]) {
@@ -2028,6 +2136,31 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
     let interior_y = b.y + 1;
     let iw = b.w - 2;
     let ih = b.h - 2;
+
+    // Large buildings (interior ≥ 10×10) get a 2×2 room grid with corridors
+    // before kind-specific props. set_prop already skips wall tiles, so
+    // props placed by the per-kind block won't conflict with dividing walls.
+    if iw >= 10 && ih >= 10 {
+        let mid_x = iw / 2;
+        let mid_y = ih / 2;
+        let wall_prop = if matches!(b.kind, 6 | 7 | 9) { Props::StoneWall } else { Props::Wall };
+        // Horizontal dividing wall with corridor gap at the center
+        for dx in 0..iw {
+            if dx == mid_x { continue; }
+            let pos = GridVec::new(interior_x + dx, interior_y + mid_y);
+            if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                voxel.props = Some(wall_prop.clone());
+            }
+        }
+        // Vertical dividing wall with corridor gap at the center
+        for dy in 0..ih {
+            if dy == mid_y { continue; }
+            let pos = GridVec::new(interior_x + mid_x, interior_y + dy);
+            if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                voxel.props = Some(wall_prop.clone());
+            }
+        }
+    }
 
     match b.kind {
         0 => {
@@ -2968,10 +3101,12 @@ fn place_mission(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUni
     }
     let m_seed = seed.wrapping_add(555666);
     // Try several candidate positions around the town center.
-    // Spread candidates widely to find a spot free of roads.
-    let offsets: [(i32, i32); 8] = [
+    // Dense building placement requires a wider search area.
+    let offsets: [(i32, i32); 16] = [
         (0, 0), (-15, -15), (15, 15), (-30, 20), (30, -20),
         (-20, 30), (20, -30), (-35, -10),
+        (40, 10), (-40, -10), (10, 40), (-10, -40),
+        (50, 0), (-50, 0), (0, 50), (0, -50),
     ];
     for (i, &(ox, oy)) in offsets.iter().enumerate() {
         let noise_x = (value_noise(i as i32 * 2, 2, m_seed) * 10.0) as CoordinateUnit;
@@ -3088,10 +3223,13 @@ fn place_town_plaza(map: &mut GameMap, width: CoordinateUnit, height: Coordinate
         return;
     }
     let p_seed = seed.wrapping_add(777888);
-    // Try several candidate positions for the plaza
-    let offsets: [(i32, i32); 8] = [
+    // Try several candidate positions for the plaza. Dense building
+    // placement requires a wider search area.
+    let offsets: [(i32, i32); 16] = [
         (15, 10), (-10, 0), (0, -10), (-25, 25), (25, -25),
         (-15, -20), (20, 20), (-30, 10),
+        (40, 0), (-40, 0), (0, 40), (0, -40),
+        (50, 20), (-50, -20), (30, -40), (-20, 50),
     ];
     for (i, &(ox, oy)) in offsets.iter().enumerate() {
         let noise_x = (value_noise(i as i32 * 2 + 5, 5, p_seed) * 10.0) as CoordinateUnit;
