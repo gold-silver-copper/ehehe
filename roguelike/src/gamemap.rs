@@ -27,6 +27,9 @@ pub struct GameMap {
     /// Faction anchor buildings: (center position, faction, building name).
     /// Factions seed from these defensible positions rather than randomly.
     pub faction_anchors: Vec<(GridVec, Faction, String)>,
+    /// Shared spatial occupancy grid. True = tile is already occupied by
+    /// a road, river, beach, or building. No later pass may place on it.
+    pub occupancy: Vec<Vec<bool>>,
 }
 
 /// A rectangular building footprint used during town generation.
@@ -119,6 +122,7 @@ impl TerrainPhase {
             sand_cloud_turns: HashMap::new(),
             sand_cloud_previous_floor: HashMap::new(),
             faction_anchors: Vec::new(),
+            occupancy: vec![vec![false; height as usize]; width as usize],
         };
 
         // Forest on outskirts
@@ -225,6 +229,18 @@ impl WorldGenPhase for WaterPhase {
                             voxel.floor = Some(Floor::Beach);
                             voxel.props = None;
                         }
+            }
+        }
+
+        // Mark water and beach tiles as occupied
+        for y in 0..map.height {
+            for x in 0..map.width {
+                let pos = GridVec::new(x, y);
+                if let Some(voxel) = map.get_voxel_at(&pos) {
+                    if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach)) {
+                        map.occupancy[x as usize][y as usize] = true;
+                    }
+                }
             }
         }
     }
@@ -398,6 +414,18 @@ impl WorldGenPhase for InfrastructurePhase {
                     });
                     if adjacent_non_road {
                         data.road_edge_tiles.push((x, y));
+                    }
+                }
+            }
+        }
+
+        // Mark road/sidewalk tiles as occupied
+        for y in 0..map.height {
+            for x in 0..map.width {
+                let pos = GridVec::new(x, y);
+                if let Some(voxel) = map.get_voxel_at(&pos) {
+                    if matches!(voxel.floor, Some(Floor::Dirt) | Some(Floor::Sidewalk) | Some(Floor::Bridge)) {
+                        map.occupancy[x as usize][y as usize] = true;
                     }
                 }
             }
@@ -686,6 +714,49 @@ impl GameMap {
         }
     }
 
+    /// Marks a rectangle as occupied in the occupancy grid.
+    pub fn mark_occupied(&mut self, x: i32, y: i32, w: i32, h: i32) {
+        for iy in y..y + h {
+            for ix in x..x + w {
+                if ix >= 0 && ix < self.width && iy >= 0 && iy < self.height {
+                    self.occupancy[ix as usize][iy as usize] = true;
+                }
+            }
+        }
+    }
+
+    /// Returns true if any cell in the rectangle is occupied.
+    pub fn is_occupied(&self, x: i32, y: i32, w: i32, h: i32) -> bool {
+        for iy in y..y + h {
+            for ix in x..x + w {
+                if ix >= 0 && ix < self.width && iy >= 0 && iy < self.height {
+                    if self.occupancy[ix as usize][iy as usize] {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Returns true if any cell in the rectangle is water or beach.
+    /// Used for landmark placement that may intentionally straddle roads.
+    pub fn is_water_occupied(&self, x: i32, y: i32, w: i32, h: i32) -> bool {
+        for iy in y..y + h {
+            for ix in x..x + w {
+                if ix >= 0 && ix < self.width && iy >= 0 && iy < self.height {
+                    let pos = GridVec::new(ix, iy);
+                    if let Some(voxel) = self.get_voxel_at(&pos) {
+                        if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Returns `true` if the tile at `point` is passable (no blocking props
     /// and not deep/shallow water).
     #[inline]
@@ -714,6 +785,23 @@ impl GameMap {
             }
             None => false,
         }
+    }
+
+    /// Finds a spawnable tile near the given center within the given radius.
+    /// Searches in expanding rings from the center outward.
+    pub fn find_spawnable_near(&self, center: GridVec, radius: i32) -> Option<GridVec> {
+        for r in 0..=radius {
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    if dx.abs() != r && dy.abs() != r { continue; } // only ring perimeter
+                    let pos = center + GridVec::new(dx, dy);
+                    if self.is_spawnable(&pos) {
+                        return Some(pos);
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Finds a passable tile right outside the door of a house.
@@ -1788,6 +1876,7 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
             }
         }
     }
+    map.mark_occupied(b.x, b.y, b.w, b.h);
 }
 
 /// Helper: sets a prop at a position if within bounds, not occupied by a wall,
@@ -2333,6 +2422,7 @@ fn place_mission(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUni
     let my = (cy - mh / 2).clamp(2, height - mh - 2);
 
     if overlaps_any_building(mx, my, mw, mh, buildings) { return; }
+    if map.is_water_occupied(mx, my, mw, mh) { return; }
 
     // Lay down thick stone walls and interior
     for y in my..my + mh {
@@ -2419,6 +2509,7 @@ fn place_mission(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUni
         Faction::Civilians,
         "Mission".to_string(),
     ));
+    map.mark_occupied(mx, my, mw, mh);
 }
 
 /// Places a town plaza — an open killzone at the heart of the map.
@@ -2457,6 +2548,7 @@ fn place_town_plaza(map: &mut GameMap, width: CoordinateUnit, height: Coordinate
     set_prop(map, center.x + 2, center.y, Props::Bench);
     set_prop(map, center.x, center.y - 2, Props::Bench);
     set_prop(map, center.x, center.y + 2, Props::Bench);
+    map.mark_occupied(px, py, pw, ph);
 }
 
 /// Places a large Town Hall building near the center of the map.
@@ -2476,6 +2568,7 @@ fn place_town_hall(map: &mut GameMap, width: CoordinateUnit, height: CoordinateU
     let ty = (cy - th / 2).clamp(2, height - th - 2);
 
     if overlaps_any_building(tx, ty, tw, th, buildings) { return; }
+    if map.is_water_occupied(tx, ty, tw, th) { return; }
 
     // Lay down walls and wood-plank floor
     for y in ty..ty + th {
@@ -2515,6 +2608,7 @@ fn place_town_hall(map: &mut GameMap, width: CoordinateUnit, height: CoordinateU
     set_prop(map, tx + tw - 2, ty + 1, Props::Barrel);
     set_prop(map, tx + 1, ty + th - 2, Props::Crate);
     set_prop(map, tx + tw - 2, ty + th - 2, Props::Crate);
+    map.mark_occupied(tx, ty, tw, th);
 }
 
 /// Places a Grand Saloon — a large 20×14 saloon with piano, many tables,
@@ -2533,6 +2627,7 @@ fn place_grand_saloon(map: &mut GameMap, width: CoordinateUnit, height: Coordina
     let sy = (cy - sh / 2).clamp(2, height - sh - 2);
 
     if overlaps_any_building(sx, sy, sw, sh, buildings) { return; }
+    if map.is_water_occupied(sx, sy, sw, sh) { return; }
 
     // Lay down walls and wood-plank floor
     for y in sy..sy + sh {
@@ -2574,6 +2669,7 @@ fn place_grand_saloon(map: &mut GameMap, width: CoordinateUnit, height: Coordina
     // Corner barrels
     set_prop(map, sx + sw - 2, sy + 1, Props::Barrel);
     set_prop(map, sx + sw - 2, sy + sh - 2, Props::Crate);
+    map.mark_occupied(sx, sy, sw, sh);
 }
 
 /// Places street props (benches, barrels, signs, hitching posts, crates) on
@@ -2948,6 +3044,7 @@ fn place_stone_church(map: &mut GameMap, width: CoordinateUnit, height: Coordina
     let by = (cy - ch / 2).clamp(2, height - ch - 2);
 
     if overlaps_any_building(bx, by, cw, ch, buildings) { return; }
+    if map.is_water_occupied(bx, by, cw, ch) { return; }
 
     // Stone walls and floor
     for y in by..by + ch {
@@ -3001,6 +3098,7 @@ fn place_stone_church(map: &mut GameMap, width: CoordinateUnit, height: Coordina
             }
         }
     }
+    map.mark_occupied(bx, by, cw, ch);
 }
 
 /// Places small outpost structures along the map edges — defensive positions
