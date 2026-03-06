@@ -1622,7 +1622,8 @@ pub fn ai_system(
                 let tracked_long_enough = steps_taken >= BLIND_FIRE_STEPS;
                 let friendly_blocked = has_friendly_in_path(my_pos, aim_pos, my_faction, entity, &spatial, &npc_positions);
                 // facing_within_45_deg: dot product of look_dir and
-                // direction toward target must be > 0.
+                // direction toward target must be > 0. With king-stepped
+                // unit vectors this is effectively a ~90° cone check.
                 let look_dir = ai_look_dir.as_ref().map(|l| l.0).unwrap_or(toward_target);
                 let facing_within_45_deg = look_dir.dot(toward_target) > 0;
                 let can_fire = (on_aim || (near_aim && tracked_long_enough))
@@ -1763,6 +1764,9 @@ pub fn ai_system(
                 }
 
                 // ── Priority 8: FLANK_INTERVAL → perpendicular offset ──
+                // Flank only when the NPC has been stationary long enough
+                // AND the cursor still hasn't reached the aim position,
+                // meaning the current firing position is ineffective.
                 let stationary = ai_memory.as_ref().map(|m| m.stationary_turns).unwrap_or(0);
                 let flank_trigger = u32::from(stationary) >= FLANK_INTERVAL
                     && cursor.as_ref().is_some_and(|c| c.pos != aim_pos);
