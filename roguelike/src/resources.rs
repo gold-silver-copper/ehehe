@@ -884,7 +884,7 @@ mod tests {
     fn collectibles_default_has_starting_supplies() {
         let c = Collectibles::default();
         assert_eq!(c.caps, 10);
-        assert_eq!(c.bullets_31, 10);
+        assert_eq!(c.bullets_31, 0, "Default has no .31 bullets — use for_starting_caliber()");
         assert_eq!(c.bullets_36, 0);
         assert_eq!(c.bullets_44, 0);
         assert_eq!(c.powder, 10);
