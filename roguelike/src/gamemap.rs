@@ -718,10 +718,6 @@ impl WorldGenPhase for FinalizationPhase {
                 }
             }
         }
-
-        // Debug assertions: validate world generation invariants
-        #[cfg(debug_assertions)]
-        validate_world(map, &data.buildings, &data.avenue_ys, &data.cross_xs, width, height);
     }
 }
 
@@ -736,7 +732,45 @@ impl GameMap {
     ///   5. **Landmarks** — Town Hall, Grand Saloon, plazas, urban features.
     ///   6. **Details** — street props, decorations, gunpowder barrels.
     ///   7. **Finalization** — spawn clearing, water cleanup.
+    ///
+    /// After generation, structural verification checks are run. If any
+    /// check fails, the map is regenerated with a modified seed (up to 10
+    /// retries). In debug builds, panics if no valid map is produced.
     pub fn new(width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) -> Self {
+        const MAX_RETRIES: u32 = 10;
+        for attempt in 0..=MAX_RETRIES {
+            let current_seed = if attempt == 0 { seed } else { seed.wrapping_add(attempt as u64 * 7919) };
+            let (map, data) = Self::generate_with_seed(width, height, current_seed);
+
+            match verify_world(&map, &data.buildings, &data.avenue_ys, &data.cross_xs, width, height) {
+                Ok(()) => return map,
+                Err(reason) => {
+                    eprintln!(
+                        "World gen verification failed (seed={}, attempt {}): {}",
+                        current_seed, attempt, reason
+                    );
+                    if attempt == MAX_RETRIES {
+                        #[cfg(debug_assertions)]
+                        panic!(
+                            "World generation failed after {} retries. Last failure (seed={}): {}",
+                            MAX_RETRIES, current_seed, reason
+                        );
+                        // In release builds, return the last attempt anyway.
+                        #[allow(unreachable_code)]
+                        return map;
+                    }
+                }
+            }
+        }
+        unreachable!()
+    }
+
+    /// Internal: run all generation phases with a specific seed.
+    fn generate_with_seed(
+        width: CoordinateUnit,
+        height: CoordinateUnit,
+        seed: NoiseSeed,
+    ) -> (Self, WorldGenData) {
         let mut map = TerrainPhase::create_map(width, height, seed);
         let mut data = WorldGenData::default();
 
@@ -753,7 +787,7 @@ impl GameMap {
             phase.execute(&mut map, &mut data, width, height, seed);
         }
 
-        map
+        (map, data)
     }
 
     /// Get a reference to the voxel at the given map coordinate.
@@ -2339,21 +2373,19 @@ fn check_connectivity(
     }
 }
 
-/// Debug-only validation of world generation invariants.
-/// Checks: no overlapping building footprints (including padding),
-/// every building has a reachable entrance, the street graph is
-/// fully connected, and every BSP leaf is accounted for.
-#[cfg(debug_assertions)]
-fn validate_world(
+/// Structural verification of world generation invariants.
+/// Returns `Ok(())` if the map passes all checks, or `Err(reason)` describing
+/// which check failed. Used by the retry loop in `GameMap::new()`.
+fn verify_world(
     map: &GameMap,
     buildings: &[Building],
     avenue_ys: &[CoordinateUnit],
     cross_xs: &[CoordinateUnit],
     width: CoordinateUnit,
     height: CoordinateUnit,
-) {
+) -> Result<(), String> {
     if buildings.is_empty() || width < 60 || height < 60 || avenue_ys.is_empty() {
-        return; // Skip validation on maps without a proper road network
+        return Ok(()); // Skip validation on maps without a proper road network
     }
 
     // 1. No two building footprints overlap (including 1-tile padding margin)
@@ -2363,15 +2395,33 @@ fn validate_world(
                 a.x - 1, a.y - 1, a.w + 2, a.h + 2,
                 b.x - 1, b.y - 1, b.w + 2, b.h + 2,
             );
-            debug_assert!(
-                !overlaps,
-                "World validation: buildings at ({},{}) {}x{} and ({},{}) {}x{} overlap (including padding)",
-                a.x, a.y, a.w, a.h, b.x, b.y, b.w, b.h
-            );
+            if overlaps {
+                return Err(format!(
+                    "buildings at ({},{}) {}x{} and ({},{}) {}x{} overlap (including padding)",
+                    a.x, a.y, a.w, a.h, b.x, b.y, b.w, b.h
+                ));
+            }
         }
     }
 
-    // 2. Every building has a reachable entrance (BFS from all road tiles)
+    // 2. No building tile sits on a river or road tile
+    for b in buildings {
+        for by in b.y..b.y + b.h {
+            for bx in b.x..b.x + b.w {
+                let pos = GridVec::new(bx, by);
+                if let Some(v) = map.get_voxel_at(&pos) {
+                    if matches!(v.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)) {
+                        return Err(format!(
+                            "building at ({},{}) has tile on river at ({},{})",
+                            b.x, b.y, bx, by
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Every building has a reachable entrance (BFS from all road tiles)
     let w = width as usize;
     let mut reachable = vec![false; w * height as usize];
     let mut queue = std::collections::VecDeque::new();
@@ -2405,33 +2455,29 @@ fn validate_world(
         let door_y = b.y + b.h;
         if door_x >= 0 && door_x < width && door_y >= 0 && door_y < height {
             let idx = door_y as usize * w + door_x as usize;
-            let door_pos = GridVec::new(door_x, door_y);
-            let door_floor = map.get_voxel_at(&door_pos).map(|v| &v.floor);
-            let door_passable = map.is_passable(&door_pos);
-            debug_assert!(
-                reachable[idx],
-                "World validation: building at ({},{}) has unreachable entrance at ({},{}) floor={:?} passable={}",
-                b.x, b.y, door_x, door_y, door_floor, door_passable
-            );
+            if !reachable[idx] {
+                return Err(format!(
+                    "building at ({},{}) has unreachable entrance at ({},{})",
+                    b.x, b.y, door_x, door_y
+                ));
+            }
         }
     }
 
-    // 3. Street graph is connected: every avenue tile that is passable
+    // 4. Street graph is connected: every avenue tile that is passable
     //    can reach every cross-street tile that is passable.
     if avenue_ys.len() >= 2 {
         let first_ay = avenue_ys[0];
         let last_ay = *avenue_ys.last().unwrap();
         if first_ay >= 0 && first_ay < height && last_ay >= 0 && last_ay < height {
-            // Check first avenue center reaches last avenue center
             let mid_x = width / 2;
             let start_idx = first_ay as usize * w + mid_x as usize;
             let end_idx = last_ay as usize * w + mid_x as usize;
-            if reachable[start_idx] {
-                debug_assert!(
-                    reachable[end_idx],
-                    "World validation: street graph not fully connected — avenue y={} cannot reach avenue y={}",
+            if reachable[start_idx] && !reachable[end_idx] {
+                return Err(format!(
+                    "street graph not fully connected — avenue y={} cannot reach avenue y={}",
                     first_ay, last_ay
-                );
+                ));
             }
         }
     }
@@ -2440,22 +2486,21 @@ fn validate_world(
             if let Some(&ay) = avenue_ys.first() {
                 if ay >= 0 && ay < height {
                     let pos = GridVec::new(cx, ay);
-                    // Only assert connectivity if the intersection tile is
-                    // passable (cross streets don't bridge the river, so
-                    // intersections inside the river are expected to be
-                    // disconnected).
                     if map.is_passable(&pos) {
                         let idx = ay as usize * w + cx as usize;
-                        debug_assert!(
-                            reachable[idx],
-                            "World validation: cross street x={} not connected to avenue y={}",
-                            cx, ay
-                        );
+                        if !reachable[idx] {
+                            return Err(format!(
+                                "cross street x={} not connected to avenue y={}",
+                                cx, ay
+                            ));
+                        }
                     }
                 }
             }
         }
     }
+
+    Ok(())
 }
 
 /// Returns `true` if the rectangle (rx, ry, rw, rh) overlaps any building
