@@ -263,6 +263,10 @@ pub struct AiMemory {
     pub search_attempts: u8,
     /// Cursor steps taken since last fire (for blind-fire after 4 steps).
     pub cursor_steps: u8,
+    /// Consecutive turns the NPC has been stationary (same tile).
+    pub stationary_turns: u8,
+    /// Previous position, used to detect stationarity.
+    pub prev_pos: Option<GridVec>,
 }
 
 impl Default for AiMemory {
@@ -272,6 +276,8 @@ impl Default for AiMemory {
             last_seen_turn: 0,
             search_attempts: 0,
             cursor_steps: 0,
+            stationary_turns: 0,
+            prev_pos: None,
         }
     }
 }
