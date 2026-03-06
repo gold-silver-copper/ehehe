@@ -138,9 +138,6 @@ pub fn use_item_system(
                 combat_log.push("Readied molotov — aim and press slot key to throw".into());
             }
             ItemKind::Bow { .. } => {}
-            ItemKind::WaterBucket { .. } => {
-                combat_log.push("Readied water bucket — press slot key to splash".into());
-            }
         }
     }
 }

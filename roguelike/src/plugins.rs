@@ -172,7 +172,6 @@ impl Plugin for ActionPlugin {
                     inventory::reload_system,
                     spell::spell_system,
                     spell::molotov_system,
-                    spell::water_bucket_system,
                     combat::ranged_attack_system,
                     combat::melee_wide_system,
                     combat::combat_system,
@@ -341,18 +340,6 @@ fn do_spawn_player(commands: &mut Commands, map: &GameMapResource) {
         ItemKind::Molotov { damage: 6, radius: 4, blunt_damage: 4 },
     )).id();
 
-    // Spawn starting water bucket
-    let water_bucket = commands.spawn((
-        Item,
-        Name("Water Bucket".into()),
-        Renderable {
-            symbol: "u".into(),
-            fg: RatColor::Rgb(100, 150, 255),
-            bg: RatColor::Black,
-        },
-        ItemKind::WaterBucket { uses: 3, radius: 2, blunt_damage: 3 },
-    )).id();
-
     commands.spawn((
         Position {
             x: spawn_pos.x,
@@ -382,7 +369,7 @@ fn do_spawn_player(commands: &mut Commands, map: &GameMapResource) {
         Speed(ACTION_COST),
         Energy(0),
     )).insert((
-        Inventory { items: vec![colt_pocket, knife, whiskey, molotov, water_bucket] },
+        Inventory { items: vec![colt_pocket, knife, whiskey, molotov] },
         Viewshed {
             range: 40,
             visible_tiles: HashSet::new(),

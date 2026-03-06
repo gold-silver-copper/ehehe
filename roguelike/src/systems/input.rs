@@ -399,16 +399,6 @@ pub fn input_system(
                                     advance_turn(&mut next_turn_state);
                                 }
                                 handled = true;
-                            } else if let ItemKind::WaterBucket { uses, radius, .. } = kind {
-                                if *uses > 0 {
-                                    extra_world_ticks.0 = 1;
-                                    input_state.water_bucket_pending = Some((idx, *radius));
-                                    advance_turn(&mut next_turn_state);
-                                    combat_log.push("You splash water around you!".into());
-                                } else {
-                                    combat_log.push("The bucket is empty!".into());
-                                }
-                                handled = true;
                             }
                         }
                 if !handled {

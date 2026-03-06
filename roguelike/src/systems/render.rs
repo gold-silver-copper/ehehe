@@ -521,7 +521,6 @@ pub fn draw_system(
                                 ItemKind::Whiskey { heal, .. } => format!("Heal {heal} HP"),
                                 ItemKind::Molotov { damage, radius, .. } => format!("{damage} dmg r{radius} 🔥"),
                                 ItemKind::Bow { .. } => "Bow".to_string(),
-                                ItemKind::WaterBucket { uses, radius, .. } => format!("{uses} uses r{radius} 💧"),
                             });
                         (name_str, desc)
                     })
@@ -865,7 +864,6 @@ fn render_cursor_info(
     if !cursor_npc_name.is_empty() {
         let hostile_tag = if cursor_npc_hostile { " [!]" } else { "" };
         left_lines.push(Line::from(vec![
-            Span::from(" NPC:").bold().dark_gray(),
             Span::from(format!(" {cursor_npc_name}{hostile_tag}")).yellow(),
         ]));
         if !cursor_npc_faction.is_empty() {

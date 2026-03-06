@@ -492,8 +492,6 @@ pub enum ItemKind {
     Molotov { damage: i32, radius: i32, blunt_damage: i32 },
     /// A bow. Fires arrows. Used by Indians.
     Bow { attack: i32, blunt_damage: i32 },
-    /// A water bucket. Splashes water around the player, extinguishing fires.
-    WaterBucket { uses: i32, radius: i32, blunt_damage: i32 },
 }
 
 impl ItemKind {
@@ -507,7 +505,6 @@ impl ItemKind {
             ItemKind::Whiskey { blunt_damage, .. } => *blunt_damage,
             ItemKind::Molotov { blunt_damage, .. } => *blunt_damage,
             ItemKind::Bow { blunt_damage, .. } => *blunt_damage,
-            ItemKind::WaterBucket { blunt_damage, .. } => *blunt_damage,
         }
     }
 
@@ -521,7 +518,6 @@ impl ItemKind {
             ItemKind::Whiskey { .. } => "Whiskey Bottle".into(),
             ItemKind::Molotov { .. } => "Molotov".into(),
             ItemKind::Bow { .. } => "Bow".into(),
-            ItemKind::WaterBucket { .. } => "Water Bucket".into(),
         }
     }
 }
