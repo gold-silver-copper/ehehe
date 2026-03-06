@@ -240,6 +240,7 @@ impl WorldGenPhase for WaterPhase {
                 let pos = GridVec::new(x, y);
                 if let Some(voxel) = map.get_voxel_at(&pos) {
                     if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand)) {
+                        map.occupancy[x as usize][y as usize] = true;
                     }
                 }
             }
@@ -2847,7 +2848,6 @@ fn place_town_plaza(map: &mut GameMap, width: CoordinateUnit, height: Coordinate
         (width / 2 + (value_noise(9, 5, p_seed) * 20.0) as CoordinateUnit,
          height / 2 - 10 + (value_noise(10, 6, p_seed) * 10.0) as CoordinateUnit),
     ];
-    let mut placed = false;
     for &(cx, cy) in &candidates {
         let px = (cx - pw / 2).clamp(2, width - pw - 2);
         let py = (cy - ph / 2).clamp(2, height - ph - 2);
@@ -2877,10 +2877,8 @@ fn place_town_plaza(map: &mut GameMap, width: CoordinateUnit, height: Coordinate
         set_prop(map, center.x, center.y - 2, Props::Bench);
         set_prop(map, center.x, center.y + 2, Props::Bench);
         map.mark_occupied(px, py, pw, ph);
-        placed = true;
         break;
     }
-    let _ = placed;
 }
 
 /// Places a large Town Hall building near the center of the map.
