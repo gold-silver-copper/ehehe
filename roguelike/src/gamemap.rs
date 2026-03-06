@@ -1941,6 +1941,79 @@ fn generate_buildings_bsp(
     }
     buildings.extend(lot_buildings);
 
+    // ── Random fill: try to squeeze additional buildings into lots ────
+    // After grid partitioning, some lots still have unused space between
+    // or beside the placed buildings. For each lot, make several random
+    // placement attempts with small buildings to increase density.
+    let mut random_fill: Vec<Building> = Vec::new();
+    let fill_seed = bsp_seed.wrapping_add(12345);
+    for yi in 0..y_bounds.len().saturating_sub(1) {
+        for xi in 0..x_bounds.len().saturating_sub(1) {
+            let road_curve_buffer: CoordinateUnit = 3;
+            let lot_top = if avenue_set.contains(&y_bounds[yi]) {
+                y_bounds[yi] + avenue_half_width + sidewalk_width + 1 + road_curve_buffer
+            } else {
+                y_bounds[yi] + 1
+            };
+            let lot_bot = if avenue_set.contains(&y_bounds[yi + 1]) {
+                y_bounds[yi + 1] - avenue_half_width - sidewalk_width - 1 - road_curve_buffer
+            } else {
+                y_bounds[yi + 1] - 1
+            };
+            let lot_left = if cross_set.contains(&x_bounds[xi]) {
+                x_bounds[xi] + cross_half_width + cross_sidewalk_width + 1 + road_curve_buffer
+            } else {
+                x_bounds[xi] + 1
+            };
+            let lot_right = if cross_set.contains(&x_bounds[xi + 1]) {
+                x_bounds[xi + 1] - cross_half_width - cross_sidewalk_width - 1 - road_curve_buffer
+            } else {
+                x_bounds[xi + 1] - 1
+            };
+            let lot_w = lot_right - lot_left;
+            let lot_h = lot_bot - lot_top;
+            if lot_w < LOT_MIN_DIM || lot_h < LOT_MIN_DIM { continue; }
+
+            let lot_fs = fill_seed.wrapping_add(
+                (yi as u64).wrapping_mul(997).wrapping_add(xi as u64).wrapping_mul(13)
+            );
+
+            // Try a handful of random placements within this lot
+            let attempts = 4;
+            for ai in 0..attempts {
+                let nx = value_noise(ai, yi as i32, lot_fs.wrapping_add(ai as u64 * 31));
+                let ny = value_noise(xi as i32, ai, lot_fs.wrapping_add(ai as u64 * 37));
+                let nw = value_noise(ai + 10, yi as i32 + xi as i32, lot_fs.wrapping_add(ai as u64 * 41));
+                let nh = value_noise(yi as i32 + xi as i32, ai + 10, lot_fs.wrapping_add(ai as u64 * 43));
+
+                let bw = 4 + (nw * 8.0) as CoordinateUnit; // 4-12 width
+                let bh = 4 + (nh * 6.0) as CoordinateUnit; // 4-10 height
+                let bx = lot_left + (nx * (lot_w - bw).max(0) as f64) as CoordinateUnit;
+                let by = lot_top + (ny * (lot_h - bh).max(0) as f64) as CoordinateUnit;
+
+                if bx < lot_left || by < lot_top { continue; }
+                if bx + bw > lot_right || by + bh > lot_bot { continue; }
+                if bw < 4 || bh < 4 { continue; }
+
+                // Check placement rules: no overlap with existing buildings
+                let overlaps = placed.iter().any(|&(px, py, pw, ph)| {
+                    rects_overlap(bx - 1, by - 1, bw + 2, bh + 2, px, py, pw, ph)
+                });
+                if overlaps { continue; }
+
+                let plot_cx = bx + bw / 2;
+                let plot_cy = by + bh / 2;
+                let zone = assign_zone(plot_cx, plot_cy, width, height, avenue_ys, seed);
+                let kind_noise = value_noise(bx + by, ai, lot_fs.wrapping_add(8888));
+                let kind = zone_building_kind(zone, kind_noise).min(BUILDING_TYPE_COUNT - 1);
+
+                placed.push((bx, by, bw, bh));
+                random_fill.push(Building { x: bx, y: by, w: bw, h: bh, kind });
+            }
+        }
+    }
+    buildings.extend(random_fill);
+
     (buildings, parks, open_lots)
 }
 
