@@ -33,7 +33,13 @@ pub const NPC_PROXIMITY_RADIUS: CoordinateUnit = 3;
 /// Reference: Albert Ford, "Symmetric Shadowcasting" (2017).
 pub fn visibility_system(
     game_map: Res<GameMapResource>,
-    mut query: Query<(Entity, &Position, &mut Viewshed, Option<&AiLookDir>, Option<&Faction>)>,
+    mut query: Query<(
+        Entity,
+        &Position,
+        &mut Viewshed,
+        Option<&AiLookDir>,
+        Option<&Faction>,
+    )>,
     player_query: Query<Entity, With<PlayerControlled>>,
     cursor: Res<CursorPosition>,
     spell_particles: Res<crate::resources::SpellParticles>,
@@ -41,7 +47,9 @@ pub fn visibility_system(
     let player_entity = player_query.single().ok();
 
     // Collect sand cloud positions (particles with lifetime > 0 and delay == 0).
-    let sand_cloud_tiles: HashSet<MyPoint> = spell_particles.particles.iter()
+    let sand_cloud_tiles: HashSet<MyPoint> = spell_particles
+        .particles
+        .iter()
         .filter(|(_, life, delay, _, _, _)| *delay == 0 && *life > 0)
         .map(|(pos, _, _, _, _, _)| *pos)
         .collect();
@@ -131,7 +139,8 @@ pub fn visibility_system(
                 }
                 // NPC circular proximity awareness: always see within NPC_PROXIMITY_RADIUS tiles.
                 if is_npc {
-                    let dist_sq = (diff.x as i64) * (diff.x as i64) + (diff.y as i64) * (diff.y as i64);
+                    let dist_sq =
+                        (diff.x as i64) * (diff.x as i64) + (diff.y as i64) * (diff.y as i64);
                     if dist_sq <= prox_sq {
                         return true;
                     }
@@ -162,8 +171,9 @@ pub fn visibility_system(
                         return false;
                     }
                     let is_smoke = sand_cloud_tiles.contains(&ray_tile)
-                        || game_map.0.get_voxel_at(&ray_tile)
-                            .is_some_and(|v| matches!(v.floor, Some(crate::typeenums::Floor::SandCloud)));
+                        || game_map.0.get_voxel_at(&ray_tile).is_some_and(|v| {
+                            matches!(v.floor, Some(crate::typeenums::Floor::SandCloud))
+                        });
                     if is_smoke && ray_tile != tile {
                         remaining /= 2.0;
                     }
@@ -235,9 +245,7 @@ impl Slope {
 /// (handled in the post-filter step of `visibility_system`).
 fn is_opaque(game_map: &GameMapResource, point: MyPoint, _sand_clouds: &HashSet<MyPoint>) -> bool {
     match game_map.0.get_voxel_at(&point) {
-        Some(v) => {
-            v.props.as_ref().is_some_and(|f| f.blocks_vision())
-        }
+        Some(v) => v.props.as_ref().is_some_and(|f| f.blocks_vision()),
         None => true, // off-map ⇒ opaque
     }
 }
@@ -325,7 +333,15 @@ fn shadowcast_octant(
                 x: 2 * row,
             };
             shadowcast_octant(
-                game_map, visible, origin, range, octant, row + 1, saved_start, next_end, sand_clouds,
+                game_map,
+                visible,
+                origin,
+                range,
+                octant,
+                row + 1,
+                saved_start,
+                next_end,
+                sand_clouds,
             );
         }
         prev_opaque = cur_opaque;
@@ -334,7 +350,15 @@ fn shadowcast_octant(
     // If the last tile in the row was transparent, continue scanning.
     if !prev_opaque {
         shadowcast_octant(
-            game_map, visible, origin, range, octant, row + 1, start, end, sand_clouds,
+            game_map,
+            visible,
+            origin,
+            range,
+            octant,
+            row + 1,
+            start,
+            end,
+            sand_clouds,
         );
     }
 }

@@ -1,10 +1,18 @@
 use bevy::prelude::*;
 
-use crate::components::{AiState, Caliber, CollectibleKind, CombatStats, Dead, Faction, Health, Inventory, Item, ItemKind, LastDamageSource, LootTable, Name, PlayerControlled, Position, Renderable, display_name};
-use crate::events::{AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, RangedAttackIntent};
-use crate::noise::value_noise;
-use crate::resources::{CombatLog, DynamicRng, GameMapResource, GameState, KillCount, MapSeed, SoundEvents, TurnCounter};
+use crate::components::{
+    AiState, Caliber, CollectibleKind, CombatStats, Dead, Faction, Health, Inventory, Item,
+    ItemKind, LastDamageSource, LootTable, Name, PlayerControlled, Position, Renderable,
+    display_name,
+};
+use crate::events::{
+    AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, RangedAttackIntent,
+};
 use crate::grid_vec::GridVec;
+use crate::noise::value_noise;
+use crate::resources::{
+    CombatLog, DynamicRng, GameMapResource, GameState, KillCount, MapSeed, SoundEvents, TurnCounter,
+};
 use crate::typedefs::{CoordinateUnit, RatColor};
 use crate::typeenums::Props;
 
@@ -12,7 +20,12 @@ use crate::typeenums::Props;
 /// Bresenham line extends approximately `range` tiles along the
 /// dominant axis, preserving the exact trajectory angle.
 #[inline]
-fn bullet_endpoint(origin: GridVec, dx: CoordinateUnit, dy: CoordinateUnit, range: CoordinateUnit) -> GridVec {
+fn bullet_endpoint(
+    origin: GridVec,
+    dx: CoordinateUnit,
+    dy: CoordinateUnit,
+    range: CoordinateUnit,
+) -> GridVec {
     let max_comp = dx.abs().max(dy.abs());
     let scale = range.div_euclid(max_comp).max(1);
     origin + GridVec::new(dx * scale, dy * scale)
@@ -33,7 +46,11 @@ const GUN_SPREAD_ANGLE: f64 = 0.026;
 /// `roll` is a `[0, 1)` noise value that drives the random offset.
 /// Returns the adjusted `(dx, dy)` direction, guaranteed non-zero when
 /// the input was non-zero.
-fn apply_gun_spread(dx: CoordinateUnit, dy: CoordinateUnit, roll: f64) -> (CoordinateUnit, CoordinateUnit) {
+fn apply_gun_spread(
+    dx: CoordinateUnit,
+    dy: CoordinateUnit,
+    roll: f64,
+) -> (CoordinateUnit, CoordinateUnit) {
     let fdx = dx as f64;
     let fdy = dy as f64;
     let len = (fdx * fdx + fdy * fdy).sqrt();
@@ -52,21 +69,38 @@ fn apply_gun_spread(dx: CoordinateUnit, dy: CoordinateUnit, roll: f64) -> (Coord
     let rdx = (new_dx * scale).round() as CoordinateUnit;
     let rdy = (new_dy * scale).round() as CoordinateUnit;
     // Ensure we don't collapse the direction to zero.
-    if rdx == 0 && rdy == 0 { (dx, dy) } else { (rdx, rdy) }
+    if rdx == 0 && rdy == 0 {
+        (dx, dy)
+    } else {
+        (rdx, rdy)
+    }
 }
 
 /// Spawns a small cloud of gun smoke at the firing position.
 /// Places persistent SandCloud floor tiles on the map that block sight.
 /// Saves the previous floor type for restoration when smoke dissipates.
 /// The smoke is biased in the firing direction for a more natural plume.
-fn spawn_gun_smoke(game_map: &mut GameMapResource, origin: GridVec, turn: u32, fire_dx: i32, fire_dy: i32) {
+fn spawn_gun_smoke(
+    game_map: &mut GameMapResource,
+    origin: GridVec,
+    turn: u32,
+    fire_dx: i32,
+    fire_dy: i32,
+) {
     let flen = ((fire_dx as f64).powi(2) + (fire_dy as f64).powi(2)).sqrt();
     let dir = if flen > 0.01 {
         (fire_dx as f64 / flen, fire_dy as f64 / flen)
     } else {
         (0.0, 0.0)
     };
-    game_map.place_sand_cloud(origin, turn, dir, SMOKE_SCAN_RADIUS, SMOKE_BASE_RADIUS, SMOKE_DIRECTIONAL_SCALE);
+    game_map.place_sand_cloud(
+        origin,
+        turn,
+        dir,
+        SMOKE_SCAN_RADIUS,
+        SMOKE_BASE_RADIUS,
+        SMOKE_DIRECTIONAL_SCALE,
+    );
 }
 
 /// Resolves attack intents into damage events.
@@ -99,7 +133,8 @@ pub fn combat_system(
     let mut aggro_targets: Vec<(Entity, Entity, Option<GridVec>)> = Vec::new(); // (attacker, target, target_pos)
 
     for intent in intents.read() {
-        let Ok((attacker_stats, attacker_name, attacker_pos)) = stats_query.get(intent.attacker) else {
+        let Ok((attacker_stats, attacker_name, attacker_pos)) = stats_query.get(intent.attacker)
+        else {
             continue;
         };
         let Ok((_target_stats, target_name, _)) = stats_query.get(intent.target) else {
@@ -115,26 +150,30 @@ pub fn combat_system(
         let mut bonus = 0;
         let mut bonus_item_name: Option<String> = None;
         if let Ok(inv) = inventory_query.get(intent.attacker)
-            && !inv.items.is_empty() {
-                let idx = dynamic_rng.random_index(
-                    seed.0,
-                    intent.attacker.to_bits() ^ 0xB1A7,
-                    inv.items.len(),
-                );
-                if let Ok(kind) = item_kind_query.get(inv.items[idx]) {
-                    let bd = kind.blunt_damage();
-                    if bd > 0 {
-                        bonus = bd;
-                        bonus_item_name = Some(kind.display_name());
-                    }
+            && !inv.items.is_empty()
+        {
+            let idx = dynamic_rng.random_index(
+                seed.0,
+                intent.attacker.to_bits() ^ 0xB1A7,
+                inv.items.len(),
+            );
+            if let Ok(kind) = item_kind_query.get(inv.items[idx]) {
+                let bd = kind.blunt_damage();
+                if bd > 0 {
+                    bonus = bd;
+                    bonus_item_name = Some(kind.display_name());
                 }
             }
+        }
 
         let damage = base_damage + bonus;
 
         if damage > 0 {
             if let Some(item_name) = bonus_item_name {
-                combat_log.push_opt(format!("{a_name} hits {t_name} with {item_name} for {damage} damage"), pos);
+                combat_log.push_opt(
+                    format!("{a_name} hits {t_name} with {item_name} for {damage} damage"),
+                    pos,
+                );
             } else {
                 combat_log.push_opt(format!("{a_name} hits {t_name} for {damage} damage"), pos);
             }
@@ -144,7 +183,10 @@ pub fn combat_system(
                 source: Some(intent.attacker),
             });
         } else {
-            combat_log.push_opt(format!("{a_name} attacks {t_name} but deals no damage"), pos);
+            combat_log.push_opt(
+                format!("{a_name} attacks {t_name} but deals no damage"),
+                pos,
+            );
         }
 
         // Collect aggro info
@@ -166,9 +208,13 @@ pub fn combat_system(
         if let Some(t_pos) = target_pos {
             const AGGRO_RADIUS: i32 = 8;
             for (nearby_ent, nearby_pos, nearby_fac) in &npc_query {
-                if nearby_ent == target || nearby_ent == attacker { continue; }
+                if nearby_ent == target || nearby_ent == attacker {
+                    continue;
+                }
                 let nv = nearby_pos.as_grid_vec();
-                if nv.chebyshev_distance(t_pos) > AGGRO_RADIUS { continue; }
+                if nv.chebyshev_distance(t_pos) > AGGRO_RADIUS {
+                    continue;
+                }
 
                 if let Some(&nf) = nearby_fac {
                     if !target_faction.is_some_and(|tf| tf == nf) {
@@ -203,7 +249,8 @@ pub fn apply_damage_system(
         }
         if let Ok(mut health) = health_query.get_mut(event.target) {
             // 1d3 variance: roll [0.0, 1.0), map to {-3,-2,-1,+1,+2,+3}
-            let roll = dynamic_rng.roll(seed.0, event.target.to_bits() ^ event.amount as u64 ^ 0xDA3);
+            let roll =
+                dynamic_rng.roll(seed.0, event.target.to_bits() ^ event.amount as u64 ^ 0xDA3);
             let variance = if roll < 0.5 {
                 // Negative: map [0, 0.5) → {-3, -2, -1}
                 -((roll * 6.0) as i32 + 1).min(3)
@@ -214,7 +261,9 @@ pub fn apply_damage_system(
             let final_damage = (event.amount + variance).max(0);
             health.apply_damage(final_damage);
             if let Some(source) = event.source {
-                commands.entity(event.target).insert(LastDamageSource(source));
+                commands
+                    .entity(event.target)
+                    .insert(LastDamageSource(source));
             }
         }
     }
@@ -229,7 +278,17 @@ pub fn apply_damage_system(
 /// If the player dies, transitions to the Dead state.
 pub fn death_system(
     mut commands: Commands,
-    query: Query<(Entity, &Health, Option<&Name>, Option<&Position>, Option<&LootTable>, Option<&PlayerControlled>, Option<&LastDamageSource>, Option<&Inventory>, Option<&Faction>)>,
+    query: Query<(
+        Entity,
+        &Health,
+        Option<&Name>,
+        Option<&Position>,
+        Option<&LootTable>,
+        Option<&PlayerControlled>,
+        Option<&LastDamageSource>,
+        Option<&Inventory>,
+        Option<&Faction>,
+    )>,
     player_entities: Query<Entity, With<PlayerControlled>>,
     item_query: Query<&ItemKind>,
     mut combat_log: ResMut<CombatLog>,
@@ -240,7 +299,18 @@ pub fn death_system(
 ) {
     let player_entity = player_entities.single().ok();
 
-    for (entity, health, name, pos, loot_table, is_player, last_damage_source, inventory, faction) in &query {
+    for (
+        entity,
+        health,
+        name,
+        pos,
+        loot_table,
+        is_player,
+        last_damage_source,
+        inventory,
+        faction,
+    ) in &query
+    {
         if !health.is_dead() {
             continue;
         }
@@ -252,7 +322,10 @@ pub fn death_system(
         }
 
         let label = name.map_or("Something", |n| &n.0);
-        combat_log.push_opt(format!("{label} has been slain!"), pos.map(|p| p.as_grid_vec()));
+        combat_log.push_opt(
+            format!("{label} has been slain!"),
+            pos.map(|p| p.as_grid_vec()),
+        );
 
         // If the player died, mark them dead and enable spectating so the
         // world keeps ticking. The input system blocks player actions when
@@ -277,9 +350,8 @@ pub fn death_system(
 
         // Count kills for any entity with a faction (hostility is faction-based).
         if faction.is_some() {
-            let player_killed = player_entity.is_some_and(|pe|
-                last_damage_source.is_some_and(|lds| lds.0 == pe)
-            );
+            let player_killed =
+                player_entity.is_some_and(|pe| last_damage_source.is_some_and(|lds| lds.0 == pe));
             if player_killed {
                 kill_count.0 += 1;
             }
@@ -287,89 +359,116 @@ pub fn death_system(
         let is_wildlife = faction.is_some_and(|f| matches!(f, Faction::Wildlife));
 
         // Drop entire NPC inventory on the ground (animals drop nothing).
-        if !is_wildlife
-            && let (Some(inv), Some(p)) = (inventory, pos) {
-                for &item_entity in &inv.items {
-                    commands.entity(item_entity).insert(Position { x: p.x, y: p.y });
-                }
-                if !inv.items.is_empty() {
-                    combat_log.push_at(format!("{label} dropped their gear!"), p.as_grid_vec());
-                }
+        if !is_wildlife && let (Some(inv), Some(p)) = (inventory, pos) {
+            for &item_entity in &inv.items {
+                commands
+                    .entity(item_entity)
+                    .insert(Position { x: p.x, y: p.y });
             }
+            if !inv.items.is_empty() {
+                combat_log.push_at(format!("{label} dropped their gear!"), p.as_grid_vec());
+            }
+        }
 
         // Loot drop: non-wildlife entities with a LootTable may also drop collectible supplies.
         // Ammo drops now match the caliber of any gun the NPC was carrying.
-        if !is_wildlife
-            && let (Some(_lt), Some(p)) = (loot_table, pos) {
-                // Drop collectible supplies (caps + powder + matching ammo).
-                let coll_roll = value_noise(p.x.wrapping_add(kill_count.0 as i32 + 1), p.y, seed.0.wrapping_add(33333));
-                if coll_roll < 0.5 {
-                    let caps_amount = ((coll_roll * 20.0) as i32).max(1);
-                    commands.spawn((
-                        Position { x: p.x, y: p.y },
-                        Item,
-                        Name(format!("{caps_amount} Caps")),
-                        Renderable { symbol: "$".into(), fg: RatColor::Rgb(255, 215, 0), bg: RatColor::Black },
-                        CollectibleKind::Caps(caps_amount),
-                    ));
-                }
-                // Drop powder (needed for reloading).
-                let powder_roll = value_noise(p.x.wrapping_add(kill_count.0 as i32 + 2), p.y, seed.0.wrapping_add(55555));
-                if powder_roll < 0.4 {
-                    let amount = ((powder_roll * 10.0) as i32).max(1);
-                    commands.spawn((
-                        Position { x: p.x, y: p.y },
-                        Item,
-                        Name(format!("{amount}x Powder")),
-                        Renderable { symbol: "·".into(), fg: RatColor::Rgb(140, 140, 140), bg: RatColor::Black },
-                        CollectibleKind::Powder(amount),
-                    ));
-                }
-                // Drop ammo matching the NPC's gun caliber, if they had one.
-                let ammo_roll = value_noise(p.y.wrapping_add(kill_count.0 as i32 + 1), p.x, seed.0.wrapping_add(44444));
-                if ammo_roll < 0.4 {
-                    let amount = ((ammo_roll * 15.0) as i32).max(1);
-                    // Find the caliber of the NPC's gun from their inventory.
-                    let npc_caliber = inventory.and_then(|inv| {
-                        inv.items.iter().find_map(|&ent| {
-                            item_query.get(ent).ok().and_then(|k| {
-                                if let ItemKind::Gun { caliber, .. } = k { Some(*caliber) } else { None }
-                            })
-                        })
-                    });
-                    let (cal_name, collectible) = match npc_caliber {
-                        Some(Caliber::Cal31) => (".31", CollectibleKind::Bullets31(amount)),
-                        Some(Caliber::Cal36) => (".36", CollectibleKind::Bullets36(amount)),
-                        Some(Caliber::Cal44) => (".44", CollectibleKind::Bullets44(amount)),
-                        Some(Caliber::Cal50) => (".50", CollectibleKind::Bullets50(amount)),
-                        Some(Caliber::Cal58) => (".58", CollectibleKind::Bullets58(amount)),
-                        Some(Caliber::Cal577) => (".577", CollectibleKind::Bullets577(amount)),
-                        Some(Caliber::Cal69) => (".69", CollectibleKind::Bullets69(amount)),
-                        None => (".36", CollectibleKind::Bullets36(amount)),
-                    };
-                    commands.spawn((
-                        Position { x: p.x, y: p.y },
-                        Item,
-                        Name(format!("{amount}x {cal_name} Bullets")),
-                        Renderable { symbol: "·".into(), fg: RatColor::Rgb(180, 180, 180), bg: RatColor::Black },
-                        collectible,
-                    ));
-                }
-            }
-
-        // Spawn a corpse marker for human (non-wildlife) NPCs.
-        if !is_wildlife
-            && let Some(p) = pos {
+        if !is_wildlife && let (Some(_lt), Some(p)) = (loot_table, pos) {
+            // Drop collectible supplies (caps + powder + matching ammo).
+            let coll_roll = value_noise(
+                p.x.wrapping_add(kill_count.0 as i32 + 1),
+                p.y,
+                seed.0.wrapping_add(33333),
+            );
+            if coll_roll < 0.5 {
+                let caps_amount = ((coll_roll * 20.0) as i32).max(1);
                 commands.spawn((
                     Position { x: p.x, y: p.y },
-                    Name(format!("{label}'s corpse")),
+                    Item,
+                    Name(format!("{caps_amount} Caps")),
                     Renderable {
-                        symbol: "X".into(),
-                        fg: RatColor::Rgb(120, 60, 60),
+                        symbol: "$".into(),
+                        fg: RatColor::Rgb(255, 215, 0),
                         bg: RatColor::Black,
                     },
+                    CollectibleKind::Caps(caps_amount),
                 ));
             }
+            // Drop powder (needed for reloading).
+            let powder_roll = value_noise(
+                p.x.wrapping_add(kill_count.0 as i32 + 2),
+                p.y,
+                seed.0.wrapping_add(55555),
+            );
+            if powder_roll < 0.4 {
+                let amount = ((powder_roll * 10.0) as i32).max(1);
+                commands.spawn((
+                    Position { x: p.x, y: p.y },
+                    Item,
+                    Name(format!("{amount}x Powder")),
+                    Renderable {
+                        symbol: "·".into(),
+                        fg: RatColor::Rgb(140, 140, 140),
+                        bg: RatColor::Black,
+                    },
+                    CollectibleKind::Powder(amount),
+                ));
+            }
+            // Drop ammo matching the NPC's gun caliber, if they had one.
+            let ammo_roll = value_noise(
+                p.y.wrapping_add(kill_count.0 as i32 + 1),
+                p.x,
+                seed.0.wrapping_add(44444),
+            );
+            if ammo_roll < 0.4 {
+                let amount = ((ammo_roll * 15.0) as i32).max(1);
+                // Find the caliber of the NPC's gun from their inventory.
+                let npc_caliber = inventory.and_then(|inv| {
+                    inv.items.iter().find_map(|&ent| {
+                        item_query.get(ent).ok().and_then(|k| {
+                            if let ItemKind::Gun { caliber, .. } = k {
+                                Some(*caliber)
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                });
+                let (cal_name, collectible) = match npc_caliber {
+                    Some(Caliber::Cal31) => (".31", CollectibleKind::Bullets31(amount)),
+                    Some(Caliber::Cal36) => (".36", CollectibleKind::Bullets36(amount)),
+                    Some(Caliber::Cal44) => (".44", CollectibleKind::Bullets44(amount)),
+                    Some(Caliber::Cal50) => (".50", CollectibleKind::Bullets50(amount)),
+                    Some(Caliber::Cal58) => (".58", CollectibleKind::Bullets58(amount)),
+                    Some(Caliber::Cal577) => (".577", CollectibleKind::Bullets577(amount)),
+                    Some(Caliber::Cal69) => (".69", CollectibleKind::Bullets69(amount)),
+                    None => (".36", CollectibleKind::Bullets36(amount)),
+                };
+                commands.spawn((
+                    Position { x: p.x, y: p.y },
+                    Item,
+                    Name(format!("{amount}x {cal_name} Bullets")),
+                    Renderable {
+                        symbol: "·".into(),
+                        fg: RatColor::Rgb(180, 180, 180),
+                        bg: RatColor::Black,
+                    },
+                    collectible,
+                ));
+            }
+        }
+
+        // Spawn a corpse marker for human (non-wildlife) NPCs.
+        if !is_wildlife && let Some(p) = pos {
+            commands.spawn((
+                Position { x: p.x, y: p.y },
+                Name(format!("{label}'s corpse")),
+                Renderable {
+                    symbol: "X".into(),
+                    fg: RatColor::Rgb(120, 60, 60),
+                    bg: RatColor::Black,
+                },
+            ));
+        }
 
         commands.entity(entity).despawn();
     }
@@ -412,7 +511,10 @@ pub fn ranged_attack_system(
         let damage;
         if let Some(gun_entity) = intent.gun_item {
             if let Ok(mut kind) = item_kind_query.get_mut(gun_entity) {
-                if let ItemKind::Gun { loaded, caliber, .. } = kind.as_mut() {
+                if let ItemKind::Gun {
+                    loaded, caliber, ..
+                } = kind.as_mut()
+                {
                     if *loaded <= 0 {
                         combat_log.push("Gun is empty!".into());
                         continue;
@@ -439,7 +541,10 @@ pub fn ranged_attack_system(
         }
 
         // Misfire check: small chance the gun misfires (ammo wasted, no bullet).
-        let misfire_roll = dynamic_rng.roll(seed.0, (origin.x as u64) << 32 | (origin.y as u64 & 0xFFFFFFFF) ^ 0xDEAD);
+        let misfire_roll = dynamic_rng.roll(
+            seed.0,
+            (origin.x as u64) << 32 | (origin.y as u64 & 0xFFFFFFFF) ^ 0xDEAD,
+        );
         if misfire_roll < MISFIRE_CHANCE {
             combat_log.push(format!("{c_name}'s gun misfires! *click*"));
             sound_events.add(origin);
@@ -447,7 +552,10 @@ pub fn ranged_attack_system(
         }
 
         // Apply gun spread: slight random angular offset to the trajectory.
-        let spread_roll = dynamic_rng.roll(seed.0, (origin.x as u64).wrapping_mul(7) ^ (origin.y as u64) ^ 0x5BAD);
+        let spread_roll = dynamic_rng.roll(
+            seed.0,
+            (origin.x as u64).wrapping_mul(7) ^ (origin.y as u64) ^ 0x5BAD,
+        );
         let (spread_dx, spread_dy) = apply_gun_spread(dx, dy, spread_roll);
 
         // Compute the bullet endpoint — bullets travel until they hit a wall,
@@ -486,7 +594,9 @@ pub fn ai_ranged_attack_system(
     turn_counter: Res<TurnCounter>,
 ) {
     for intent in intents.read() {
-        let Ok((attacker_pos, attacker_stats, attacker_name, inventory)) = attacker_query.get(intent.attacker) else {
+        let Ok((attacker_pos, attacker_stats, attacker_name, inventory)) =
+            attacker_query.get(intent.attacker)
+        else {
             continue;
         };
         let Ok(target_pos) = target_query.get(intent.target) else {
@@ -512,13 +622,18 @@ pub fn ai_ranged_attack_system(
             let mut fired = false;
             for &item_ent in &inv.items {
                 if let Ok(mut kind) = item_kind_query.get_mut(item_ent)
-                    && let ItemKind::Gun { ref mut loaded, caliber, .. } = *kind
-                        && *loaded > 0 {
-                            *loaded -= 1;
-                            damage = caliber.damage();
-                            fired = true;
-                            break;
-                        }
+                    && let ItemKind::Gun {
+                        ref mut loaded,
+                        caliber,
+                        ..
+                    } = *kind
+                    && *loaded > 0
+                {
+                    *loaded -= 1;
+                    damage = caliber.damage();
+                    fired = true;
+                    break;
+                }
             }
             if !fired {
                 // No loaded gun — NPC can't fire this turn.
@@ -527,7 +642,8 @@ pub fn ai_ranged_attack_system(
         }
 
         // Apply gun spread: slight random angular offset to the trajectory.
-        let spread_seed = (origin.x as u64).wrapping_mul(13) ^ (origin.y as u64) ^ intent.attacker.to_bits();
+        let spread_seed =
+            (origin.x as u64).wrapping_mul(13) ^ (origin.y as u64) ^ intent.attacker.to_bits();
         let spread_roll = crate::noise::value_noise(origin.x, origin.y, spread_seed);
         let (spread_dx, spread_dy) = apply_gun_spread(dx, dy, spread_roll);
 
@@ -565,7 +681,10 @@ pub fn melee_wide_system(
     mut intents: MessageReader<MeleeWideIntent>,
     mut damage_events: MessageWriter<DamageEvent>,
     attacker_query: Query<(&Position, &CombatStats, Option<&Name>), With<PlayerControlled>>,
-    mut targets: Query<(Entity, &mut Position, Option<&Name>, Option<&Health>), Without<PlayerControlled>>,
+    mut targets: Query<
+        (Entity, &mut Position, Option<&Name>, Option<&Health>),
+        Without<PlayerControlled>,
+    >,
     blockers: Query<(), With<crate::components::BlocksMovement>>,
     mut combat_log: ResMut<CombatLog>,
     mut game_map: ResMut<GameMapResource>,
@@ -574,7 +693,8 @@ pub fn melee_wide_system(
     turn_counter: Res<TurnCounter>,
 ) {
     for intent in intents.read() {
-        let Ok((attacker_pos, attacker_stats, attacker_name)) = attacker_query.get(intent.attacker) else {
+        let Ok((attacker_pos, attacker_stats, attacker_name)) = attacker_query.get(intent.attacker)
+        else {
             continue;
         };
         let origin = attacker_pos.as_grid_vec();
@@ -601,7 +721,9 @@ pub fn melee_wide_system(
                     amount: damage,
                     source: Some(intent.attacker),
                 });
-                combat_log.push(format!("{a_name} roundhouse kicks {t_name} for {damage} damage!"));
+                combat_log.push(format!(
+                    "{a_name} roundhouse kicks {t_name} for {damage} damage!"
+                ));
                 hit_count += 1;
             }
 
@@ -611,9 +733,10 @@ pub fn melee_wide_system(
 
             // Check if push destination is passable and unoccupied
             let tile_passable = game_map.0.is_passable(&push_to);
-            let entity_blocked = spatial.entities_at(&push_to).iter().any(|&e| {
-                e != target_entity && blockers.contains(e)
-            });
+            let entity_blocked = spatial
+                .entities_at(&push_to)
+                .iter()
+                .any(|&e| e != target_entity && blockers.contains(e));
 
             if tile_passable && !entity_blocked {
                 push_list.push((target_entity, tv, push_to));
@@ -638,31 +761,32 @@ pub fn melee_wide_system(
                 }
                 let tile = origin + GridVec::new(dx, dy);
                 if let Some(voxel) = game_map.0.get_voxel_at(&tile)
-                    && let Some(ref prop) = voxel.props {
-                        let max_hp = prop.max_health();
-                        if max_hp == i32::MAX {
-                            continue; // indestructible
+                    && let Some(ref prop) = voxel.props
+                {
+                    let max_hp = prop.max_health();
+                    if max_hp == i32::MAX {
+                        continue; // indestructible
+                    }
+                    let is_gunpowder = matches!(prop, Props::GunpowderBarrel);
+                    // Initialize prop health if not yet tracked
+                    let current_hp = prop_health.hp.entry(tile).or_insert(max_hp);
+                    *current_hp -= damage.max(MIN_PROP_DAMAGE);
+                    props_damaged += 1;
+                    if *current_hp <= 0 {
+                        // Destroy the prop
+                        if let Some(voxel) = game_map.0.get_voxel_at_mut(&tile) {
+                            voxel.props = None;
                         }
-                        let is_gunpowder = matches!(prop, Props::GunpowderBarrel);
-                        // Initialize prop health if not yet tracked
-                        let current_hp = prop_health.hp.entry(tile).or_insert(max_hp);
-                        *current_hp -= damage.max(MIN_PROP_DAMAGE);
-                        props_damaged += 1;
-                        if *current_hp <= 0 {
-                            // Destroy the prop
-                            if let Some(voxel) = game_map.0.get_voxel_at_mut(&tile) {
-                                voxel.props = None;
-                            }
-                            prop_health.hp.remove(&tile);
-                            if is_gunpowder {
-                                // Gunpowder barrel explodes — set fire in radius
-                                combat_log.push("Gunpowder barrel explodes!".to_string());
-                                game_map.detonate_gunpowder_barrel(tile, turn_counter.0);
-                            } else {
-                                combat_log.push(format!("{a_name} destroys a prop!"));
-                            }
+                        prop_health.hp.remove(&tile);
+                        if is_gunpowder {
+                            // Gunpowder barrel explodes — set fire in radius
+                            combat_log.push("Gunpowder barrel explodes!".to_string());
+                            game_map.detonate_gunpowder_barrel(tile, turn_counter.0);
+                        } else {
+                            combat_log.push(format!("{a_name} destroys a prop!"));
                         }
                     }
+                }
             }
         }
 

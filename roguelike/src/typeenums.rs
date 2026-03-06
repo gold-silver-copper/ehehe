@@ -107,12 +107,23 @@ impl Props {
     pub fn blocks_vision(&self) -> bool {
         match self {
             // Short/open objects: you can see over/through them
-            Props::Fence | Props::WaterTrough | Props::Bush
-            | Props::Bench | Props::Chair | Props::HayBale
-            | Props::Sign | Props::RailTrack | Props::LampPost
-            | Props::Barrel | Props::Crate | Props::Table
-            | Props::HitchingPost | Props::Rock | Props::Cactus
-            | Props::GunpowderBarrel | Props::Window => false,
+            Props::Fence
+            | Props::WaterTrough
+            | Props::Bush
+            | Props::Bench
+            | Props::Chair
+            | Props::HayBale
+            | Props::Sign
+            | Props::RailTrack
+            | Props::LampPost
+            | Props::Barrel
+            | Props::Crate
+            | Props::Table
+            | Props::HitchingPost
+            | Props::Rock
+            | Props::Cactus
+            | Props::GunpowderBarrel
+            | Props::Window => false,
             _ => true,
         }
     }
@@ -121,11 +132,19 @@ impl Props {
     pub fn max_health(&self) -> i32 {
         match self {
             Props::Wall | Props::Rock | Props::Well | Props::StoneWall => i32::MAX, // indestructible
-            Props::Tree | Props::DeadTree | Props::Gallows | Props::WaterTower | Props::Windmill => 30,
+            Props::Tree
+            | Props::DeadTree
+            | Props::Gallows
+            | Props::WaterTower
+            | Props::Windmill => 30,
             Props::Piano => 25,
             Props::Barrel | Props::Crate | Props::Table | Props::Bench => 15,
             Props::Chair | Props::Sign | Props::Fence | Props::HayBale => 10,
-            Props::Bush | Props::Cactus | Props::LampPost | Props::HitchingPost | Props::WaterTrough => 20,
+            Props::Bush
+            | Props::Cactus
+            | Props::LampPost
+            | Props::HitchingPost
+            | Props::WaterTrough => 20,
             Props::GunpowderBarrel => 10,
             Props::Window => 5,
             Props::RailTrack => i32::MAX,
@@ -136,12 +155,24 @@ impl Props {
     pub fn is_flammable(&self) -> bool {
         matches!(
             self,
-            Props::Wall | Props::Tree | Props::DeadTree | Props::Bush
-            | Props::Barrel | Props::Crate | Props::Table
-            | Props::Chair | Props::Piano | Props::Bench
-            | Props::HayBale | Props::Sign | Props::Fence
-            | Props::Gallows | Props::WaterTower | Props::Windmill
-            | Props::GunpowderBarrel | Props::Window
+            Props::Wall
+                | Props::Tree
+                | Props::DeadTree
+                | Props::Bush
+                | Props::Barrel
+                | Props::Crate
+                | Props::Table
+                | Props::Chair
+                | Props::Piano
+                | Props::Bench
+                | Props::HayBale
+                | Props::Sign
+                | Props::Fence
+                | Props::Gallows
+                | Props::WaterTower
+                | Props::Windmill
+                | Props::GunpowderBarrel
+                | Props::Window
         )
     }
 }

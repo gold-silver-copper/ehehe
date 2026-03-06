@@ -125,7 +125,11 @@ pub fn tile_color_noise(r: u8, g: u8, b: u8, x: i32, y: i32, range: i16) -> (u8,
     let db = ((h >> 22) % span) as i16 - range;
 
     let clamp = |v: i16| v.clamp(0, 255) as u8;
-    (clamp(r as i16 + dr), clamp(g as i16 + dg), clamp(b as i16 + db))
+    (
+        clamp(r as i16 + dr),
+        clamp(g as i16 + dg),
+        clamp(b as i16 + db),
+    )
 }
 
 #[cfg(test)]
@@ -144,7 +148,10 @@ mod tests {
         for x in -10..10 {
             for y in -10..10 {
                 let v = value_noise(x, y, 42);
-                assert!((0.0..1.0).contains(&v), "value_noise({x},{y}) = {v} out of range");
+                assert!(
+                    (0.0..1.0).contains(&v),
+                    "value_noise({x},{y}) = {v} out of range"
+                );
             }
         }
     }
@@ -167,10 +174,7 @@ mod tests {
     fn smooth_noise_in_range() {
         for i in 0..20 {
             let v = smooth_noise(i as f64 * 0.5, i as f64 * 0.3, 42);
-            assert!(
-                (0.0..=1.0).contains(&v),
-                "smooth_noise out of range: {v}"
-            );
+            assert!((0.0..=1.0).contains(&v), "smooth_noise out of range: {v}");
         }
     }
 
@@ -201,9 +205,18 @@ mod tests {
         for x in -5..5 {
             for y in -5..5 {
                 let (r, g, b) = tile_color_noise(100, 100, 100, x, y, 2);
-                assert!((98..=102).contains(&r), "r={r} out of ±2 range for ({x},{y})");
-                assert!((98..=102).contains(&g), "g={g} out of ±2 range for ({x},{y})");
-                assert!((98..=102).contains(&b), "b={b} out of ±2 range for ({x},{y})");
+                assert!(
+                    (98..=102).contains(&r),
+                    "r={r} out of ±2 range for ({x},{y})"
+                );
+                assert!(
+                    (98..=102).contains(&g),
+                    "g={g} out of ±2 range for ({x},{y})"
+                );
+                assert!(
+                    (98..=102).contains(&b),
+                    "b={b} out of ±2 range for ({x},{y})"
+                );
             }
         }
     }
@@ -223,7 +236,10 @@ mod tests {
         let a = tile_color_noise(100, 100, 100, 0, 0, 2);
         let b = tile_color_noise(100, 100, 100, 50, 50, 2);
         // Very unlikely all 3 channels are identical for different positions
-        assert!(a != b, "Different positions should typically produce different noise");
+        assert!(
+            a != b,
+            "Different positions should typically produce different noise"
+        );
     }
 
     #[test]

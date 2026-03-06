@@ -2,10 +2,19 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_ratatui::event::KeyMessage;
 use ratatui::crossterm::event::KeyCode;
 
-use crate::components::{Dead, Faction, Health, Inventory, ItemKind, SPELL_STAMINA_COST, Stamina, PlayerControlled, Position, Viewshed};
-use crate::events::{MeleeWideIntent, MolotovCastIntent, MoveIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
+use crate::components::{
+    Dead, Faction, Health, Inventory, ItemKind, PlayerControlled, Position, SPELL_STAMINA_COST,
+    Stamina, Viewshed,
+};
+use crate::events::{
+    MeleeWideIntent, MolotovCastIntent, MoveIntent, RangedAttackIntent, SpellCastIntent,
+    ThrowItemIntent, UseItemIntent,
+};
 use crate::grid_vec::GridVec;
-use crate::resources::{CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameState, InputMode, InputState, MapSeed, RestartRequested, SpectatingAfterDeath, TurnState};
+use crate::resources::{
+    CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameState, InputMode, InputState,
+    MapSeed, RestartRequested, SpectatingAfterDeath, TurnState,
+};
 
 /// Bundles all intent MessageWriters to stay under Bevy's 16-param system limit.
 #[derive(SystemParam)]
@@ -57,17 +66,72 @@ pub struct CommandBinding {
 /// Used by the `?` help overlay to display available commands.
 /// Related keys are grouped (WASD, IJKL) to reduce visual clutter.
 pub const KEYBINDINGS: &[CommandBinding] = &[
-    CommandBinding { key: "WASD / ↑↓←→", name: "Move (3 ticks)", docs: "Move the player one tile. Physical movement costs 3 ticks and 2 stamina.", category: "Movement" },
-    CommandBinding { key: "IJKL", name: "Cursor (1 tick)", docs: "Move the cursor one tile for aiming. Costs 1 tick.", category: "Other" },
-    CommandBinding { key: "C", name: "Center cursor", docs: "Snap cursor onto your position. Costs 1 tick.", category: "Other" },
-    CommandBinding { key: "V", name: "Auto-aim", docs: "Cursor steps toward nearest enemy. Costs 1 tick.", category: "Other" },
-    CommandBinding { key: "R", name: "Reload (6 ticks)", docs: "Reload gun (1 bullet + 1 cap + 1 powder). Costs 6 ticks.", category: "Combat" },
-    CommandBinding { key: "F", name: "Roundhouse (2 ticks)", docs: "Roundhouse kick all adjacent enemies. Costs 2 ticks + 10 stamina.", category: "Combat" },
-    CommandBinding { key: "T", name: "Wait (1 tick)", docs: "Skip your turn. Costs 1 tick.", category: "Movement" },
-    CommandBinding { key: "G", name: "Throw sand (5 sta)", docs: "Create sand cloud blocking vision toward cursor.", category: "Combat" },
-    CommandBinding { key: "E", name: "Throw item (10 sta)", docs: "Throw a random inventory item toward cursor.", category: "Inventory" },
-    CommandBinding { key: "1-0", name: "Fire/Use (2 ticks)", docs: "Use item by slot. Guns/grenades fire toward cursor. Costs 2 ticks.", category: "Inventory" },
-    CommandBinding { key: "Q", name: "Menu", docs: "Toggle pause menu", category: "Other" },
+    CommandBinding {
+        key: "WASD / ↑↓←→",
+        name: "Move (3 ticks)",
+        docs: "Move the player one tile. Physical movement costs 3 ticks and 2 stamina.",
+        category: "Movement",
+    },
+    CommandBinding {
+        key: "IJKL",
+        name: "Cursor (1 tick)",
+        docs: "Move the cursor one tile for aiming. Costs 1 tick.",
+        category: "Other",
+    },
+    CommandBinding {
+        key: "C",
+        name: "Center cursor",
+        docs: "Snap cursor onto your position. Costs 1 tick.",
+        category: "Other",
+    },
+    CommandBinding {
+        key: "V",
+        name: "Auto-aim",
+        docs: "Cursor steps toward nearest enemy. Costs 1 tick.",
+        category: "Other",
+    },
+    CommandBinding {
+        key: "R",
+        name: "Reload (6 ticks)",
+        docs: "Reload gun (1 bullet + 1 cap + 1 powder). Costs 6 ticks.",
+        category: "Combat",
+    },
+    CommandBinding {
+        key: "F",
+        name: "Roundhouse (2 ticks)",
+        docs: "Roundhouse kick all adjacent enemies. Costs 2 ticks + 10 stamina.",
+        category: "Combat",
+    },
+    CommandBinding {
+        key: "T",
+        name: "Wait (1 tick)",
+        docs: "Skip your turn. Costs 1 tick.",
+        category: "Movement",
+    },
+    CommandBinding {
+        key: "G",
+        name: "Throw sand (5 sta)",
+        docs: "Create sand cloud blocking vision toward cursor.",
+        category: "Combat",
+    },
+    CommandBinding {
+        key: "E",
+        name: "Throw item (10 sta)",
+        docs: "Throw a random inventory item toward cursor.",
+        category: "Inventory",
+    },
+    CommandBinding {
+        key: "1-0",
+        name: "Fire/Use (2 ticks)",
+        docs: "Use item by slot. Guns/grenades fire toward cursor. Costs 2 ticks.",
+        category: "Inventory",
+    },
+    CommandBinding {
+        key: "Q",
+        name: "Menu",
+        docs: "Toggle pause menu",
+        category: "Other",
+    },
 ];
 
 /// Reads keyboard input. Global keys (quit, pause, help) are always handled.
@@ -79,10 +143,22 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
 pub fn input_system(
     mut messages: MessageReader<KeyMessage>,
     mut intents: IntentWriters,
-    player_query: Query<(Entity, &Position, Option<&Stamina>, Option<&Inventory>, Option<&Dead>), With<PlayerControlled>>,
+    player_query: Query<
+        (
+            Entity,
+            &Position,
+            Option<&Stamina>,
+            Option<&Inventory>,
+            Option<&Dead>,
+        ),
+        With<PlayerControlled>,
+    >,
     mut player_viewshed: Query<&mut Viewshed, With<PlayerControlled>>,
     item_kind_query: Query<&ItemKind>,
-    (hostiles_query, _health_query): (Query<&Position, (With<Faction>, Without<PlayerControlled>)>, Query<Entity, With<Health>>),
+    (hostiles_query, _health_query): (
+        Query<&Position, (With<Faction>, Without<PlayerControlled>)>,
+        Query<Entity, With<Health>>,
+    ),
     game_state: Res<State<GameState>>,
     mut next_game_state: ResMut<NextState<GameState>>,
     turn_state: Option<Res<State<TurnState>>>,
@@ -91,7 +167,13 @@ pub fn input_system(
     mut input_state: ResMut<InputState>,
     mut restart_requested: ResMut<RestartRequested>,
     mut cursor: ResMut<CursorPosition>,
-    (mut extra_world_ticks, spectating, dynamic_rng, seed, _spatial): (ResMut<ExtraWorldTicks>, ResMut<SpectatingAfterDeath>, Res<DynamicRng>, Res<MapSeed>, Res<crate::resources::SpatialIndex>),
+    (mut extra_world_ticks, spectating, dynamic_rng, seed, _spatial): (
+        ResMut<ExtraWorldTicks>,
+        ResMut<SpectatingAfterDeath>,
+        Res<DynamicRng>,
+        Res<MapSeed>,
+        Res<crate::resources::SpatialIndex>,
+    ),
     mut god_mode: ResMut<crate::resources::GodMode>,
 ) {
     // Handle Dead and Victory states: R to restart, auto-advance turns when dead.
@@ -104,7 +186,9 @@ pub fn input_system(
         return;
     }
 
-    let Ok((player_entity, player_pos, player_stamina, player_inv, player_dead)) = player_query.single() else {
+    let Ok((player_entity, player_pos, player_stamina, player_inv, player_dead)) =
+        player_query.single()
+    else {
         // PlayerControlled entity is gone (should only happen transiently).
         messages.read().for_each(|_| {});
         return;
@@ -119,7 +203,9 @@ pub fn input_system(
         }
         // Auto-advance turns when spectating after death so the world keeps running.
         if spectating.0 {
-            let awaiting = turn_state.as_ref().is_some_and(|s| *s.get() == TurnState::AwaitingInput);
+            let awaiting = turn_state
+                .as_ref()
+                .is_some_and(|s| *s.get() == TurnState::AwaitingInput);
             if awaiting {
                 if let Some(ref mut nts) = next_turn_state {
                     nts.set(TurnState::PlayerTurn);
@@ -177,16 +263,40 @@ pub fn input_system(
             }
             // ── Cursor movement (IJKL) — advances one tick ─────
             KeyCode::Char('i') if awaiting_input => {
-                move_cursor(&mut cursor, 0, 1, &mut player_viewshed, &mut next_turn_state);
+                move_cursor(
+                    &mut cursor,
+                    0,
+                    1,
+                    &mut player_viewshed,
+                    &mut next_turn_state,
+                );
             }
             KeyCode::Char('k') if awaiting_input => {
-                move_cursor(&mut cursor, 0, -1, &mut player_viewshed, &mut next_turn_state);
+                move_cursor(
+                    &mut cursor,
+                    0,
+                    -1,
+                    &mut player_viewshed,
+                    &mut next_turn_state,
+                );
             }
             KeyCode::Char('j') if awaiting_input => {
-                move_cursor(&mut cursor, -1, 0, &mut player_viewshed, &mut next_turn_state);
+                move_cursor(
+                    &mut cursor,
+                    -1,
+                    0,
+                    &mut player_viewshed,
+                    &mut next_turn_state,
+                );
             }
             KeyCode::Char('l') if awaiting_input => {
-                move_cursor(&mut cursor, 1, 0, &mut player_viewshed, &mut next_turn_state);
+                move_cursor(
+                    &mut cursor,
+                    1,
+                    0,
+                    &mut player_viewshed,
+                    &mut next_turn_state,
+                );
             }
             // ── Center cursor on player (C) — advances one tick ──
             KeyCode::Char('c') if awaiting_input => {
@@ -221,22 +331,46 @@ pub fn input_system(
             KeyCode::Char('w') | KeyCode::Up if awaiting_input => {
                 extra_world_ticks.0 = 2;
                 input_state.ability_stamina_pending = MOVE_STAMINA_COST;
-                emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 0, 1);
+                emit_move(
+                    &mut intents.move_intents,
+                    &mut next_turn_state,
+                    player_entity,
+                    0,
+                    1,
+                );
             }
             KeyCode::Char('s') | KeyCode::Down if awaiting_input => {
                 extra_world_ticks.0 = 2;
                 input_state.ability_stamina_pending = MOVE_STAMINA_COST;
-                emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 0, -1);
+                emit_move(
+                    &mut intents.move_intents,
+                    &mut next_turn_state,
+                    player_entity,
+                    0,
+                    -1,
+                );
             }
             KeyCode::Char('a') | KeyCode::Left if awaiting_input => {
                 extra_world_ticks.0 = 2;
                 input_state.ability_stamina_pending = MOVE_STAMINA_COST;
-                emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, -1, 0);
+                emit_move(
+                    &mut intents.move_intents,
+                    &mut next_turn_state,
+                    player_entity,
+                    -1,
+                    0,
+                );
             }
             KeyCode::Char('d') | KeyCode::Right if awaiting_input => {
                 extra_world_ticks.0 = 2;
                 input_state.ability_stamina_pending = MOVE_STAMINA_COST;
-                emit_move(&mut intents.move_intents, &mut next_turn_state, player_entity, 1, 0);
+                emit_move(
+                    &mut intents.move_intents,
+                    &mut next_turn_state,
+                    player_entity,
+                    1,
+                    0,
+                );
             }
             // ── Wait / skip turn (T) ────────────────────────────
             KeyCode::Char('t') if awaiting_input => {
@@ -303,9 +437,17 @@ pub fn input_system(
                 } else {
                     input_state.ability_stamina_pending = THROW_ITEM_STAMINA_COST;
                     handle_throw_random(
-                        player_entity, player_pos, player_inv, &item_kind_query,
-                        &cursor, &mut intents, &mut extra_world_ticks,
-                        &mut next_turn_state, &mut combat_log, &dynamic_rng, &seed,
+                        player_entity,
+                        player_pos,
+                        player_inv,
+                        &item_kind_query,
+                        &cursor,
+                        &mut intents,
+                        &mut extra_world_ticks,
+                        &mut next_turn_state,
+                        &mut combat_log,
+                        &dynamic_rng,
+                        &seed,
                     );
                 }
             }
@@ -325,88 +467,91 @@ pub fn input_system(
                 let mut handled = false;
                 if let Some(inv) = player_inv
                     && let Some(&item_entity) = inv.items.get(idx)
-                        && let Ok(kind) = item_kind_query.get(item_entity) {
-                            if let ItemKind::Gun { loaded, name, .. } = kind {
-                                if *loaded > 0 {
-                                    let delta = cursor.pos - player_pos.as_grid_vec();
-                                    if delta != crate::grid_vec::GridVec::ZERO {
-                                        // Double-action revolvers (Starr 1858) cost only 1 tick.
-                                        extra_world_ticks.0 = if name.contains("Starr") { 0 } else { 1 };
-                                        intents.ranged_intents.write(RangedAttackIntent {
-                                            attacker: player_entity,
-                                            range: RANGED_ATTACK_RANGE,
-                                            dx: delta.x,
-                                            dy: delta.y,
-                                            gun_item: Some(item_entity),
-                                        });
-                                        advance_turn(&mut next_turn_state);
-                                        handled = true;
-                                    } else {
-                                        combat_log.push("Cursor is on your position!".into());
-                                        handled = true;
-                                    }
-                                } else {
-                                    combat_log.push("Gun is empty! Press R to reload.".into());
-                                    handled = true;
-                                }
-                            } else if let ItemKind::Knife { attack, .. } | ItemKind::Tomahawk { attack, .. } = kind {
-                                let delta = cursor.pos - player_pos.as_grid_vec();
-                                if delta != crate::grid_vec::GridVec::ZERO {
-                                    extra_world_ticks.0 = 1;
-                                    intents.throw_item_intents.write(ThrowItemIntent {
-                                        thrower: player_entity,
-                                        item_entity,
-                                        item_index: idx,
-                                        dx: delta.x,
-                                        dy: delta.y,
-                                        range: crate::systems::projectile::THROWN_RANGE,
-                                        damage: *attack,
-                                    });
-                                    advance_turn(&mut next_turn_state);
-                                    handled = true;
-                                } else {
-                                    combat_log.push("Cursor is on your position!".into());
-                                    handled = true;
-                                }
-                            } else if matches!(kind, ItemKind::Grenade { .. }) {
-                                // Throw grenade from this inventory slot toward the cursor.
-                                let has_stamina = player_stamina
-                                    .map(|m| m.current >= SPELL_STAMINA_COST)
-                                    .unwrap_or(false);
-                                if !has_stamina {
-                                    combat_log.push("Not enough stamina!".into());
-                                } else {
-                                    extra_world_ticks.0 = 1;
-                                    intents.spell_intents.write(SpellCastIntent {
-                                        caster: player_entity,
-                                        radius: SPELL_RADIUS,
-                                        target: cursor.pos,
-                                        grenade_index: idx,
-                                    });
-                                    advance_turn(&mut next_turn_state);
-                                }
+                    && let Ok(kind) = item_kind_query.get(item_entity)
+                {
+                    if let ItemKind::Gun { loaded, name, .. } = kind {
+                        if *loaded > 0 {
+                            let delta = cursor.pos - player_pos.as_grid_vec();
+                            if delta != crate::grid_vec::GridVec::ZERO {
+                                // Double-action revolvers (Starr 1858) cost only 1 tick.
+                                extra_world_ticks.0 = if name.contains("Starr") { 0 } else { 1 };
+                                intents.ranged_intents.write(RangedAttackIntent {
+                                    attacker: player_entity,
+                                    range: RANGED_ATTACK_RANGE,
+                                    dx: delta.x,
+                                    dy: delta.y,
+                                    gun_item: Some(item_entity),
+                                });
+                                advance_turn(&mut next_turn_state);
                                 handled = true;
-                            } else if let ItemKind::Molotov { damage, radius, .. } = kind {
-                                // Throw molotov from this inventory slot toward the cursor.
-                                let has_stamina = player_stamina
-                                    .map(|m| m.current >= SPELL_STAMINA_COST)
-                                    .unwrap_or(false);
-                                if !has_stamina {
-                                    combat_log.push("Not enough stamina!".into());
-                                } else {
-                                    extra_world_ticks.0 = 1;
-                                    intents.molotov_intents.write(MolotovCastIntent {
-                                        caster: player_entity,
-                                        radius: *radius,
-                                        damage: *damage,
-                                        target: cursor.pos,
-                                        item_index: idx,
-                                    });
-                                    advance_turn(&mut next_turn_state);
-                                }
+                            } else {
+                                combat_log.push("Cursor is on your position!".into());
                                 handled = true;
                             }
+                        } else {
+                            combat_log.push("Gun is empty! Press R to reload.".into());
+                            handled = true;
                         }
+                    } else if let ItemKind::Knife { attack, .. }
+                    | ItemKind::Tomahawk { attack, .. } = kind
+                    {
+                        let delta = cursor.pos - player_pos.as_grid_vec();
+                        if delta != crate::grid_vec::GridVec::ZERO {
+                            extra_world_ticks.0 = 1;
+                            intents.throw_item_intents.write(ThrowItemIntent {
+                                thrower: player_entity,
+                                item_entity,
+                                item_index: idx,
+                                dx: delta.x,
+                                dy: delta.y,
+                                range: crate::systems::projectile::THROWN_RANGE,
+                                damage: *attack,
+                            });
+                            advance_turn(&mut next_turn_state);
+                            handled = true;
+                        } else {
+                            combat_log.push("Cursor is on your position!".into());
+                            handled = true;
+                        }
+                    } else if matches!(kind, ItemKind::Grenade { .. }) {
+                        // Throw grenade from this inventory slot toward the cursor.
+                        let has_stamina = player_stamina
+                            .map(|m| m.current >= SPELL_STAMINA_COST)
+                            .unwrap_or(false);
+                        if !has_stamina {
+                            combat_log.push("Not enough stamina!".into());
+                        } else {
+                            extra_world_ticks.0 = 1;
+                            intents.spell_intents.write(SpellCastIntent {
+                                caster: player_entity,
+                                radius: SPELL_RADIUS,
+                                target: cursor.pos,
+                                grenade_index: idx,
+                            });
+                            advance_turn(&mut next_turn_state);
+                        }
+                        handled = true;
+                    } else if let ItemKind::Molotov { damage, radius, .. } = kind {
+                        // Throw molotov from this inventory slot toward the cursor.
+                        let has_stamina = player_stamina
+                            .map(|m| m.current >= SPELL_STAMINA_COST)
+                            .unwrap_or(false);
+                        if !has_stamina {
+                            combat_log.push("Not enough stamina!".into());
+                        } else {
+                            extra_world_ticks.0 = 1;
+                            intents.molotov_intents.write(MolotovCastIntent {
+                                caster: player_entity,
+                                radius: *radius,
+                                damage: *damage,
+                                target: cursor.pos,
+                                item_index: idx,
+                            });
+                            advance_turn(&mut next_turn_state);
+                        }
+                        handled = true;
+                    }
+                }
                 if !handled {
                     // Non-gun items: use normally.
                     intents.use_item_intents.write(UseItemIntent {
@@ -456,11 +601,14 @@ fn handle_throw_random(
     let item_entity = inv.items[idx];
 
     // Determine damage based on item type
-    let damage = item_kind_query.get(item_entity).ok().map_or(2, |k| match k {
-        ItemKind::Knife { attack, .. } | ItemKind::Tomahawk { attack, .. } => *attack,
-        ItemKind::Gun { attack, .. } => *attack / 2,
-        _ => 2,
-    });
+    let damage = item_kind_query
+        .get(item_entity)
+        .ok()
+        .map_or(2, |k| match k {
+            ItemKind::Knife { attack, .. } | ItemKind::Tomahawk { attack, .. } => *attack,
+            ItemKind::Gun { attack, .. } => *attack / 2,
+            _ => 2,
+        });
 
     intents.throw_item_intents.write(ThrowItemIntent {
         thrower: player_entity,

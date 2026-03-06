@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::grid_vec::GridVec;
-use crate::noise::{fbm, value_noise, NoiseSeed};
+use crate::noise::{NoiseSeed, fbm, value_noise};
+use crate::typedefs::{CoordinateUnit, MyPoint, RenderPacket, SPAWN_POINT, create_2d_array};
 use crate::typeenums::{Floor, Props};
-use crate::typedefs::{create_2d_array, CoordinateUnit, MyPoint, RenderPacket, SPAWN_POINT};
 use crate::voxel::Voxel;
 
 /// Side length of a map chunk (tiles). Used for chunk-based spatial queries.
@@ -83,11 +83,7 @@ struct TerrainPhase;
 
 impl TerrainPhase {
     /// Creates the initial `GameMap` with noise-driven desert terrain.
-    fn create_map(
-        width: CoordinateUnit,
-        height: CoordinateUnit,
-        seed: NoiseSeed,
-    ) -> GameMap {
+    fn create_map(width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) -> GameMap {
         let biome_seed = seed;
         let detail_seed = seed.wrapping_add(12345);
 
@@ -180,7 +176,6 @@ impl TerrainPhase {
 struct WaterPhase;
 
 impl WorldGenPhase for WaterPhase {
-
     fn execute(
         &self,
         map: &mut GameMap,
@@ -199,7 +194,7 @@ impl WorldGenPhase for WaterPhase {
             // Desired center from multi-octave noise (determines general shape).
             let desired = river_cx
                 + (fy * 0.008).sin() * 40.0      // large meander
-                + (fy * 0.020).sin() * 20.0;     // medium curve
+                + (fy * 0.020).sin() * 20.0; // medium curve
             // Clamp drift to ±1 tile per row for smooth banks.
             let drift = (desired - prev_center_x).clamp(-1.0, 1.0);
             let center_x = prev_center_x + drift;
@@ -226,10 +221,11 @@ impl WorldGenPhase for WaterPhase {
                     }
                 } else if dist < river_width + beach_width
                     && let Some(voxel) = map.get_voxel_at_mut(&pos)
-                        && !matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall)) {
-                            voxel.floor = Some(Floor::BeachSand);
-                            voxel.props = None;
-                        }
+                    && !matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall))
+                {
+                    voxel.floor = Some(Floor::BeachSand);
+                    voxel.props = None;
+                }
             }
         }
 
@@ -238,7 +234,13 @@ impl WorldGenPhase for WaterPhase {
             for x in 0..map.width {
                 let pos = GridVec::new(x, y);
                 if let Some(voxel) = map.get_voxel_at(&pos) {
-                    if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand)) {
+                    if matches!(
+                        voxel.floor,
+                        Some(Floor::ShallowWater)
+                            | Some(Floor::DeepWater)
+                            | Some(Floor::Beach)
+                            | Some(Floor::BeachSand)
+                    ) {
                         map.occupancy[x as usize][y as usize] = true;
                     }
                 }
@@ -251,7 +253,6 @@ impl WorldGenPhase for WaterPhase {
 struct InfrastructurePhase;
 
 impl WorldGenPhase for InfrastructurePhase {
-
     fn execute(
         &self,
         map: &mut GameMap,
@@ -287,11 +288,20 @@ impl WorldGenPhase for InfrastructurePhase {
                 // Sidewalk (outer band)
                 for sw in 1..=sidewalk_width {
                     for sign in [-1i32, 1] {
-                        let y = ay + sign * (avenue_half_width + sw) + curve_offset as CoordinateUnit;
-                        if y <= 0 || y >= height - 1 { continue; }
+                        let y =
+                            ay + sign * (avenue_half_width + sw) + curve_offset as CoordinateUnit;
+                        if y <= 0 || y >= height - 1 {
+                            continue;
+                        }
                         let pos = GridVec::new(x, y);
                         if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                            if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand)) {
+                            if matches!(
+                                voxel.floor,
+                                Some(Floor::ShallowWater)
+                                    | Some(Floor::DeepWater)
+                                    | Some(Floor::Beach)
+                                    | Some(Floor::BeachSand)
+                            ) {
                                 continue;
                             }
                             voxel.floor = Some(Floor::Sidewalk);
@@ -302,10 +312,18 @@ impl WorldGenPhase for InfrastructurePhase {
                 // Carriage road (inner band)
                 for hw in -avenue_half_width..=avenue_half_width {
                     let y = ay + hw + curve_offset as CoordinateUnit;
-                    if y <= 0 || y >= height - 1 { continue; }
+                    if y <= 0 || y >= height - 1 {
+                        continue;
+                    }
                     let pos = GridVec::new(x, y);
                     if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                        if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand)) {
+                        if matches!(
+                            voxel.floor,
+                            Some(Floor::ShallowWater)
+                                | Some(Floor::DeepWater)
+                                | Some(Floor::Beach)
+                                | Some(Floor::BeachSand)
+                        ) {
                             continue;
                         }
                         voxel.floor = Some(Floor::DirtRoad);
@@ -341,15 +359,28 @@ impl WorldGenPhase for InfrastructurePhase {
                     // Sidewalk — must not overwrite avenue dirt roads or walls.
                     for sw in 1..=cross_sidewalk_width {
                         for sign in [-1i32, 1] {
-                            let x = actual_cx + sign * (cross_half_width + sw) + curve_offset as CoordinateUnit;
-                            if x <= 0 || x >= width - 1 { continue; }
+                            let x = actual_cx
+                                + sign * (cross_half_width + sw)
+                                + curve_offset as CoordinateUnit;
+                            if x <= 0 || x >= width - 1 {
+                                continue;
+                            }
                             let pos = GridVec::new(x, y);
                             if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                                if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand) | Some(Floor::Bridge)) {
+                                if matches!(
+                                    voxel.floor,
+                                    Some(Floor::ShallowWater)
+                                        | Some(Floor::DeepWater)
+                                        | Some(Floor::Beach)
+                                        | Some(Floor::BeachSand)
+                                        | Some(Floor::Bridge)
+                                ) {
                                     continue;
                                 }
-                                if !matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall))
-                                    && !matches!(voxel.floor, Some(Floor::DirtRoad))
+                                if !matches!(
+                                    voxel.props,
+                                    Some(Props::Wall) | Some(Props::StoneWall)
+                                ) && !matches!(voxel.floor, Some(Floor::DirtRoad))
                                 {
                                     voxel.floor = Some(Floor::Sidewalk);
                                     voxel.props = None;
@@ -360,10 +391,19 @@ impl WorldGenPhase for InfrastructurePhase {
                     // Carriage road
                     for hw in -cross_half_width..=cross_half_width {
                         let x = actual_cx + hw + curve_offset as CoordinateUnit;
-                        if x <= 0 || x >= width - 1 { continue; }
+                        if x <= 0 || x >= width - 1 {
+                            continue;
+                        }
                         let pos = GridVec::new(x, y);
                         if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                            if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand) | Some(Floor::Bridge)) {
+                            if matches!(
+                                voxel.floor,
+                                Some(Floor::ShallowWater)
+                                    | Some(Floor::DeepWater)
+                                    | Some(Floor::Beach)
+                                    | Some(Floor::BeachSand)
+                                    | Some(Floor::Bridge)
+                            ) {
                                 continue;
                             }
                             if !matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall)) {
@@ -394,20 +434,30 @@ impl WorldGenPhase for InfrastructurePhase {
                 let gap_count = 3 + (value_noise(ci, 0, gap_seed) * 4.0) as i32;
                 for gi in 0..gap_count {
                     // Random gap start and length.
-                    let gap_start = 10 + (value_noise(ci, gi * 2 + 1, gap_seed) * gap_range as f64) as CoordinateUnit;
-                    let gap_len = 8 + (value_noise(ci, gi * 2 + 2, gap_seed) * 20.0) as CoordinateUnit;
+                    let gap_start = 10
+                        + (value_noise(ci, gi * 2 + 1, gap_seed) * gap_range as f64)
+                            as CoordinateUnit;
+                    let gap_len =
+                        8 + (value_noise(ci, gi * 2 + 2, gap_seed) * 20.0) as CoordinateUnit;
                     let gap_end = (gap_start + gap_len).min(height - 2);
 
                     for y in gap_start..gap_end {
                         // Skip tiles at avenue intersections to preserve connectivity.
-                        let at_avenue = data.avenue_ys.iter().any(|&ay| (y - ay).abs() <= avenue_half_width + 2);
-                        if at_avenue { continue; }
+                        let at_avenue = data
+                            .avenue_ys
+                            .iter()
+                            .any(|&ay| (y - ay).abs() <= avenue_half_width + 2);
+                        if at_avenue {
+                            continue;
+                        }
 
                         let curve_offset = (y as f64 * curve_freq).sin() * curve_amp;
                         // Revert carriage road tiles.
                         for hw in -cross_half_width..=cross_half_width {
                             let x = road_cx + hw + curve_offset as CoordinateUnit;
-                            if x <= 0 || x >= width - 1 { continue; }
+                            if x <= 0 || x >= width - 1 {
+                                continue;
+                            }
                             let pos = GridVec::new(x, y);
                             if let Some(voxel) = map.get_voxel_at_mut(&pos) {
                                 if matches!(voxel.floor, Some(Floor::DirtRoad)) {
@@ -418,8 +468,12 @@ impl WorldGenPhase for InfrastructurePhase {
                         // Revert sidewalk tiles.
                         for sw in 1..=cross_sidewalk_width {
                             for sign in [-1i32, 1] {
-                                let x = road_cx + sign * (cross_half_width + sw) + curve_offset as CoordinateUnit;
-                                if x <= 0 || x >= width - 1 { continue; }
+                                let x = road_cx
+                                    + sign * (cross_half_width + sw)
+                                    + curve_offset as CoordinateUnit;
+                                if x <= 0 || x >= width - 1 {
+                                    continue;
+                                }
                                 let pos = GridVec::new(x, y);
                                 if let Some(voxel) = map.get_voxel_at_mut(&pos) {
                                     if matches!(voxel.floor, Some(Floor::Sidewalk)) {
@@ -450,10 +504,15 @@ impl WorldGenPhase for InfrastructurePhase {
                 let center_y = ay + curve_offset as CoordinateUnit;
                 for hw in -road_band..=road_band {
                     let y = center_y + hw;
-                    if y <= 0 || y >= height - 1 { continue; }
+                    if y <= 0 || y >= height - 1 {
+                        continue;
+                    }
                     let pos = GridVec::new(x, y);
                     if let Some(voxel) = map.get_voxel_at(&pos) {
-                        if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)) {
+                        if matches!(
+                            voxel.floor,
+                            Some(Floor::ShallowWater) | Some(Floor::DeepWater)
+                        ) {
                             crosses_water[x as usize] = true;
                             break;
                         }
@@ -464,15 +523,24 @@ impl WorldGenPhase for InfrastructurePhase {
             // road band so the bridge is road-width, not river-width.
             // Replace water and beach sand tiles so bridges have a clean surface.
             for x in 1..width - 1 {
-                if !crosses_water[x as usize] { continue; }
+                if !crosses_water[x as usize] {
+                    continue;
+                }
                 let curve_offset = (x as f64 * curve_freq).sin() * curve_amp;
                 let center_y = ay + curve_offset as CoordinateUnit;
                 for hw in -road_band..=road_band {
                     let y = center_y + hw;
-                    if y <= 0 || y >= height - 1 { continue; }
+                    if y <= 0 || y >= height - 1 {
+                        continue;
+                    }
                     let pos = GridVec::new(x, y);
                     if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                        if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::BeachSand)) {
+                        if matches!(
+                            voxel.floor,
+                            Some(Floor::ShallowWater)
+                                | Some(Floor::DeepWater)
+                                | Some(Floor::BeachSand)
+                        ) {
                             voxel.floor = Some(Floor::Bridge);
                             voxel.props = None;
                         }
@@ -491,16 +559,23 @@ impl WorldGenPhase for InfrastructurePhase {
                 for x in 1..width - 1 {
                     let pos = GridVec::new(x, y);
                     if let Some(voxel) = map.get_voxel_at(&pos) {
-                        if !matches!(voxel.floor, Some(Floor::BeachSand)) { continue; }
+                        if !matches!(voxel.floor, Some(Floor::BeachSand)) {
+                            continue;
+                        }
                         let near_bridge = pos.cardinal_neighbors().iter().any(|n| {
-                            map.get_voxel_at(n).is_some_and(|v| matches!(v.floor, Some(Floor::Bridge)))
+                            map.get_voxel_at(n)
+                                .is_some_and(|v| matches!(v.floor, Some(Floor::Bridge)))
                         });
                         if near_bridge {
                             // Deterministic choice: use value_noise to pick Dirt, Gravel, or Sidewalk
                             let n = value_noise(x, y, seed.wrapping_add(88888));
-                            let floor = if n < 0.33 { Floor::Dirt }
-                                else if n < 0.66 { Floor::Gravel }
-                                else { Floor::Sidewalk };
+                            let floor = if n < 0.33 {
+                                Floor::Dirt
+                            } else if n < 0.66 {
+                                Floor::Gravel
+                            } else {
+                                Floor::Sidewalk
+                            };
                             to_fill.push((pos, floor));
                         }
                     }
@@ -527,7 +602,10 @@ impl WorldGenPhase for InfrastructurePhase {
                     // Check if adjacent to a non-road tile
                     let adjacent_non_road = pos.cardinal_neighbors().iter().any(|n| {
                         map.get_voxel_at(n).is_some_and(|v| {
-                            !matches!(v.floor, Some(Floor::DirtRoad) | Some(Floor::Sidewalk) | Some(Floor::Bridge))
+                            !matches!(
+                                v.floor,
+                                Some(Floor::DirtRoad) | Some(Floor::Sidewalk) | Some(Floor::Bridge)
+                            )
                         })
                     });
                     if adjacent_non_road {
@@ -542,7 +620,10 @@ impl WorldGenPhase for InfrastructurePhase {
             for x in 0..map.width {
                 let pos = GridVec::new(x, y);
                 if let Some(voxel) = map.get_voxel_at(&pos) {
-                    if matches!(voxel.floor, Some(Floor::DirtRoad) | Some(Floor::Sidewalk) | Some(Floor::Bridge)) {
+                    if matches!(
+                        voxel.floor,
+                        Some(Floor::DirtRoad) | Some(Floor::Sidewalk) | Some(Floor::Bridge)
+                    ) {
                         map.occupancy[x as usize][y as usize] = true;
                     }
                 }
@@ -572,7 +653,6 @@ impl WorldGenPhase for RailroadPhase {
 struct BuildingPhase;
 
 impl WorldGenPhase for BuildingPhase {
-
     fn execute(
         &self,
         map: &mut GameMap,
@@ -582,8 +662,12 @@ impl WorldGenPhase for BuildingPhase {
         seed: NoiseSeed,
     ) {
         let (buildings, parks, open_lots) = generate_buildings_bsp(
-            width, height, seed,
-            &data.avenue_ys, &data.cross_xs, data.avenue_half_width,
+            width,
+            height,
+            seed,
+            &data.avenue_ys,
+            &data.cross_xs,
+            data.avenue_half_width,
             data.cross_half_width,
         );
         data.buildings = buildings;
@@ -605,7 +689,14 @@ impl WorldGenPhase for BuildingPhase {
             // DirtRoad, ShallowWater, DeepWater, and BeachSand.
             let on_excluded = check_points.iter().any(|p| {
                 map.get_voxel_at(p).is_some_and(|v| {
-                    matches!(v.floor, Some(Floor::DirtRoad) | Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand))
+                    matches!(
+                        v.floor,
+                        Some(Floor::DirtRoad)
+                            | Some(Floor::ShallowWater)
+                            | Some(Floor::DeepWater)
+                            | Some(Floor::Beach)
+                            | Some(Floor::BeachSand)
+                    )
                 })
             });
             if on_excluded {
@@ -626,7 +717,13 @@ impl WorldGenPhase for BuildingPhase {
             .iter()
             .map(|&i| {
                 let b = &data.buildings[i];
-                Building { x: b.x, y: b.y, w: b.w, h: b.h, kind: b.kind }
+                Building {
+                    x: b.x,
+                    y: b.y,
+                    w: b.w,
+                    h: b.h,
+                    kind: b.kind,
+                }
             })
             .collect();
         data.buildings = new_buildings;
@@ -639,8 +736,16 @@ impl WorldGenPhase for BuildingPhase {
                 (py..py + ph).any(|ry| {
                     let p = GridVec::new(rx, ry);
                     map.get_voxel_at(&p).is_some_and(|v| {
-                        matches!(v.floor, Some(Floor::DirtRoad) | Some(Floor::Sidewalk) | Some(Floor::Bridge)
-                            | Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand))
+                        matches!(
+                            v.floor,
+                            Some(Floor::DirtRoad)
+                                | Some(Floor::Sidewalk)
+                                | Some(Floor::Bridge)
+                                | Some(Floor::ShallowWater)
+                                | Some(Floor::DeepWater)
+                                | Some(Floor::Beach)
+                                | Some(Floor::BeachSand)
+                        )
                     })
                 })
             });
@@ -690,7 +795,6 @@ impl WorldGenPhase for BuildingPhase {
 struct LandmarkPhase;
 
 impl WorldGenPhase for LandmarkPhase {
-
     fn execute(
         &self,
         map: &mut GameMap,
@@ -721,7 +825,6 @@ impl WorldGenPhase for LandmarkPhase {
 struct DetailPhase;
 
 impl WorldGenPhase for DetailPhase {
-
     fn execute(
         &self,
         map: &mut GameMap,
@@ -751,7 +854,6 @@ impl WorldGenPhase for DetailPhase {
 struct FinalizationPhase;
 
 impl WorldGenPhase for FinalizationPhase {
-
     fn execute(
         &self,
         map: &mut GameMap,
@@ -761,13 +863,22 @@ impl WorldGenPhase for FinalizationPhase {
         _seed: NoiseSeed,
     ) {
         // Post-pass coherence: verify every building can reach the main street
-        check_connectivity(map, &data.buildings, &data.avenue_ys, &data.cross_xs, width, height);
+        check_connectivity(
+            map,
+            &data.buildings,
+            &data.avenue_ys,
+            &data.cross_xs,
+            width,
+            height,
+        );
 
         // Clear around default spawn point. If SPAWN_POINT is outside the map
         // (common on smaller maps), fall back to the map center so the
         // central area is always walkable.
-        let local_spawn = if SPAWN_POINT.x >= 0 && SPAWN_POINT.x < width
-            && SPAWN_POINT.y >= 0 && SPAWN_POINT.y < height
+        let local_spawn = if SPAWN_POINT.x >= 0
+            && SPAWN_POINT.x < width
+            && SPAWN_POINT.y >= 0
+            && SPAWN_POINT.y < height
         {
             SPAWN_POINT
         } else {
@@ -785,7 +896,13 @@ impl WorldGenPhase for FinalizationPhase {
             for x in 0..width {
                 let pos = GridVec::new(x, y);
                 if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                    if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand)) {
+                    if matches!(
+                        voxel.floor,
+                        Some(Floor::ShallowWater)
+                            | Some(Floor::DeepWater)
+                            | Some(Floor::Beach)
+                            | Some(Floor::BeachSand)
+                    ) {
                         voxel.props = None;
                     }
                 }
@@ -814,10 +931,21 @@ impl GameMap {
         let mut last_map = None;
         let mut last_reason = String::new();
         for attempt in 0..=MAX_RETRIES {
-            let current_seed = if attempt == 0 { seed } else { seed.wrapping_add(attempt as u64 * 7919) };
+            let current_seed = if attempt == 0 {
+                seed
+            } else {
+                seed.wrapping_add(attempt as u64 * 7919)
+            };
             let (map, data) = Self::generate_with_seed(width, height, current_seed);
 
-            match verify_world(&map, &data.buildings, &data.avenue_ys, &data.cross_xs, width, height) {
+            match verify_world(
+                &map,
+                &data.buildings,
+                &data.avenue_ys,
+                &data.cross_xs,
+                width,
+                height,
+            ) {
                 Ok(()) => return map,
                 Err(reason) => {
                     // Silently retry — no diagnostic text should reach the player.
@@ -917,7 +1045,13 @@ impl GameMap {
                 if ix >= 0 && ix < self.width && iy >= 0 && iy < self.height {
                     let pos = GridVec::new(ix, iy);
                     if let Some(voxel) = self.get_voxel_at(&pos) {
-                        if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand)) {
+                        if matches!(
+                            voxel.floor,
+                            Some(Floor::ShallowWater)
+                                | Some(Floor::DeepWater)
+                                | Some(Floor::Beach)
+                                | Some(Floor::BeachSand)
+                        ) {
                             return true;
                         }
                     }
@@ -936,9 +1070,13 @@ impl GameMap {
                 if ix >= 0 && ix < self.width && iy >= 0 && iy < self.height {
                     let pos = GridVec::new(ix, iy);
                     if let Some(voxel) = self.get_voxel_at(&pos) {
-                        if matches!(voxel.floor,
-                            Some(Floor::DirtRoad) | Some(Floor::ShallowWater)
-                            | Some(Floor::DeepWater) | Some(Floor::BeachSand)) {
+                        if matches!(
+                            voxel.floor,
+                            Some(Floor::DirtRoad)
+                                | Some(Floor::ShallowWater)
+                                | Some(Floor::DeepWater)
+                                | Some(Floor::BeachSand)
+                        ) {
                             return true;
                         }
                     }
@@ -953,26 +1091,20 @@ impl GameMap {
     /// items fly over water. Use `is_water()` for NPC/player movement checks.
     #[inline]
     pub fn is_passable(&self, point: &MyPoint) -> bool {
-        self.get_voxel_at(point)
-            .is_some_and(|v| {
-                match &v.props {
-                    Some(f) => !f.blocks_movement(),
-                    None => true,
-                }
-            })
+        self.get_voxel_at(point).is_some_and(|v| match &v.props {
+            Some(f) => !f.blocks_movement(),
+            None => true,
+        })
     }
 
     /// Returns `true` if a projectile can pass through this tile.
     /// Windows allow projectiles through even though they block movement.
     #[inline]
     pub fn is_passable_for_projectiles(&self, point: &MyPoint) -> bool {
-        self.get_voxel_at(point)
-            .is_some_and(|v| {
-                match &v.props {
-                    Some(f) => !f.blocks_projectiles(),
-                    None => true,
-                }
-            })
+        self.get_voxel_at(point).is_some_and(|v| match &v.props {
+            Some(f) => !f.blocks_projectiles(),
+            None => true,
+        })
     }
 
     /// Returns `true` if the tile at `point` is shallow or deep water.
@@ -985,11 +1117,16 @@ impl GameMap {
     /// Returns `true` if the tile is suitable for spawning an entity:
     /// passable, no props, and not fire or water.
     pub fn is_spawnable(&self, point: &MyPoint) -> bool {
-        if !self.is_passable(point) { return false; }
+        if !self.is_passable(point) {
+            return false;
+        }
         match self.get_voxel_at(point) {
             Some(v) => {
                 v.props.is_none()
-                    && !matches!(v.floor, Some(Floor::Fire) | Some(Floor::DeepWater) | Some(Floor::ShallowWater))
+                    && !matches!(
+                        v.floor,
+                        Some(Floor::Fire) | Some(Floor::DeepWater) | Some(Floor::ShallowWater)
+                    )
             }
             None => false,
         }
@@ -1001,7 +1138,9 @@ impl GameMap {
         for r in 0..=radius {
             for dy in -r..=r {
                 for dx in -r..=r {
-                    if dx.abs() != r && dy.abs() != r { continue; } // only ring perimeter
+                    if dx.abs() != r && dy.abs() != r {
+                        continue;
+                    } // only ring perimeter
                     let pos = center + GridVec::new(dx, dy);
                     if self.is_spawnable(&pos) {
                         return Some(pos);
@@ -1020,16 +1159,28 @@ impl GameMap {
         let search_radius = 40;
         let sx = SPAWN_POINT.x;
         let sy = SPAWN_POINT.y;
-        for y in sy.saturating_sub(search_radius).max(1)..=(sy + search_radius).min(self.height - 2) {
-            for x in sx.saturating_sub(search_radius).max(1)..=(sx + search_radius).min(self.width - 2) {
+        for y in sy.saturating_sub(search_radius).max(1)..=(sy + search_radius).min(self.height - 2)
+        {
+            for x in
+                sx.saturating_sub(search_radius).max(1)..=(sx + search_radius).min(self.width - 2)
+            {
                 let pos = GridVec::new(x, y);
                 if let Some(voxel) = self.get_voxel_at(&pos)
                     && voxel.props.is_none()
-                    && matches!(voxel.floor, Some(Floor::Dirt) | Some(Floor::DirtRoad) | Some(Floor::Sand) | Some(Floor::Gravel) | Some(Floor::Grass) | Some(Floor::Sidewalk))
+                    && matches!(
+                        voxel.floor,
+                        Some(Floor::Dirt)
+                            | Some(Floor::DirtRoad)
+                            | Some(Floor::Sand)
+                            | Some(Floor::Gravel)
+                            | Some(Floor::Grass)
+                            | Some(Floor::Sidewalk)
+                    )
                 {
                     // Check if there's an adjacent wall (meaning we're just outside a building)
                     let has_adjacent_wall = pos.cardinal_neighbors().iter().any(|n| {
-                        self.get_voxel_at(n).is_some_and(|v| v.props.as_ref().is_some_and(|p| p.is_wall()))
+                        self.get_voxel_at(n)
+                            .is_some_and(|v| v.props.as_ref().is_some_and(|p| p.is_wall()))
                     });
                     if has_adjacent_wall {
                         return Some(pos);
@@ -1047,15 +1198,21 @@ impl GameMap {
         for r in 0..=radius {
             for dy in -r..=r {
                 for dx in -r..=r {
-                    if dx.abs() != r && dy.abs() != r { continue; }
+                    if dx.abs() != r && dy.abs() != r {
+                        continue;
+                    }
                     let pos = center + GridVec::new(dx, dy);
                     if let Some(voxel) = self.get_voxel_at(&pos)
                         && voxel.props.is_none()
-                        && matches!(voxel.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor))
+                        && matches!(
+                            voxel.floor,
+                            Some(Floor::WoodPlanks) | Some(Floor::StoneFloor)
+                        )
                     {
                         // Confirm there's an adjacent wall (inside a building)
                         let has_wall = pos.cardinal_neighbors().iter().any(|n| {
-                            self.get_voxel_at(n).is_some_and(|v| v.props.as_ref().is_some_and(|p| p.is_wall()))
+                            self.get_voxel_at(n)
+                                .is_some_and(|v| v.props.as_ref().is_some_and(|p| p.is_wall()))
                         });
                         if has_wall {
                             return Some(pos);
@@ -1138,7 +1295,12 @@ impl GameMap {
     }
 
     /// Returns which chunk coordinates overlap the given viewport.
-    pub fn active_chunks(&self, center: &GridVec, render_width: u16, render_height: u16) -> Vec<(CoordinateUnit, CoordinateUnit)> {
+    pub fn active_chunks(
+        &self,
+        center: &GridVec,
+        render_width: u16,
+        render_height: u16,
+    ) -> Vec<(CoordinateUnit, CoordinateUnit)> {
         let w_radius = render_width as CoordinateUnit / 2;
         let h_radius = render_height as CoordinateUnit / 2;
         let min_x = (center.x - w_radius).div_euclid(CHUNK_SIZE);
@@ -1234,7 +1396,14 @@ struct BspNode {
 
 impl BspNode {
     fn new(x: CoordinateUnit, y: CoordinateUnit, w: CoordinateUnit, h: CoordinateUnit) -> Self {
-        Self { x, y, w, h, left: None, right: None }
+        Self {
+            x,
+            y,
+            w,
+            h,
+            left: None,
+            right: None,
+        }
     }
 
     fn is_leaf(&self) -> bool {
@@ -1270,7 +1439,11 @@ impl BspNode {
             seed.wrapping_add(depth as u64 * 7919),
         );
         let split_horizontal = if can_split_h && can_split_v {
-            if self.h > self.w { noise < 0.7 } else { noise < 0.3 }
+            if self.h > self.w {
+                noise < 0.7
+            } else {
+                noise < 0.3
+            }
         } else {
             can_split_h
         };
@@ -1285,17 +1458,12 @@ impl BspNode {
             let mut split_y = mid_y;
             // Bias toward nearest avenue so buildings face roads.
             for &ay in avenue_ys {
-                if ay >= min_y && ay <= max_y
-                    && (ay - mid_y).abs() < (split_y - mid_y).abs() + 8
-                {
+                if ay >= min_y && ay <= max_y && (ay - mid_y).abs() < (split_y - mid_y).abs() + 8 {
                     split_y = ay;
                 }
             }
-            let jitter = ((value_noise(
-                self.x,
-                self.y,
-                seed.wrapping_add(33333 + depth as u64),
-            ) - 0.5)
+            let jitter = ((value_noise(self.x, self.y, seed.wrapping_add(33333 + depth as u64))
+                - 0.5)
                 * 6.0) as CoordinateUnit;
             split_y = (split_y + jitter).clamp(min_y, max_y);
 
@@ -1315,17 +1483,12 @@ impl BspNode {
             let mid_x = self.x + self.w / 2;
             let mut split_x = mid_x;
             for &cx in cross_xs {
-                if cx >= min_x && cx <= max_x
-                    && (cx - mid_x).abs() < (split_x - mid_x).abs() + 8
-                {
+                if cx >= min_x && cx <= max_x && (cx - mid_x).abs() < (split_x - mid_x).abs() + 8 {
                     split_x = cx;
                 }
             }
-            let jitter = ((value_noise(
-                self.y,
-                self.x,
-                seed.wrapping_add(44444 + depth as u64),
-            ) - 0.5)
+            let jitter = ((value_noise(self.y, self.x, seed.wrapping_add(44444 + depth as u64))
+                - 0.5)
                 * 6.0) as CoordinateUnit;
             split_x = (split_x + jitter).clamp(min_x, max_x);
 
@@ -1334,8 +1497,7 @@ impl BspNode {
             let right_w = (self.x + self.w) - right_x;
             if left_w >= BSP_MIN_LEAF_W && right_w >= BSP_MIN_LEAF_W {
                 self.left = Some(Box::new(BspNode::new(self.x, self.y, left_w, self.h)));
-                self.right =
-                    Some(Box::new(BspNode::new(right_x, self.y, right_w, self.h)));
+                self.right = Some(Box::new(BspNode::new(right_x, self.y, right_w, self.h)));
             }
         }
 
@@ -1350,7 +1512,12 @@ impl BspNode {
     /// Collect all leaf rectangles into a flat vector.
     fn collect_leaves(
         &self,
-        out: &mut Vec<(CoordinateUnit, CoordinateUnit, CoordinateUnit, CoordinateUnit)>,
+        out: &mut Vec<(
+            CoordinateUnit,
+            CoordinateUnit,
+            CoordinateUnit,
+            CoordinateUnit,
+        )>,
     ) {
         if self.is_leaf() {
             out.push((self.x, self.y, self.w, self.h));
@@ -1410,31 +1577,81 @@ fn assign_zone(
 fn zone_building_kind(zone: u32, noise: f64) -> u32 {
     match zone {
         ZONE_COMMERCIAL => {
-            if noise < 0.20 { 1 }       // Saloon
-            else if noise < 0.40 { 3 }   // General Store
-            else if noise < 0.55 { 7 }   // Bank
-            else if noise < 0.70 { 4 }   // Police Station
-            else if noise < 0.85 { 5 }   // Post Office
-            else { 9 }                    // Jail
+            if noise < 0.20 {
+                1
+            }
+            // Saloon
+            else if noise < 0.40 {
+                3
+            }
+            // General Store
+            else if noise < 0.55 {
+                7
+            }
+            // Bank
+            else if noise < 0.70 {
+                4
+            }
+            // Police Station
+            else if noise < 0.85 {
+                5
+            }
+            // Post Office
+            else {
+                9
+            } // Jail
         }
         ZONE_RESIDENTIAL => {
-            if noise < 0.50 { 0 }        // House
-            else if noise < 0.70 { 6 }   // Church
-            else if noise < 0.85 { 8 }   // Hotel
-            else { 5 }                    // Post Office
+            if noise < 0.50 {
+                0
+            }
+            // House
+            else if noise < 0.70 {
+                6
+            }
+            // Church
+            else if noise < 0.85 {
+                8
+            }
+            // Hotel
+            else {
+                5
+            } // Post Office
         }
         ZONE_INDUSTRIAL => {
-            if noise < 0.30 { 2 }        // Stable
-            else if noise < 0.55 { 11 }  // Blacksmith
-            else if noise < 0.75 { 3 }   // General Store
-            else { 10 }                   // Undertaker
+            if noise < 0.30 {
+                2
+            }
+            // Stable
+            else if noise < 0.55 {
+                11
+            }
+            // Blacksmith
+            else if noise < 0.75 {
+                3
+            }
+            // General Store
+            else {
+                10
+            } // Undertaker
         }
         // Mixed / catch-all: saloons, hotels.
         _ => {
-            if noise < 0.35 { 1 }        // Saloon
-            else if noise < 0.60 { 8 }   // Hotel
-            else if noise < 0.80 { 0 }   // House
-            else { 1 }                    // Saloon
+            if noise < 0.35 {
+                1
+            }
+            // Saloon
+            else if noise < 0.60 {
+                8
+            }
+            // Hotel
+            else if noise < 0.80 {
+                0
+            }
+            // House
+            else {
+                1
+            } // Saloon
         }
     }
 }
@@ -1464,14 +1681,26 @@ fn pre_place_landmark_anchors(
         .clamp(8, width - 20);
     let sy = (center_y - 4 + (value_noise(2, 2, anchor_seed) * 6.0) as CoordinateUnit)
         .clamp(8, height - 16);
-    anchors.push(Building { x: sx, y: sy, w: 12, h: 10, kind: 4 });
+    anchors.push(Building {
+        x: sx,
+        y: sy,
+        w: 12,
+        h: 10,
+        kind: 4,
+    });
 
     // Saloon on the main street corner
     if let Some(&first_avenue) = avenue_ys.first() {
         let sal_x = (center_x + 20 + (value_noise(3, 3, anchor_seed) * 10.0) as CoordinateUnit)
             .clamp(8, width - 22);
         let sal_y = (first_avenue + 6).clamp(8, height - 14);
-        anchors.push(Building { x: sal_x, y: sal_y, w: 14, h: 10, kind: 1 });
+        anchors.push(Building {
+            x: sal_x,
+            y: sal_y,
+            w: 14,
+            h: 10,
+            kind: 1,
+        });
     }
 
     // Church toward the outskirts
@@ -1479,15 +1708,27 @@ fn pre_place_landmark_anchors(
         .clamp(8, width - 16);
     let cy = (height / 4 + (value_noise(6, 6, anchor_seed) * 10.0) as CoordinateUnit)
         .clamp(8, height - 14);
-    anchors.push(Building { x: cx, y: cy, w: 12, h: 10, kind: 6 });
+    anchors.push(Building {
+        x: cx,
+        y: cy,
+        w: 12,
+        h: 10,
+        kind: 6,
+    });
 
     anchors
 }
 
 /// AABB overlap test between two rectangles.
 fn rects_overlap(
-    ax: CoordinateUnit, ay: CoordinateUnit, aw: CoordinateUnit, ah: CoordinateUnit,
-    bx: CoordinateUnit, by: CoordinateUnit, bw: CoordinateUnit, bh: CoordinateUnit,
+    ax: CoordinateUnit,
+    ay: CoordinateUnit,
+    aw: CoordinateUnit,
+    ah: CoordinateUnit,
+    bx: CoordinateUnit,
+    by: CoordinateUnit,
+    bw: CoordinateUnit,
+    bh: CoordinateUnit,
 ) -> bool {
     ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by
 }
@@ -1507,10 +1748,18 @@ struct LotRect {
 }
 
 impl LotRect {
-    fn right(self) -> CoordinateUnit { self.x + self.w }
-    fn bot(self)   -> CoordinateUnit { self.y + self.h }
-    fn cx(self)    -> CoordinateUnit { self.x + self.w / 2 }
-    fn cy(self)    -> CoordinateUnit { self.y + self.h / 2 }
+    fn right(self) -> CoordinateUnit {
+        self.x + self.w
+    }
+    fn bot(self) -> CoordinateUnit {
+        self.y + self.h
+    }
+    fn cx(self) -> CoordinateUnit {
+        self.x + self.w / 2
+    }
+    fn cy(self) -> CoordinateUnit {
+        self.y + self.h / 2
+    }
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -1552,7 +1801,12 @@ const PARK_NOISE_THRESHOLD: f64 = 0.10;
 /// already-placed footprint.
 #[inline]
 fn overlaps_placed(
-    placed: &[(CoordinateUnit, CoordinateUnit, CoordinateUnit, CoordinateUnit)],
+    placed: &[(
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+    )],
     bx: CoordinateUnit,
     by: CoordinateUnit,
     bw: CoordinateUnit,
@@ -1560,25 +1814,34 @@ fn overlaps_placed(
     margin: CoordinateUnit,
 ) -> bool {
     placed.iter().any(|&(px, py, pw, ph)| {
-        rects_overlap(bx - margin, by - margin, bw + margin * 2, bh + margin * 2, px, py, pw, ph)
+        rects_overlap(
+            bx - margin,
+            by - margin,
+            bw + margin * 2,
+            bh + margin * 2,
+            px,
+            py,
+            pw,
+            ph,
+        )
     })
 }
 
 /// Selects the building kind for a given world position.
 #[inline]
 fn pick_kind(
-    cx:         CoordinateUnit,
-    cy:         CoordinateUnit,
-    noise_x:    i32,
-    noise_y:    i32,
+    cx: CoordinateUnit,
+    cy: CoordinateUnit,
+    noise_x: i32,
+    noise_y: i32,
     noise_seed: NoiseSeed,
-    width:      CoordinateUnit,
-    height:     CoordinateUnit,
-    avenue_ys:  &[CoordinateUnit],
-    seed:       NoiseSeed,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    avenue_ys: &[CoordinateUnit],
+    seed: NoiseSeed,
 ) -> u32 {
     let zone = assign_zone(cx, cy, width, height, avenue_ys, seed);
-    let kn   = value_noise(noise_x, noise_y, noise_seed);
+    let kn = value_noise(noise_x, noise_y, noise_seed);
     zone_building_kind(zone, kn).min(BUILDING_TYPE_COUNT - 1)
 }
 
@@ -1586,30 +1849,45 @@ fn pick_kind(
 /// overlap check. Returns `true` on success.
 #[inline]
 fn try_place(
-    bx:      CoordinateUnit,
-    by:      CoordinateUnit,
-    bw:      CoordinateUnit,
-    bh:      CoordinateUnit,
+    bx: CoordinateUnit,
+    by: CoordinateUnit,
+    bw: CoordinateUnit,
+    bh: CoordinateUnit,
     min_dim: CoordinateUnit,
-    kind:    u32,
-    placed:  &mut Vec<(CoordinateUnit, CoordinateUnit, CoordinateUnit, CoordinateUnit)>,
-    out:     &mut Vec<Building>,
+    kind: u32,
+    placed: &mut Vec<(
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+    )>,
+    out: &mut Vec<Building>,
 ) -> bool {
-    if bw < min_dim || bh < min_dim { return false; }
-    if overlaps_placed(placed, bx, by, bw, bh, GAP) { return false; }
+    if bw < min_dim || bh < min_dim {
+        return false;
+    }
+    if overlaps_placed(placed, bx, by, bw, bh, GAP) {
+        return false;
+    }
     placed.push((bx, by, bw, bh));
-    out.push(Building { x: bx, y: by, w: bw, h: bh, kind });
+    out.push(Building {
+        x: bx,
+        y: by,
+        w: bw,
+        h: bh,
+        kind,
+    });
     true
 }
 
 /// Derives the inner lot boundary from a pair of boundary coordinates.
 fn lot_inner(
-    lo:         CoordinateUnit,
-    hi:         CoordinateUnit,
+    lo: CoordinateUnit,
+    hi: CoordinateUnit,
     lo_is_road: bool,
     hi_is_road: bool,
     half_width: CoordinateUnit,
-    sidewalk:   CoordinateUnit,
+    sidewalk: CoordinateUnit,
 ) -> (CoordinateUnit, CoordinateUnit) {
     let inner_lo = if lo_is_road {
         lo + half_width + sidewalk + 1 + ROAD_EDGE_BUFFER
@@ -1627,35 +1905,46 @@ fn lot_inner(
 /// Computes the `LotRect` for grid cell `(xi, yi)`. Returns `None` if the
 /// resulting lot is below `LOT_MIN_DIM`.
 fn compute_lot(
-    xi:                usize,
-    yi:                usize,
-    x_bounds:          &[CoordinateUnit],
-    y_bounds:          &[CoordinateUnit],
-    avenue_set:        &HashSet<CoordinateUnit>,
-    cross_set:         &HashSet<CoordinateUnit>,
+    xi: usize,
+    yi: usize,
+    x_bounds: &[CoordinateUnit],
+    y_bounds: &[CoordinateUnit],
+    avenue_set: &HashSet<CoordinateUnit>,
+    cross_set: &HashSet<CoordinateUnit>,
     avenue_half_width: CoordinateUnit,
-    cross_half_width:  CoordinateUnit,
+    cross_half_width: CoordinateUnit,
 ) -> Option<LotRect> {
     const SIDEWALK: CoordinateUnit = 1;
 
     let (lot_left, lot_right) = lot_inner(
-        x_bounds[xi], x_bounds[xi + 1],
+        x_bounds[xi],
+        x_bounds[xi + 1],
         cross_set.contains(&x_bounds[xi]),
         cross_set.contains(&x_bounds[xi + 1]),
-        cross_half_width, SIDEWALK,
+        cross_half_width,
+        SIDEWALK,
     );
     let (lot_top, lot_bot) = lot_inner(
-        y_bounds[yi], y_bounds[yi + 1],
+        y_bounds[yi],
+        y_bounds[yi + 1],
         avenue_set.contains(&y_bounds[yi]),
         avenue_set.contains(&y_bounds[yi + 1]),
-        avenue_half_width, SIDEWALK,
+        avenue_half_width,
+        SIDEWALK,
     );
 
     let w = lot_right - lot_left;
-    let h = lot_bot   - lot_top;
-    if w < LOT_MIN_DIM || h < LOT_MIN_DIM { return None; }
+    let h = lot_bot - lot_top;
+    if w < LOT_MIN_DIM || h < LOT_MIN_DIM {
+        return None;
+    }
 
-    Some(LotRect { x: lot_left, y: lot_top, w, h })
+    Some(LotRect {
+        x: lot_left,
+        y: lot_top,
+        w,
+        h,
+    })
 }
 
 // ── Per-lot two-phase placement ────────────────────────────────────────────────
@@ -1678,22 +1967,27 @@ fn compute_lot(
 ///  │        BOTTOM           │
 ///  └─────────────────────────┘
 fn place_lot_buildings(
-    lot:       LotRect,
-    lot_seed:  NoiseSeed,
-    placed:    &mut Vec<(CoordinateUnit, CoordinateUnit, CoordinateUnit, CoordinateUnit)>,
-    out:       &mut Vec<Building>,
-    width:     CoordinateUnit,
-    height:    CoordinateUnit,
+    lot: LotRect,
+    lot_seed: NoiseSeed,
+    placed: &mut Vec<(
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+    )>,
+    out: &mut Vec<Building>,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
     avenue_ys: &[CoordinateUnit],
-    seed:      NoiseSeed,
+    seed: NoiseSeed,
 ) {
     // ── Phase 1: anchor ───────────────────────────────────────────────
     // Size the anchor at 55–80% of the lot in each axis. The two axes use
     // complementary fractions so tall lots get wide anchors and vice versa,
     // producing natural variety rather than a uniform aspect ratio.
-    let size_n  = value_noise(lot.cx(), lot.cy(), lot_seed.wrapping_add(1111));
-    let frac_w  = 0.48 + size_n * 0.20;
-    let frac_h  = 0.48 + (1.0 - size_n) * 0.20;
+    let size_n = value_noise(lot.cx(), lot.cy(), lot_seed.wrapping_add(1111));
+    let frac_w = 0.48 + size_n * 0.20;
+    let frac_h = 0.48 + (1.0 - size_n) * 0.20;
 
     let anchor_w = ((lot.w as f64 * frac_w) as CoordinateUnit)
         .max(ANCHOR_MIN_DIM)
@@ -1704,23 +1998,39 @@ fn place_lot_buildings(
 
     if anchor_w < ANCHOR_MIN_DIM || anchor_h < ANCHOR_MIN_DIM {
         // Lot too small for an anchor — fill the whole thing as one small building.
-        let kind = pick_kind(lot.cx(), lot.cy(), lot.x, lot.y,
-            lot_seed, width, height, avenue_ys, seed);
-        try_place(lot.x + GAP, lot.y + GAP,
-            lot.w.saturating_sub(GAP * 2), lot.h.saturating_sub(GAP * 2),
-            FILLER_MIN_DIM, kind, placed, out);
+        let kind = pick_kind(
+            lot.cx(),
+            lot.cy(),
+            lot.x,
+            lot.y,
+            lot_seed,
+            width,
+            height,
+            avenue_ys,
+            seed,
+        );
+        try_place(
+            lot.x + GAP,
+            lot.y + GAP,
+            lot.w.saturating_sub(GAP * 2),
+            lot.h.saturating_sub(GAP * 2),
+            FILLER_MIN_DIM,
+            kind,
+            placed,
+            out,
+        );
         return;
     }
 
     // Centre the anchor with a noise-driven jitter (up to ⅓ of the free margin
     // on each axis) so lots don't all look stamped from the same template.
-    let jitter_n        = value_noise(lot.x, lot.y, lot_seed.wrapping_add(2222));
-    let free_x          = lot.w.saturating_sub(anchor_w).saturating_sub(GAP * 2);
-    let free_y          = lot.h.saturating_sub(anchor_h).saturating_sub(GAP * 2);
-    let jitter_range_x  = free_x / 3;
-    let jitter_range_y  = free_y / 3;
-    let jitter_x = ((jitter_n * (jitter_range_x * 2) as f64) as CoordinateUnit)
-        .saturating_sub(jitter_range_x);
+    let jitter_n = value_noise(lot.x, lot.y, lot_seed.wrapping_add(2222));
+    let free_x = lot.w.saturating_sub(anchor_w).saturating_sub(GAP * 2);
+    let free_y = lot.h.saturating_sub(anchor_h).saturating_sub(GAP * 2);
+    let jitter_range_x = free_x / 3;
+    let jitter_range_y = free_y / 3;
+    let jitter_x =
+        ((jitter_n * (jitter_range_x * 2) as f64) as CoordinateUnit).saturating_sub(jitter_range_x);
     let jitter_y = (((1.0 - jitter_n) * (jitter_range_y * 2) as f64) as CoordinateUnit)
         .saturating_sub(jitter_range_y);
 
@@ -1731,19 +2041,45 @@ fn place_lot_buildings(
         .max(lot.y + GAP)
         .min(lot.bot().saturating_sub(anchor_h + GAP));
 
-    let anchor_kind = pick_kind(lot.cx(), lot.cy(), lot.x, lot.y,
-        lot_seed.wrapping_add(3333), width, height, avenue_ys, seed);
+    let anchor_kind = pick_kind(
+        lot.cx(),
+        lot.cy(),
+        lot.x,
+        lot.y,
+        lot_seed.wrapping_add(3333),
+        width,
+        height,
+        avenue_ys,
+        seed,
+    );
 
     let anchor_placed = try_place(
-        anchor_x, anchor_y, anchor_w, anchor_h,
-        ANCHOR_MIN_DIM, anchor_kind, placed, out,
+        anchor_x,
+        anchor_y,
+        anchor_w,
+        anchor_h,
+        ANCHOR_MIN_DIM,
+        anchor_kind,
+        placed,
+        out,
     );
 
     // If the anchor couldn't land (overlaps a landmark, etc.) treat the whole
     // lot as a single free strip and try to fit something.
     if !anchor_placed {
-        fill_strip(lot.x, lot.y, lot.w, lot.h,
-            lot_seed.wrapping_add(9999), placed, out, width, height, avenue_ys, seed);
+        fill_strip(
+            lot.x,
+            lot.y,
+            lot.w,
+            lot.h,
+            lot_seed.wrapping_add(9999),
+            placed,
+            out,
+            width,
+            height,
+            avenue_ys,
+            seed,
+        );
         return;
     }
 
@@ -1752,16 +2088,38 @@ fn place_lot_buildings(
     // Top strip — full lot width, above the anchor.
     let top_h = anchor_y - GAP - lot.y;
     if top_h >= FILLER_MIN_DIM {
-        fill_strip(lot.x, lot.y, lot.w, top_h,
-            lot_seed.wrapping_add(4444), placed, out, width, height, avenue_ys, seed);
+        fill_strip(
+            lot.x,
+            lot.y,
+            lot.w,
+            top_h,
+            lot_seed.wrapping_add(4444),
+            placed,
+            out,
+            width,
+            height,
+            avenue_ys,
+            seed,
+        );
     }
 
     // Bottom strip — full lot width, below the anchor.
     let bot_y = anchor_y + anchor_h + GAP;
     let bot_h = lot.bot() - bot_y;
     if bot_h >= FILLER_MIN_DIM {
-        fill_strip(lot.x, bot_y, lot.w, bot_h,
-            lot_seed.wrapping_add(5555), placed, out, width, height, avenue_ys, seed);
+        fill_strip(
+            lot.x,
+            bot_y,
+            lot.w,
+            bot_h,
+            lot_seed.wrapping_add(5555),
+            placed,
+            out,
+            width,
+            height,
+            avenue_ys,
+            seed,
+        );
     }
 
     // Left and right flanks share the anchor's vertical band so the four
@@ -1772,16 +2130,38 @@ fn place_lot_buildings(
     // Left flank — between the top/bottom strips, left of the anchor.
     let left_w = anchor_x - GAP - lot.x;
     if left_w >= FILLER_MIN_DIM && side_h >= FILLER_MIN_DIM {
-        fill_strip(lot.x, side_y, left_w, side_h,
-            lot_seed.wrapping_add(6666), placed, out, width, height, avenue_ys, seed);
+        fill_strip(
+            lot.x,
+            side_y,
+            left_w,
+            side_h,
+            lot_seed.wrapping_add(6666),
+            placed,
+            out,
+            width,
+            height,
+            avenue_ys,
+            seed,
+        );
     }
 
     // Right flank — between the top/bottom strips, right of the anchor.
     let right_x = anchor_x + anchor_w + GAP;
     let right_w = lot.right() - right_x;
     if right_w >= FILLER_MIN_DIM && side_h >= FILLER_MIN_DIM {
-        fill_strip(right_x, side_y, right_w, side_h,
-            lot_seed.wrapping_add(7777), placed, out, width, height, avenue_ys, seed);
+        fill_strip(
+            right_x,
+            side_y,
+            right_w,
+            side_h,
+            lot_seed.wrapping_add(7777),
+            placed,
+            out,
+            width,
+            height,
+            avenue_ys,
+            seed,
+        );
     }
 }
 
@@ -1792,19 +2172,26 @@ fn place_lot_buildings(
 /// The number of segments is determined by how many `FILLER_MIN_DIM`-sized
 /// buildings fit side by side, capped at 3.
 fn fill_strip(
-    sx:         CoordinateUnit,
-    sy:         CoordinateUnit,
-    sw:         CoordinateUnit,
-    sh:         CoordinateUnit,
+    sx: CoordinateUnit,
+    sy: CoordinateUnit,
+    sw: CoordinateUnit,
+    sh: CoordinateUnit,
     strip_seed: NoiseSeed,
-    placed:     &mut Vec<(CoordinateUnit, CoordinateUnit, CoordinateUnit, CoordinateUnit)>,
-    out:        &mut Vec<Building>,
-    width:      CoordinateUnit,
-    height:     CoordinateUnit,
-    avenue_ys:  &[CoordinateUnit],
-    seed:       NoiseSeed,
+    placed: &mut Vec<(
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+    )>,
+    out: &mut Vec<Building>,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    avenue_ys: &[CoordinateUnit],
+    seed: NoiseSeed,
 ) {
-    if sw < FILLER_MIN_DIM || sh < FILLER_MIN_DIM { return; }
+    if sw < FILLER_MIN_DIM || sh < FILLER_MIN_DIM {
+        return;
+    }
 
     // Divide along the longer axis; cap at 3 segments to avoid tiny slivers.
     let segments: CoordinateUnit = if sw >= sh {
@@ -1817,28 +2204,52 @@ fn fill_strip(
         // Horizontal division: `segments` columns.
         let seg_w = sw / segments;
         for s in 0..segments {
-            let bx  = sx + s * seg_w + if s > 0 { GAP } else { 0 };
-            let by  = sy;
-            let bw  = (if s == segments - 1 { sw - s * seg_w } else { seg_w })
-                .saturating_sub(if s < segments - 1 { GAP } else { 0 });
-            let bh  = sh;
-            let kind = pick_kind(bx + bw / 2, by + bh / 2, bx, by,
+            let bx = sx + s * seg_w + if s > 0 { GAP } else { 0 };
+            let by = sy;
+            let bw = (if s == segments - 1 {
+                sw - s * seg_w
+            } else {
+                seg_w
+            })
+            .saturating_sub(if s < segments - 1 { GAP } else { 0 });
+            let bh = sh;
+            let kind = pick_kind(
+                bx + bw / 2,
+                by + bh / 2,
+                bx,
+                by,
                 strip_seed.wrapping_add(s as u64 * 31),
-                width, height, avenue_ys, seed);
+                width,
+                height,
+                avenue_ys,
+                seed,
+            );
             try_place(bx, by, bw, bh, FILLER_MIN_DIM, kind, placed, out);
         }
     } else {
         // Vertical division: `segments` rows.
         let seg_h = sh / segments;
         for s in 0..segments {
-            let bx  = sx;
-            let by  = sy + s * seg_h + if s > 0 { GAP } else { 0 };
-            let bw  = sw;
-            let bh  = (if s == segments - 1 { sh - s * seg_h } else { seg_h })
-                .saturating_sub(if s < segments - 1 { GAP } else { 0 });
-            let kind = pick_kind(bx + bw / 2, by + bh / 2, bx, by,
+            let bx = sx;
+            let by = sy + s * seg_h + if s > 0 { GAP } else { 0 };
+            let bw = sw;
+            let bh = (if s == segments - 1 {
+                sh - s * seg_h
+            } else {
+                seg_h
+            })
+            .saturating_sub(if s < segments - 1 { GAP } else { 0 });
+            let kind = pick_kind(
+                bx + bw / 2,
+                by + bh / 2,
+                bx,
+                by,
                 strip_seed.wrapping_add(s as u64 * 37),
-                width, height, avenue_ys, seed);
+                width,
+                height,
+                avenue_ys,
+                seed,
+            );
             try_place(bx, by, bw, bh, FILLER_MIN_DIM, kind, placed, out);
         }
     }
@@ -1857,64 +2268,105 @@ fn fill_strip(
 ///
 /// Returns `(buildings, parks, open_lots)`.
 fn generate_buildings_bsp(
-    width:             CoordinateUnit,
-    height:            CoordinateUnit,
-    seed:              NoiseSeed,
-    avenue_ys:         &[CoordinateUnit],
-    cross_xs:          &[CoordinateUnit],
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+    avenue_ys: &[CoordinateUnit],
+    cross_xs: &[CoordinateUnit],
     avenue_half_width: CoordinateUnit,
-    cross_half_width:  CoordinateUnit,
+    cross_half_width: CoordinateUnit,
 ) -> (
     Vec<Building>,
-    Vec<(CoordinateUnit, CoordinateUnit, CoordinateUnit, CoordinateUnit)>,
-    Vec<(CoordinateUnit, CoordinateUnit, CoordinateUnit, CoordinateUnit)>,
+    Vec<(
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+    )>,
+    Vec<(
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+    )>,
 ) {
     let mut buildings: Vec<Building> = Vec::new();
-    let mut parks:     Vec<(CoordinateUnit, CoordinateUnit, CoordinateUnit, CoordinateUnit)> = Vec::new();
-    let mut open_lots: Vec<(CoordinateUnit, CoordinateUnit, CoordinateUnit, CoordinateUnit)> = Vec::new();
+    let mut parks: Vec<(
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+    )> = Vec::new();
+    let mut open_lots: Vec<(
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+    )> = Vec::new();
 
     let bsp_seed = seed.wrapping_add(11111);
-    let margin   = (30 as CoordinateUnit).min(width / 8).min(height / 8).max(6);
-    let build_w  = width  - margin * 2;
-    let build_h  = height - margin * 2;
+    let margin = (30 as CoordinateUnit).min(width / 8).min(height / 8).max(6);
+    let build_w = width - margin * 2;
+    let build_h = height - margin * 2;
 
     if build_w < BSP_MIN_LEAF_W || build_h < BSP_MIN_LEAF_H {
         return (buildings, parks, open_lots);
     }
 
-    let mut placed: Vec<(CoordinateUnit, CoordinateUnit, CoordinateUnit, CoordinateUnit)> = Vec::new();
+    let mut placed: Vec<(
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+    )> = Vec::new();
 
     // ── 1. Landmark anchors ───────────────────────────────────────────
     let anchors = pre_place_landmark_anchors(width, height, seed, avenue_ys);
     for a in &anchors {
         placed.push((a.x, a.y, a.w, a.h));
-        buildings.push(Building { x: a.x, y: a.y, w: a.w, h: a.h, kind: a.kind });
+        buildings.push(Building {
+            x: a.x,
+            y: a.y,
+            w: a.w,
+            h: a.h,
+            kind: a.kind,
+        });
     }
 
     // ── 2. BSP tree: one large building or park per leaf ─────────────
     let mut root = BspNode::new(margin, margin, build_w, build_h);
     root.subdivide(bsp_seed, 0, avenue_ys, cross_xs);
 
-    let mut leaves: Vec<(CoordinateUnit, CoordinateUnit, CoordinateUnit, CoordinateUnit)> = Vec::new();
+    let mut leaves: Vec<(
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+    )> = Vec::new();
     root.collect_leaves(&mut leaves);
 
     for (i, &(lx, ly, lw, lh)) in leaves.iter().enumerate() {
         let leaf_cx = lx + lw / 2;
         let leaf_cy = ly + lh / 2;
 
-        let on_avenue = avenue_ys.iter().any(|&ay| {
-            ly < ay + avenue_half_width + 1 && ly + lh > ay - avenue_half_width - 1
-        });
-        if on_avenue { continue; }
-        if anchors.iter().any(|a| rects_overlap(lx, ly, lw, lh, a.x, a.y, a.w, a.h)) {
+        let on_avenue = avenue_ys
+            .iter()
+            .any(|&ay| ly < ay + avenue_half_width + 1 && ly + lh > ay - avenue_half_width - 1);
+        if on_avenue {
+            continue;
+        }
+        if anchors
+            .iter()
+            .any(|a| rects_overlap(lx, ly, lw, lh, a.x, a.y, a.w, a.h))
+        {
             continue;
         }
 
         let pad = BSP_PADDING_LOCAL;
-        let bx  = lx + pad;
-        let by  = ly + pad;
-        let bw  = (lw - pad * 2).min(BSP_MAX_W);
-        let bh  = (lh - pad * 2).min(BSP_MAX_H);
+        let bx = lx + pad;
+        let by = ly + pad;
+        let bw = (lw - pad * 2).min(BSP_MAX_W);
+        let bh = (lh - pad * 2).min(BSP_MAX_H);
 
         if bw < ANCHOR_MIN_DIM || bh < ANCHOR_MIN_DIM {
             open_lots.push((lx, ly, lw, lh));
@@ -1923,7 +2375,10 @@ fn generate_buildings_bsp(
 
         let (bx, bw) = match fit_beside_cross_streets(bx, bw, lx, cross_xs, cross_half_width) {
             Some(fit) => fit,
-            None => { open_lots.push((lx, ly, lw, lh)); continue; }
+            None => {
+                open_lots.push((lx, ly, lw, lh));
+                continue;
+            }
         };
 
         if value_noise(leaf_cx, leaf_cy, bsp_seed.wrapping_add(8888)) < PARK_NOISE_THRESHOLD {
@@ -1932,22 +2387,41 @@ fn generate_buildings_bsp(
             continue;
         }
 
-        let kind = pick_kind(leaf_cx, leaf_cy, i as i32, leaf_cx + leaf_cy,
-            bsp_seed.wrapping_add(2222), width, height, avenue_ys, seed);
+        let kind = pick_kind(
+            leaf_cx,
+            leaf_cy,
+            i as i32,
+            leaf_cx + leaf_cy,
+            bsp_seed.wrapping_add(2222),
+            width,
+            height,
+            avenue_ys,
+            seed,
+        );
 
         // Try at full size, shrinking up to 4 steps if needed.
         let placed_ok = (0u32..4).find_map(|s| {
             let sw = bw - s as CoordinateUnit * 2;
             let sh = bh - s as CoordinateUnit * 2;
-            if sw < ANCHOR_MIN_DIM || sh < ANCHOR_MIN_DIM { return None; }
-            if overlaps_placed(&placed, bx, by, sw, sh, GAP) { return None; }
+            if sw < ANCHOR_MIN_DIM || sh < ANCHOR_MIN_DIM {
+                return None;
+            }
+            if overlaps_placed(&placed, bx, by, sw, sh, GAP) {
+                return None;
+            }
             Some((sw, sh))
         });
 
         match placed_ok {
             Some((fw, fh)) => {
                 placed.push((bx, by, fw, fh));
-                buildings.push(Building { x: bx, y: by, w: fw, h: fh, kind });
+                buildings.push(Building {
+                    x: bx,
+                    y: by,
+                    w: fw,
+                    h: fh,
+                    kind,
+                });
             }
             None => open_lots.push((lx, ly, lw, lh)),
         }
@@ -1955,7 +2429,7 @@ fn generate_buildings_bsp(
 
     // ── 3. Road-grid lots: anchor first, then strip fill ──────────────
     let avenue_set: HashSet<CoordinateUnit> = avenue_ys.iter().copied().collect();
-    let cross_set:  HashSet<CoordinateUnit> = cross_xs.iter().copied().collect();
+    let cross_set: HashSet<CoordinateUnit> = cross_xs.iter().copied().collect();
 
     let mut y_bounds: Vec<CoordinateUnit> = std::iter::once(margin)
         .chain(avenue_ys.iter().copied())
@@ -1972,20 +2446,36 @@ fn generate_buildings_bsp(
     for yi in 0..y_bounds.len().saturating_sub(1) {
         for xi in 0..x_bounds.len().saturating_sub(1) {
             let lot = match compute_lot(
-                xi, yi, &x_bounds, &y_bounds,
-                &avenue_set, &cross_set,
-                avenue_half_width, cross_half_width,
+                xi,
+                yi,
+                &x_bounds,
+                &y_bounds,
+                &avenue_set,
+                &cross_set,
+                avenue_half_width,
+                cross_half_width,
             ) {
                 Some(l) => l,
-                None    => continue,
+                None => continue,
             };
 
             let lot_seed = bsp_seed.wrapping_add(
-                (yi as u64).wrapping_mul(1000).wrapping_add(xi as u64).wrapping_mul(7),
+                (yi as u64)
+                    .wrapping_mul(1000)
+                    .wrapping_add(xi as u64)
+                    .wrapping_mul(7),
             );
 
-            place_lot_buildings(lot, lot_seed, &mut placed, &mut buildings,
-                width, height, avenue_ys, seed);
+            place_lot_buildings(
+                lot,
+                lot_seed,
+                &mut placed,
+                &mut buildings,
+                width,
+                height,
+                avenue_ys,
+                seed,
+            );
         }
     }
 
@@ -1995,27 +2485,33 @@ fn generate_buildings_bsp(
 /// Returns the adjusted `(bx, bw)` so the building avoids any cross street.
 /// Returns `None` if no valid position exists.
 fn fit_beside_cross_streets(
-    bx:               CoordinateUnit,
-    bw:               CoordinateUnit,
-    lx:               CoordinateUnit,
-    cross_xs:         &[CoordinateUnit],
+    bx: CoordinateUnit,
+    bw: CoordinateUnit,
+    lx: CoordinateUnit,
+    cross_xs: &[CoordinateUnit],
     cross_half_width: CoordinateUnit,
 ) -> Option<(CoordinateUnit, CoordinateUnit)> {
-    let on_cross = cross_xs.iter().any(|&cx| {
-        bx < cx + cross_half_width + 1 && bx + bw > cx - cross_half_width - 1
-    });
-    if !on_cross { return Some((bx, bw)); }
+    let on_cross = cross_xs
+        .iter()
+        .any(|&cx| bx < cx + cross_half_width + 1 && bx + bw > cx - cross_half_width - 1);
+    if !on_cross {
+        return Some((bx, bw));
+    }
 
     for &cx in cross_xs {
         let left_edge = cx - cross_half_width - 1;
         if left_edge > bx {
             let w = (left_edge - bx).min(bw);
-            if w >= ANCHOR_MIN_DIM { return Some((bx, w)); }
+            if w >= ANCHOR_MIN_DIM {
+                return Some((bx, w));
+            }
         }
         let right_x = cx + cross_half_width + 1;
         if right_x >= lx && right_x < bx + bw {
             let w = (bx + bw - right_x).min(bw);
-            if w >= ANCHOR_MIN_DIM { return Some((right_x, w)); }
+            if w >= ANCHOR_MIN_DIM {
+                return Some((right_x, w));
+            }
         }
     }
     None
@@ -2035,7 +2531,11 @@ fn place_alleys(map: &mut GameMap, buildings: &[Building]) {
 
 /// Fills the gap between one building pair with alley tiles.
 fn try_place_alley_strip(map: &mut GameMap, a: &Building, b: &Building) {
-    let (a, b) = if a.x <= b.x && a.y <= b.y { (a, b) } else { (b, a) };
+    let (a, b) = if a.x <= b.x && a.y <= b.y {
+        (a, b)
+    } else {
+        (b, a)
+    };
 
     // Horizontal gap (shared Y band, gap along X).
     if a.y < b.y + b.h && b.y < a.y + a.h {
@@ -2085,23 +2585,27 @@ fn write_alley(map: &mut GameMap, x: CoordinateUnit, y: CoordinateUnit) {
 /// by punching through an adjacent wall tile if necessary.
 fn ensure_alley_connectivity(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit) {
     let alley_tiles = collect_floor_tiles(map, width, height, |f| matches!(f, Floor::Alley));
-    if alley_tiles.is_empty() { return; }
+    if alley_tiles.is_empty() {
+        return;
+    }
 
     let regions = flood_fill_regions(&alley_tiles, width, height, map, |f| {
         matches!(f, Floor::Alley)
     });
 
     for region in &regions {
-        if region_has_road_exit(region, map, width, height) { continue; }
+        if region_has_road_exit(region, map, width, height) {
+            continue;
+        }
         open_wall_passage(region, map, width, height);
     }
 }
 
 fn collect_floor_tiles(
-    map:    &GameMap,
-    width:  CoordinateUnit,
+    map: &GameMap,
+    width: CoordinateUnit,
     height: CoordinateUnit,
-    pred:   impl Fn(&Floor) -> bool,
+    pred: impl Fn(&Floor) -> bool,
 ) -> Vec<GridVec> {
     let mut tiles = Vec::new();
     for y in 0..height {
@@ -2118,22 +2622,24 @@ fn collect_floor_tiles(
 }
 
 fn flood_fill_regions(
-    seeds:    &[GridVec],
-    width:    CoordinateUnit,
-    height:   CoordinateUnit,
-    map:      &GameMap,
+    seeds: &[GridVec],
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    map: &GameMap,
     passable: impl Fn(&Floor) -> bool,
 ) -> Vec<Vec<GridVec>> {
-    let map_w       = width as usize;
+    let map_w = width as usize;
     let mut visited = vec![false; map_w * height as usize];
     let mut regions = Vec::new();
 
     for &start in seeds {
         let idx = start.y as usize * map_w + start.x as usize;
-        if visited[idx] { continue; }
+        if visited[idx] {
+            continue;
+        }
 
         let mut region = Vec::new();
-        let mut queue  = std::collections::VecDeque::new();
+        let mut queue = std::collections::VecDeque::new();
         visited[idx] = true;
         queue.push_back(start);
 
@@ -2158,8 +2664,8 @@ fn flood_fill_regions(
 
 fn region_has_road_exit(
     region: &[GridVec],
-    map:    &GameMap,
-    width:  CoordinateUnit,
+    map: &GameMap,
+    width: CoordinateUnit,
     height: CoordinateUnit,
 ) -> bool {
     region.iter().any(|&pos| {
@@ -2167,8 +2673,10 @@ fn region_has_road_exit(
             map.get_voxel_at(&nb).is_some_and(|v| {
                 matches!(
                     v.floor.as_ref(),
-                    Some(Floor::DirtRoad) | Some(Floor::Sidewalk) |
-                    Some(Floor::Dirt)     | Some(Floor::Bridge)
+                    Some(Floor::DirtRoad)
+                        | Some(Floor::Sidewalk)
+                        | Some(Floor::Dirt)
+                        | Some(Floor::Bridge)
                 ) && !v.props.as_ref().is_some_and(|p| p.is_wall())
             })
         })
@@ -2177,13 +2685,14 @@ fn region_has_road_exit(
 
 fn open_wall_passage(
     region: &[GridVec],
-    map:    &mut GameMap,
-    width:  CoordinateUnit,
+    map: &mut GameMap,
+    width: CoordinateUnit,
     height: CoordinateUnit,
 ) {
     'outer: for &pos in region {
         for nb in in_bounds_neighbors(pos, width, height) {
-            if map.get_voxel_at(&nb)
+            if map
+                .get_voxel_at(&nb)
                 .is_some_and(|v| v.props.as_ref().is_some_and(|p| p.is_wall()))
             {
                 if let Some(voxel) = map.get_voxel_at_mut(&nb) {
@@ -2196,7 +2705,11 @@ fn open_wall_passage(
 }
 
 #[inline]
-fn in_bounds_neighbors(pos: GridVec, width: CoordinateUnit, height: CoordinateUnit) -> Vec<GridVec> {
+fn in_bounds_neighbors(
+    pos: GridVec,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+) -> Vec<GridVec> {
     pos.cardinal_neighbors()
         .into_iter()
         .filter(|nb| nb.x >= 0 && nb.x < width && nb.y >= 0 && nb.y < height)
@@ -2244,11 +2757,15 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
             }
 
             if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                let mut is_border = x == b.x || x == b.x + b.w - 1 || y == b.y || y == b.y + b.h - 1;
+                let mut is_border =
+                    x == b.x || x == b.x + b.w - 1 || y == b.y || y == b.y + b.h - 1;
                 // For L-shape, the notch edges are also borders
                 if shape_type == SHAPE_L {
                     // Recompute border for L-shape
-                    let in_main = x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h
+                    let in_main = x >= b.x
+                        && x < b.x + b.w
+                        && y >= b.y
+                        && y < b.y + b.h
                         && !(x >= notch_x_start && y >= notch_y_start);
                     if in_main {
                         let left_out = x == b.x;
@@ -2258,18 +2775,27 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
                         let top_out = y == b.y + b.h - 1 && x < notch_x_start;
                         let top_notch_edge = y == notch_y_start - 1 && x >= notch_x_start;
                         let bottom_out = y == b.y;
-                        is_border = left_out || right_out || right_notch_edge || top_out || top_notch_edge || bottom_out;
+                        is_border = left_out
+                            || right_out
+                            || right_notch_edge
+                            || top_out
+                            || top_notch_edge
+                            || bottom_out;
                     }
                 }
 
                 // Door positions
-                let is_door = (y == b.y + b.h - 1 && x == b.x + b.w / 2 && (shape_type != SHAPE_L || x < notch_x_start))
+                let is_door = (y == b.y + b.h - 1
+                    && x == b.x + b.w / 2
+                    && (shape_type != SHAPE_L || x < notch_x_start))
                     || (y == b.y && x == b.x + b.w / 2);
 
                 // Side doors for bigger buildings
                 let is_side_door = if b.w >= 9 || b.h >= 9 {
                     (x == b.x && y == b.y + b.h / 2)
-                    || (x == b.x + b.w - 1 && y == b.y + b.h / 2 && (shape_type != SHAPE_L || y < notch_y_start))
+                        || (x == b.x + b.w - 1
+                            && y == b.y + b.h / 2
+                            && (shape_type != SHAPE_L || y < notch_y_start))
                 } else {
                     false
                 };
@@ -2293,8 +2819,8 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
                     } else {
                         // Small chance to place a window instead of a wall.
                         // Only on non-corner border tiles (skip first/last of each edge).
-                        let at_building_corner = (x == b.x || x == b.x + b.w - 1)
-                            && (y == b.y || y == b.y + b.h - 1);
+                        let at_building_corner =
+                            (x == b.x || x == b.x + b.w - 1) && (y == b.y || y == b.y + b.h - 1);
                         let window_noise = value_noise(x, y, seed.wrapping_add(88888));
                         if !at_building_corner && window_noise < 0.12 {
                             voxel.props = Some(Props::Window);
@@ -2327,10 +2853,16 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
     if iw >= 10 && ih >= 10 {
         let mid_x = iw / 2;
         let mid_y = ih / 2;
-        let wall_prop = if matches!(b.kind, 6 | 7 | 9) { Props::StoneWall } else { Props::Wall };
+        let wall_prop = if matches!(b.kind, 6 | 7 | 9) {
+            Props::StoneWall
+        } else {
+            Props::Wall
+        };
         // Horizontal dividing wall with corridor gap at the center
         for dx in 0..iw {
-            if dx == mid_x { continue; }
+            if dx == mid_x {
+                continue;
+            }
             let pos = GridVec::new(interior_x + dx, interior_y + mid_y);
             if let Some(voxel) = map.get_voxel_at_mut(&pos) {
                 voxel.props = Some(wall_prop.clone());
@@ -2338,7 +2870,9 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
         }
         // Vertical dividing wall with corridor gap at the center
         for dy in 0..ih {
-            if dy == mid_y { continue; }
+            if dy == mid_y {
+                continue;
+            }
             let pos = GridVec::new(interior_x + mid_x, interior_y + dy);
             if let Some(voxel) = map.get_voxel_at_mut(&pos) {
                 voxel.props = Some(wall_prop.clone());
@@ -2353,7 +2887,9 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
                 // Large: dividing wall + furnished rooms
                 let wall_row = ih / 2;
                 for dx in 0..iw {
-                    if dx == iw / 2 { continue; }
+                    if dx == iw / 2 {
+                        continue;
+                    }
                     let pos = GridVec::new(interior_x + dx, interior_y + wall_row);
                     if let Some(voxel) = map.get_voxel_at_mut(&pos) {
                         if matches!(b.kind, 6 | 7 | 9) {
@@ -2377,7 +2913,9 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
                 // Medium: simple dividing wall with door gap, minimal furnishing
                 let wall_row = ih / 2;
                 for dx in 0..iw {
-                    if dx == iw / 2 { continue; }
+                    if dx == iw / 2 {
+                        continue;
+                    }
                     let pos = GridVec::new(interior_x + dx, interior_y + wall_row);
                     if let Some(voxel) = map.get_voxel_at_mut(&pos) {
                         voxel.props = Some(Props::Wall);
@@ -2430,7 +2968,12 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
                     set_prop(map, interior_x + dx, interior_y + ih - 1, Props::HayBale);
                 }
                 // Water trough and crates
-                set_prop(map, interior_x + iw / 2, interior_y + ih / 2, Props::WaterTrough);
+                set_prop(
+                    map,
+                    interior_x + iw / 2,
+                    interior_y + ih / 2,
+                    Props::WaterTrough,
+                );
                 set_prop(map, interior_x + iw - 1, interior_y + ih / 2, Props::Crate);
             } else if iw >= 3 && ih >= 2 {
                 set_prop(map, interior_x, interior_y, Props::HitchingPost);
@@ -2472,7 +3015,9 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
                 // Cell block dividing wall with door
                 let cell_wall_row = ih / 2;
                 for dx in 0..iw {
-                    if dx == iw / 2 { continue; } // door gap
+                    if dx == iw / 2 {
+                        continue;
+                    } // door gap
                     let pos = GridVec::new(interior_x + dx, interior_y + cell_wall_row);
                     if let Some(voxel) = map.get_voxel_at_mut(&pos) {
                         voxel.props = Some(Props::Wall);
@@ -2607,9 +3152,19 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
             // Blacksmith: forge area, anvil, quench barrel, supplies
             if iw >= 5 && ih >= 4 {
                 // Anvil (hitching post stand-in)
-                set_prop(map, interior_x + iw / 2, interior_y + ih / 2, Props::HitchingPost);
+                set_prop(
+                    map,
+                    interior_x + iw / 2,
+                    interior_y + ih / 2,
+                    Props::HitchingPost,
+                );
                 // Quench barrel
-                set_prop(map, interior_x + iw / 2 + 1, interior_y + ih / 2, Props::Barrel);
+                set_prop(
+                    map,
+                    interior_x + iw / 2 + 1,
+                    interior_y + ih / 2,
+                    Props::Barrel,
+                );
                 // Water trough
                 set_prop(map, interior_x, interior_y + ih - 1, Props::WaterTrough);
                 // Supplies along walls
@@ -2643,7 +3198,11 @@ fn validate_building_walls(map: &mut GameMap, b: &Building) {
     let notch_x_start = b.x + b.w - notch_w;
     let notch_y_start = b.y + b.h - notch_h;
     let corner_radius = ROUNDED_CORNER_RADIUS;
-    let wall_prop = if matches!(b.kind, 6 | 7 | 9) { Props::StoneWall } else { Props::Wall };
+    let wall_prop = if matches!(b.kind, 6 | 7 | 9) {
+        Props::StoneWall
+    } else {
+        Props::Wall
+    };
 
     for y in b.y..b.y + b.h {
         for x in b.x..b.x + b.w {
@@ -2660,11 +3219,15 @@ fn validate_building_walls(map: &mut GameMap, b: &Building) {
                 false
             };
             // Door positions
-            let is_door = (y == b.y + b.h - 1 && x == b.x + b.w / 2 && (shape_type != SHAPE_L || x < notch_x_start))
+            let is_door = (y == b.y + b.h - 1
+                && x == b.x + b.w / 2
+                && (shape_type != SHAPE_L || x < notch_x_start))
                 || (y == b.y && x == b.x + b.w / 2);
             let is_side_door = if b.w >= 9 || b.h >= 9 {
                 (x == b.x && y == b.y + b.h / 2)
-                || (x == b.x + b.w - 1 && y == b.y + b.h / 2 && (shape_type != SHAPE_L || y < notch_y_start))
+                    || (x == b.x + b.w - 1
+                        && y == b.y + b.h / 2
+                        && (shape_type != SHAPE_L || y < notch_y_start))
             } else {
                 false
             };
@@ -2690,16 +3253,27 @@ fn validate_building_walls(map: &mut GameMap, b: &Building) {
 /// Helper: sets a prop at a position if within bounds, not occupied by a wall,
 /// and not on a road, beach, water, or bridge tile. Also checks the occupancy grid.
 fn set_prop(map: &mut GameMap, x: CoordinateUnit, y: CoordinateUnit, prop: Props) {
-    if x < 0 || x >= map.width || y < 0 || y >= map.height { return; }
+    if x < 0 || x >= map.width || y < 0 || y >= map.height {
+        return;
+    }
     // Check occupancy grid before taking a mutable borrow on voxels
-    if map.occupancy[x as usize][y as usize] { return; }
+    if map.occupancy[x as usize][y as usize] {
+        return;
+    }
     let pos = GridVec::new(x, y);
     if let Some(voxel) = map.get_voxel_at_mut(&pos)
         && !matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall))
-        && !matches!(voxel.floor, Some(Floor::DirtRoad) | Some(Floor::BeachSand)
-            | Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Bridge)) {
-            voxel.props = Some(prop);
-        }
+        && !matches!(
+            voxel.floor,
+            Some(Floor::DirtRoad)
+                | Some(Floor::BeachSand)
+                | Some(Floor::ShallowWater)
+                | Some(Floor::DeepWater)
+                | Some(Floor::Bridge)
+        )
+    {
+        voxel.props = Some(prop);
+    }
 }
 
 // ── Hierarchical placement: exterior props ───────────────────────────────
@@ -2762,7 +3336,12 @@ fn place_exterior_props(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
 /// rings, patches of scrub.
 fn place_open_lot_scatter(
     map: &mut GameMap,
-    open_lots: &[(CoordinateUnit, CoordinateUnit, CoordinateUnit, CoordinateUnit)],
+    open_lots: &[(
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+        CoordinateUnit,
+    )],
     seed: NoiseSeed,
 ) {
     let scatter_seed = seed.wrapping_add(151515);
@@ -2824,8 +3403,7 @@ fn place_transition_zones(
         let y = (ny * height as f64).clamp(4.0, (height - 6) as f64) as CoordinateUnit;
 
         // Only place in the transition zone (outside town boundaries)
-        if x >= town_min_x - 5 && x <= town_max_x + 5
-            && y >= town_min_y - 5 && y <= town_max_y + 5
+        if x >= town_min_x - 5 && x <= town_max_x + 5 && y >= town_min_y - 5 && y <= town_max_y + 5
         {
             continue;
         }
@@ -2837,9 +3415,7 @@ fn place_transition_zones(
             }
             if matches!(
                 voxel.floor,
-                Some(Floor::ShallowWater)
-                    | Some(Floor::DeepWater)
-                    | Some(Floor::Bridge)
+                Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Bridge)
             ) {
                 continue;
             }
@@ -2882,8 +3458,10 @@ fn place_transition_zones(
         let sy = (ny * height as f64).clamp(8.0, (height - 12) as f64) as CoordinateUnit;
 
         // Must be outside the town bounding box
-        if sx >= town_min_x - 10 && sx <= town_max_x + 10
-            && sy >= town_min_y - 10 && sy <= town_max_y + 10
+        if sx >= town_min_x - 10
+            && sx <= town_max_x + 10
+            && sy >= town_min_y - 10
+            && sy <= town_max_y + 10
         {
             continue;
         }
@@ -2891,7 +3469,10 @@ fn place_transition_zones(
         // Skip water
         let pos = GridVec::new(sx, sy);
         if let Some(voxel) = map.get_voxel_at(&pos) {
-            if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)) {
+            if matches!(
+                voxel.floor,
+                Some(Floor::ShallowWater) | Some(Floor::DeepWater)
+            ) {
                 continue;
             }
         } else {
@@ -2901,18 +3482,24 @@ fn place_transition_zones(
         // Place a small 4×4 shack with partial walls (ruined)
         let sw: CoordinateUnit = 4;
         let sh: CoordinateUnit = 4;
-        if sx + sw >= width - 1 || sy + sh >= height - 1 { continue; }
+        if sx + sw >= width - 1 || sy + sh >= height - 1 {
+            continue;
+        }
         for dy in 0..sh {
             for dx in 0..sw {
                 let p = GridVec::new(sx + dx, sy + dy);
                 if let Some(voxel) = map.get_voxel_at_mut(&p) {
-                    if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)) {
+                    if matches!(
+                        voxel.floor,
+                        Some(Floor::ShallowWater) | Some(Floor::DeepWater)
+                    ) {
                         continue;
                     }
                     let is_border = dx == 0 || dx == sw - 1 || dy == 0 || dy == sh - 1;
                     let is_door = dy == sh - 1 && dx == sw / 2;
                     // Ruined: skip some wall segments based on noise
-                    let ruin_noise = value_noise(sx + dx, sy + dy, shack_seed.wrapping_add(i as u64));
+                    let ruin_noise =
+                        value_noise(sx + dx, sy + dy, shack_seed.wrapping_add(i as u64));
                     if is_border && !is_door && ruin_noise < 0.7 {
                         voxel.props = Some(Props::Wall);
                         voxel.floor = Some(Floor::WoodPlanks);
@@ -2934,11 +3521,16 @@ fn place_transition_zones(
         let mut px = door_x;
         let mut py = door_y;
         for _ in 0..15 {
-            if px <= 0 || px >= width - 1 || py <= 0 || py >= height - 1 { break; }
+            if px <= 0 || px >= width - 1 || py <= 0 || py >= height - 1 {
+                break;
+            }
             let p = GridVec::new(px, py);
             if let Some(voxel) = map.get_voxel_at_mut(&p)
                 && !matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall))
-                && !matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater))
+                && !matches!(
+                    voxel.floor,
+                    Some(Floor::ShallowWater) | Some(Floor::DeepWater)
+                )
             {
                 voxel.floor = Some(Floor::Dirt);
                 voxel.props = None;
@@ -2986,8 +3578,14 @@ fn check_connectivity(
         for x in 0..width {
             let pos = GridVec::new(x, y);
             if let Some(v) = map.get_voxel_at(&pos) {
-                if matches!(v.floor, Some(Floor::Dirt) | Some(Floor::DirtRoad) | Some(Floor::Sidewalk) | Some(Floor::Bridge) | Some(Floor::Alley))
-                    && map.is_passable(&pos)
+                if matches!(
+                    v.floor,
+                    Some(Floor::Dirt)
+                        | Some(Floor::DirtRoad)
+                        | Some(Floor::Sidewalk)
+                        | Some(Floor::Bridge)
+                        | Some(Floor::Alley)
+                ) && map.is_passable(&pos)
                 {
                     let idx = y as usize * w + x as usize;
                     reachable[idx] = true;
@@ -2999,11 +3597,7 @@ fn check_connectivity(
 
     while let Some(pos) = queue.pop_front() {
         for neighbor in pos.cardinal_neighbors() {
-            if neighbor.x >= 0
-                && neighbor.x < width
-                && neighbor.y >= 0
-                && neighbor.y < height
-            {
+            if neighbor.x >= 0 && neighbor.x < width && neighbor.y >= 0 && neighbor.y < height {
                 let idx = neighbor.y as usize * w + neighbor.x as usize;
                 if !reachable[idx] && map.is_passable(&neighbor) {
                     reachable[idx] = true;
@@ -3049,21 +3643,18 @@ fn check_connectivity(
                             for wy in -1..=1i32 {
                                 for wx in -1..=1i32 {
                                     let wp = GridVec::new(step.x + wx, step.y + wy);
-                                    if wp.x >= 0
-                                        && wp.x < width
-                                        && wp.y >= 0
-                                        && wp.y < height
-                                    {
+                                    if wp.x >= 0 && wp.x < width && wp.y >= 0 && wp.y < height {
                                         if let Some(voxel) = map.get_voxel_at_mut(&wp) {
-                                            if voxel
-                                                .props
-                                                .as_ref()
-                                                .is_some_and(|p| p.blocks_movement() && !p.is_wall())
-                                            {
+                                            if voxel.props.as_ref().is_some_and(|p| {
+                                                p.blocks_movement() && !p.is_wall()
+                                            }) {
                                                 voxel.props = None;
                                             }
                                             // Bridge water tiles to create walkable path
-                                            if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)) {
+                                            if matches!(
+                                                voxel.floor,
+                                                Some(Floor::ShallowWater) | Some(Floor::DeepWater)
+                                            ) {
                                                 voxel.floor = Some(Floor::Bridge);
                                             }
                                         }
@@ -3107,10 +3698,7 @@ fn verify_world(
     //    which matches the grid-based lot partitioning gap.
     for (i, a) in buildings.iter().enumerate() {
         for b in &buildings[i + 1..] {
-            let overlaps = rects_overlap(
-                a.x - 1, a.y - 1, a.w + 2, a.h + 2,
-                b.x, b.y, b.w, b.h,
-            );
+            let overlaps = rects_overlap(a.x - 1, a.y - 1, a.w + 2, a.h + 2, b.x, b.y, b.w, b.h);
             if overlaps {
                 return Err(format!(
                     "buildings at ({},{}) {}x{} and ({},{}) {}x{} overlap (including padding)",
@@ -3145,8 +3733,14 @@ fn verify_world(
         for x in 0..width {
             let pos = GridVec::new(x, y);
             if let Some(v) = map.get_voxel_at(&pos) {
-                if matches!(v.floor, Some(Floor::Dirt) | Some(Floor::DirtRoad) | Some(Floor::Sidewalk) | Some(Floor::Bridge) | Some(Floor::Alley))
-                    && map.is_passable(&pos)
+                if matches!(
+                    v.floor,
+                    Some(Floor::Dirt)
+                        | Some(Floor::DirtRoad)
+                        | Some(Floor::Sidewalk)
+                        | Some(Floor::Bridge)
+                        | Some(Floor::Alley)
+                ) && map.is_passable(&pos)
                 {
                     let idx = y as usize * w + x as usize;
                     reachable[idx] = true;
@@ -3222,7 +3816,13 @@ fn verify_world(
             for bx in b.x..b.x + b.w {
                 let pos = GridVec::new(bx, by);
                 if let Some(v) = map.get_voxel_at(&pos) {
-                    if matches!(v.floor, Some(Floor::DirtRoad) | Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::BeachSand)) {
+                    if matches!(
+                        v.floor,
+                        Some(Floor::DirtRoad)
+                            | Some(Floor::ShallowWater)
+                            | Some(Floor::DeepWater)
+                            | Some(Floor::BeachSand)
+                    ) {
                         return Err(format!(
                             "building at ({},{}) has excluded tile at ({},{})",
                             b.x, b.y, bx, by
@@ -3242,10 +3842,7 @@ fn verify_world(
                     && !v.props.as_ref().unwrap().is_wall()
                     && matches!(v.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater))
                 {
-                    return Err(format!(
-                        "prop on water tile at ({},{})",
-                        x, y
-                    ));
+                    return Err(format!("prop on water tile at ({},{})", x, y));
                 }
             }
         }
@@ -3265,19 +3862,28 @@ fn verify_world(
 /// Returns `true` if the rectangle (rx, ry, rw, rh) overlaps any building
 /// footprint (including a 2-tile buffer for doors and entrance access).
 fn overlaps_any_building(
-    rx: CoordinateUnit, ry: CoordinateUnit, rw: CoordinateUnit, rh: CoordinateUnit,
+    rx: CoordinateUnit,
+    ry: CoordinateUnit,
+    rw: CoordinateUnit,
+    rh: CoordinateUnit,
     buildings: &[Building],
 ) -> bool {
-    buildings.iter().any(|b| {
-        rects_overlap(rx, ry, rw, rh, b.x - 2, b.y - 2, b.w + 4, b.h + 4)
-    })
+    buildings
+        .iter()
+        .any(|b| rects_overlap(rx, ry, rw, rh, b.x - 2, b.y - 2, b.w + 4, b.h + 4))
 }
 
 /// Places the focal mission/church building near the center of the map.
 /// This is a large, thick-walled stone structure with a courtyard, bell tower,
 /// and multiple interior rooms that functions as a natural fortress and
 /// late-game combat anchor.
-fn place_mission(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed, buildings: &[Building]) {
+fn place_mission(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+    buildings: &[Building],
+) {
     let mw: CoordinateUnit = 24;
     let mh: CoordinateUnit = 18;
     if width < mw + 10 || height < mh + 10 {
@@ -3287,10 +3893,22 @@ fn place_mission(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUni
     // Try several candidate positions around the town center.
     // Dense building placement requires a wider search area.
     let offsets: [(i32, i32); 16] = [
-        (0, 0), (-15, -15), (15, 15), (-30, 20), (30, -20),
-        (-20, 30), (20, -30), (-35, -10),
-        (40, 10), (-40, -10), (10, 40), (-10, -40),
-        (50, 0), (-50, 0), (0, 50), (0, -50),
+        (0, 0),
+        (-15, -15),
+        (15, 15),
+        (-30, 20),
+        (30, -20),
+        (-20, 30),
+        (20, -30),
+        (-35, -10),
+        (40, 10),
+        (-40, -10),
+        (10, 40),
+        (-10, -40),
+        (50, 0),
+        (-50, 0),
+        (0, 50),
+        (0, -50),
     ];
     for (i, &(ox, oy)) in offsets.iter().enumerate() {
         let noise_x = (value_noise(i as i32 * 2, 2, m_seed) * 10.0) as CoordinateUnit;
@@ -3300,8 +3918,12 @@ fn place_mission(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUni
         let mx = (cx - mw / 2).clamp(2, width - mw - 2);
         let my = (cy - mh / 2).clamp(2, height - mh - 2);
 
-        if overlaps_any_building(mx, my, mw, mh, buildings) { continue; }
-        if map.has_excluded_tile(mx, my, mw, mh) { continue; }
+        if overlaps_any_building(mx, my, mw, mh, buildings) {
+            continue;
+        }
+        if map.has_excluded_tile(mx, my, mw, mh) {
+            continue;
+        }
 
         // Lay down thick stone walls and interior
         place_mission_at(map, mx, my, mw, mh);
@@ -3310,7 +3932,13 @@ fn place_mission(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUni
 }
 
 /// Internal helper: actually places mission tiles at the given position.
-fn place_mission_at(map: &mut GameMap, mx: CoordinateUnit, my: CoordinateUnit, mw: CoordinateUnit, mh: CoordinateUnit) {
+fn place_mission_at(
+    map: &mut GameMap,
+    mx: CoordinateUnit,
+    my: CoordinateUnit,
+    mw: CoordinateUnit,
+    mh: CoordinateUnit,
+) {
     for y in my..my + mh {
         for x in mx..mx + mw {
             let pos = GridVec::new(x, y);
@@ -3340,10 +3968,12 @@ fn place_mission_at(map: &mut GameMap, mx: CoordinateUnit, my: CoordinateUnit, m
     for y in my + 1..my + mh - 1 {
         let pos = GridVec::new(divider_x, y);
         // Door in the divider
-        if y != my + mh / 2 && y != my + mh / 3
-            && let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                voxel.props = Some(Props::StoneWall);
-            }
+        if y != my + mh / 2
+            && y != my + mh / 3
+            && let Some(voxel) = map.get_voxel_at_mut(&pos)
+        {
+            voxel.props = Some(Props::StoneWall);
+        }
     }
 
     // Courtyard: open area in the center-right rooms (no roof)
@@ -3394,7 +4024,13 @@ fn place_mission_at(map: &mut GameMap, mx: CoordinateUnit, my: CoordinateUnit, m
 
 /// Places a town plaza — an open killzone at the heart of the map.
 /// The plaza is flanked by buildings with window-facing tiles overlooking it.
-fn place_town_plaza(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed, buildings: &[Building]) {
+fn place_town_plaza(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+    buildings: &[Building],
+) {
     let pw: CoordinateUnit = 16;
     let ph: CoordinateUnit = 12;
     if width < pw + 20 || height < ph + 20 {
@@ -3404,10 +4040,22 @@ fn place_town_plaza(map: &mut GameMap, width: CoordinateUnit, height: Coordinate
     // Try several candidate positions for the plaza. Dense building
     // placement requires a wider search area.
     let offsets: [(i32, i32); 16] = [
-        (15, 10), (-10, 0), (0, -10), (-25, 25), (25, -25),
-        (-15, -20), (20, 20), (-30, 10),
-        (40, 0), (-40, 0), (0, 40), (0, -40),
-        (50, 20), (-50, -20), (30, -40), (-20, 50),
+        (15, 10),
+        (-10, 0),
+        (0, -10),
+        (-25, 25),
+        (25, -25),
+        (-15, -20),
+        (20, 20),
+        (-30, 10),
+        (40, 0),
+        (-40, 0),
+        (0, 40),
+        (0, -40),
+        (50, 20),
+        (-50, -20),
+        (30, -40),
+        (-20, 50),
     ];
     for (i, &(ox, oy)) in offsets.iter().enumerate() {
         let noise_x = (value_noise(i as i32 * 2 + 5, 5, p_seed) * 10.0) as CoordinateUnit;
@@ -3417,8 +4065,12 @@ fn place_town_plaza(map: &mut GameMap, width: CoordinateUnit, height: Coordinate
         let px = (cx - pw / 2).clamp(2, width - pw - 2);
         let py = (cy - ph / 2).clamp(2, height - ph - 2);
 
-        if overlaps_any_building(px, py, pw, ph, buildings) { continue; }
-        if map.has_excluded_tile(px, py, pw, ph) { continue; }
+        if overlaps_any_building(px, py, pw, ph, buildings) {
+            continue;
+        }
+        if map.has_excluded_tile(px, py, pw, ph) {
+            continue;
+        }
 
         // Clear the plaza area — open exposed killzone
         for y in py..py + ph {
@@ -3450,7 +4102,13 @@ fn place_town_plaza(map: &mut GameMap, width: CoordinateUnit, height: Coordinate
 /// The Town Hall is 18×12 with a grand interior containing tables, chairs,
 /// benches and signs (maps/notices).
 /// Skipped on maps too small to fit the building.
-fn place_town_hall(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed, buildings: &[Building]) {
+fn place_town_hall(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+    buildings: &[Building],
+) {
     let tw: CoordinateUnit = 18;
     let th: CoordinateUnit = 12;
     if width < tw + 6 || height < th + 6 {
@@ -3462,8 +4120,12 @@ fn place_town_hall(map: &mut GameMap, width: CoordinateUnit, height: CoordinateU
     let tx = (cx - tw / 2).clamp(2, width - tw - 2);
     let ty = (cy - th / 2).clamp(2, height - th - 2);
 
-    if overlaps_any_building(tx, ty, tw, th, buildings) { return; }
-    if map.has_excluded_tile(tx, ty, tw, th) { return; }
+    if overlaps_any_building(tx, ty, tw, th, buildings) {
+        return;
+    }
+    if map.has_excluded_tile(tx, ty, tw, th) {
+        return;
+    }
 
     // Lay down walls and wood-plank floor
     for y in ty..ty + th {
@@ -3509,7 +4171,13 @@ fn place_town_hall(map: &mut GameMap, width: CoordinateUnit, height: CoordinateU
 /// Places a Grand Saloon — a large 20×14 saloon with piano, many tables,
 /// chairs, and barrels. Placed in the southern half of the map.
 /// Skipped on maps too small to fit the building.
-fn place_grand_saloon(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed, buildings: &[Building]) {
+fn place_grand_saloon(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+    buildings: &[Building],
+) {
     let sw: CoordinateUnit = 20;
     let sh: CoordinateUnit = 14;
     if width < sw + 6 || height < sh + 6 {
@@ -3521,8 +4189,12 @@ fn place_grand_saloon(map: &mut GameMap, width: CoordinateUnit, height: Coordina
     let sx = (cx - sw / 2).clamp(2, width - sw - 2);
     let sy = (cy - sh / 2).clamp(2, height - sh - 2);
 
-    if overlaps_any_building(sx, sy, sw, sh, buildings) { return; }
-    if map.has_excluded_tile(sx, sy, sw, sh) { return; }
+    if overlaps_any_building(sx, sy, sw, sh, buildings) {
+        return;
+    }
+    if map.has_excluded_tile(sx, sy, sw, sh) {
+        return;
+    }
 
     // Lay down walls and wood-plank floor
     for y in sy..sy + sh {
@@ -3578,7 +4250,9 @@ fn place_street_props_curved(
     let furn_seed = seed.wrapping_add(77777);
     // Place props every ~4 road-edge tiles for spacing.
     for (idx, &(x, y)) in road_edge_tiles.iter().enumerate() {
-        if idx % 4 != 0 { continue; }
+        if idx % 4 != 0 {
+            continue;
+        }
         let noise = value_noise(x, y, furn_seed.wrapping_add(idx as u64));
         let prop = match (noise * 6.0) as u32 {
             0 => Props::HitchingPost,
@@ -3611,7 +4285,10 @@ fn place_desert_decorations(
                 if voxel.props.is_some() {
                     continue;
                 }
-                if matches!(voxel.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor)) {
+                if matches!(
+                    voxel.floor,
+                    Some(Floor::WoodPlanks) | Some(Floor::StoneFloor)
+                ) {
                     continue;
                 }
                 // Skip road tiles — no decorations on roads or sidewalks.
@@ -3662,7 +4339,13 @@ fn place_desert_decorations(
 }
 
 /// Places a small cemetery on the outskirts of the town.
-fn place_cemetery(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed, buildings: &[Building]) {
+fn place_cemetery(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+    buildings: &[Building],
+) {
     let cw: CoordinateUnit = 14;
     let ch: CoordinateUnit = 10;
     if width < cw + 20 || height < ch + 20 {
@@ -3675,8 +4358,12 @@ fn place_cemetery(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUn
     let px = (cx - cw / 2).clamp(2, width - cw - 2);
     let py = (cy - ch / 2).clamp(2, height - ch - 2);
 
-    if overlaps_any_building(px, py, cw, ch, buildings) { return; }
-    if map.has_excluded_tile(px, py, cw, ch) { return; }
+    if overlaps_any_building(px, py, cw, ch, buildings) {
+        return;
+    }
+    if map.has_excluded_tile(px, py, cw, ch) {
+        return;
+    }
 
     // Fence perimeter with gate
     for y in py..py + ch {
@@ -3705,7 +4392,13 @@ fn place_cemetery(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUn
 }
 
 /// Places a livestock corral with fenced area and hay bales.
-fn place_corral(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed, buildings: &[Building]) {
+fn place_corral(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+    buildings: &[Building],
+) {
     let cw: CoordinateUnit = 12;
     let ch: CoordinateUnit = 8;
     if width < cw + 20 || height < ch + 20 {
@@ -3717,8 +4410,12 @@ fn place_corral(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit
     let px = (cx - cw / 2).clamp(2, width - cw - 2);
     let py = (cy - ch / 2).clamp(2, height - ch - 2);
 
-    if overlaps_any_building(px, py, cw, ch, buildings) { return; }
-    if map.has_excluded_tile(px, py, cw, ch) { return; }
+    if overlaps_any_building(px, py, cw, ch, buildings) {
+        return;
+    }
+    if map.has_excluded_tile(px, py, cw, ch) {
+        return;
+    }
 
     // Fence perimeter with gate
     for y in py..py + ch {
@@ -3748,8 +4445,15 @@ fn place_corral(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit
 }
 
 /// Places a town well — a circular stone structure with water.
-fn place_town_well(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) {
-    if width < 60 || height < 60 { return; }
+fn place_town_well(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+) {
+    if width < 60 || height < 60 {
+        return;
+    }
     let w_seed = seed.wrapping_add(444555);
     // Place near the town center, offset from plaza
     let cx = width / 2 - 10 + (value_noise(4, 4, w_seed) * 8.0) as CoordinateUnit;
@@ -3758,7 +4462,9 @@ fn place_town_well(map: &mut GameMap, width: CoordinateUnit, height: CoordinateU
     let wy = cy.clamp(4, height - 4);
 
     // Check that the 3×3 footprint doesn't overlap excluded tiles
-    if map.has_excluded_tile(wx - 1, wy - 1, 3, 3) { return; }
+    if map.has_excluded_tile(wx - 1, wy - 1, 3, 3) {
+        return;
+    }
 
     // 3×3 well structure: stone ring with water center
     for dy in -1..=1i32 {
@@ -3778,8 +4484,15 @@ fn place_town_well(map: &mut GameMap, width: CoordinateUnit, height: CoordinateU
 }
 
 /// Places a gallows structure — wooden platform with posts.
-fn place_gallows(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) {
-    if width < 80 || height < 60 { return; }
+fn place_gallows(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+) {
+    if width < 80 || height < 60 {
+        return;
+    }
     let g_seed = seed.wrapping_add(555777);
     // Place near the town center, slightly offset
     let cx = width / 2 + 20 + (value_noise(3, 3, g_seed) * 10.0) as CoordinateUnit;
@@ -3788,7 +4501,9 @@ fn place_gallows(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUni
     let gy = cy.clamp(4, height - 8);
 
     // Check that the 4×4 footprint doesn't overlap excluded tiles
-    if map.has_excluded_tile(gx, gy, 4, 4) { return; }
+    if map.has_excluded_tile(gx, gy, 4, 4) {
+        return;
+    }
 
     // 4×4 gallows platform
     for dy in 0..4i32 {
@@ -3807,8 +4522,15 @@ fn place_gallows(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUni
 }
 
 /// Places a tall water tower near the edge of town.
-fn place_water_tower(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) {
-    if width < 80 || height < 60 { return; }
+fn place_water_tower(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+) {
+    if width < 80 || height < 60 {
+        return;
+    }
     let wt_seed = seed.wrapping_add(666888);
     let cx = width / 4 + (value_noise(6, 6, wt_seed) * 20.0) as CoordinateUnit;
     let cy = height / 4 + (value_noise(7, 7, wt_seed) * 10.0) as CoordinateUnit;
@@ -3816,7 +4538,9 @@ fn place_water_tower(map: &mut GameMap, width: CoordinateUnit, height: Coordinat
     let ty = cy.clamp(4, height - 8);
 
     // Check that the 5×5 footprint doesn't overlap excluded tiles
-    if map.has_excluded_tile(tx, ty, 5, 5) { return; }
+    if map.has_excluded_tile(tx, ty, 5, 5) {
+        return;
+    }
 
     // 5×5 water tower: 4 leg posts, tank on top (represented as tower height)
     for dy in 0..5i32 {
@@ -3838,8 +4562,15 @@ fn place_water_tower(map: &mut GameMap, width: CoordinateUnit, height: Coordinat
 /// Places railroad tracks near the northern and southern edges of the map.
 /// Tracks never intersect the main road. Where tracks cross the river a
 /// rail bridge is placed automatically.
-fn place_railroad(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) {
-    if width < 80 || height < 80 { return; }
+fn place_railroad(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+) {
+    if width < 80 || height < 80 {
+        return;
+    }
     let rail_seed = seed.wrapping_add(777999);
 
     // Two track lines: one near the north edge, one near the south edge.
@@ -3852,14 +4583,26 @@ fn place_railroad(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUn
         for x in 4..width - 4 {
             let wobble = (value_noise(x, rail_y, rail_seed) * 1.5) as CoordinateUnit;
             let y = rail_y + wobble;
-            if y <= 0 || y >= height - 1 { continue; }
+            if y <= 0 || y >= height - 1 {
+                continue;
+            }
             let pos = GridVec::new(x, y);
             if let Some(voxel) = map.get_voxel_at(&pos) {
                 // Never place tracks on the main road or buildings
-                if matches!(voxel.floor, Some(Floor::DirtRoad) | Some(Floor::Sidewalk)) { continue; }
-                if matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall)) { continue; }
+                if matches!(voxel.floor, Some(Floor::DirtRoad) | Some(Floor::Sidewalk)) {
+                    continue;
+                }
+                if matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall)) {
+                    continue;
+                }
                 // Rail bridge over water/beach — lay bridge tile with track
-                if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand)) {
+                if matches!(
+                    voxel.floor,
+                    Some(Floor::ShallowWater)
+                        | Some(Floor::DeepWater)
+                        | Some(Floor::Beach)
+                        | Some(Floor::BeachSand)
+                ) {
                     if let Some(voxel) = map.get_voxel_at_mut(&pos) {
                         voxel.floor = Some(Floor::Bridge);
                         voxel.props = Some(Props::RailTrack);
@@ -3880,19 +4623,34 @@ fn place_railroad(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUn
                 let side_pos = GridVec::new(x, y + dy);
                 if let Some(voxel) = map.get_voxel_at_mut(&side_pos)
                     && voxel.props.is_none()
-                    && !matches!(voxel.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor)
-                        | Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::DirtRoad)
-                        | Some(Floor::Sidewalk) | Some(Floor::Bridge)) {
-                        voxel.floor = Some(Floor::Gravel);
-                    }
+                    && !matches!(
+                        voxel.floor,
+                        Some(Floor::WoodPlanks)
+                            | Some(Floor::StoneFloor)
+                            | Some(Floor::ShallowWater)
+                            | Some(Floor::DeepWater)
+                            | Some(Floor::DirtRoad)
+                            | Some(Floor::Sidewalk)
+                            | Some(Floor::Bridge)
+                    )
+                {
+                    voxel.floor = Some(Floor::Gravel);
+                }
             }
         }
     }
 }
 
 /// Places a windmill on the outskirts of town.
-fn place_windmill(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) {
-    if width < 80 || height < 60 { return; }
+fn place_windmill(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+) {
+    if width < 80 || height < 60 {
+        return;
+    }
     let wm_seed = seed.wrapping_add(888111);
     let cx = width * 3 / 4 + (value_noise(9, 9, wm_seed) * 15.0) as CoordinateUnit;
     let cy = height / 4 + (value_noise(10, 10, wm_seed) * 10.0) as CoordinateUnit;
@@ -3900,7 +4658,9 @@ fn place_windmill(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUn
     let my = cy.clamp(4, height - 8);
 
     // Check that the 5×5 footprint doesn't overlap excluded tiles
-    if map.has_excluded_tile(mx, my, 5, 5) { return; }
+    if map.has_excluded_tile(mx, my, 5, 5) {
+        return;
+    }
 
     // 5×5 windmill base with stone walls
     for dy in 0..5i32 {
@@ -3930,28 +4690,44 @@ fn place_windmill(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUn
 }
 
 /// Places lamp posts along cross streets at regular intervals.
-fn place_lamp_posts(map: &mut GameMap, height: CoordinateUnit, street_x: CoordinateUnit, seed: NoiseSeed) {
+fn place_lamp_posts(
+    map: &mut GameMap,
+    height: CoordinateUnit,
+    street_x: CoordinateUnit,
+    seed: NoiseSeed,
+) {
     let lamp_seed = seed.wrapping_add(111333);
     for y in (40..height - 40).step_by(12) {
         let noise = value_noise(street_x, y, lamp_seed);
-        if noise > 0.4 { continue; } // skip some positions for variety
+        if noise > 0.4 {
+            continue;
+        } // skip some positions for variety
         // Place lamp posts on both sides of the street
         for &dx in &[-3i32, 3] {
             let x = street_x + dx;
             let pos = GridVec::new(x, y);
             if let Some(voxel) = map.get_voxel_at(&pos)
                 && voxel.props.is_none()
-                    && matches!(voxel.floor, Some(Floor::Sidewalk) | Some(Floor::DirtRoad) | Some(Floor::Sand))
-                {
-                    set_prop(map, x, y, Props::LampPost);
-                }
+                && matches!(
+                    voxel.floor,
+                    Some(Floor::Sidewalk) | Some(Floor::DirtRoad) | Some(Floor::Sand)
+                )
+            {
+                set_prop(map, x, y, Props::LampPost);
+            }
         }
     }
 }
 
 /// Places a large stone church building — a prominent landmark with stone walls,
 /// stained glass (signs), and pews. Uses the same stone material as the mission.
-fn place_stone_church(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed, buildings: &[Building]) {
+fn place_stone_church(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+    buildings: &[Building],
+) {
     let cw: CoordinateUnit = 16;
     let ch: CoordinateUnit = 20;
     if width < cw + 20 || height < ch + 20 {
@@ -3969,8 +4745,12 @@ fn place_stone_church(map: &mut GameMap, width: CoordinateUnit, height: Coordina
             let bx = (cx - cw / 2).clamp(2, width - cw - 2);
             let by = (cy - ch / 2).clamp(2, height - ch - 2);
 
-            if overlaps_any_building(bx, by, cw, ch, buildings) { continue; }
-            if map.has_excluded_tile(bx, by, cw, ch) { continue; }
+            if overlaps_any_building(bx, by, cw, ch, buildings) {
+                continue;
+            }
+            if map.has_excluded_tile(bx, by, cw, ch) {
+                continue;
+            }
 
             // Stone walls and floor
             for y in by..by + ch {
@@ -3978,7 +4758,8 @@ fn place_stone_church(map: &mut GameMap, width: CoordinateUnit, height: Coordina
                     let pos = GridVec::new(x, y);
                     if let Some(voxel) = map.get_voxel_at_mut(&pos) {
                         let is_border = x == bx || x == bx + cw - 1 || y == by || y == by + ch - 1;
-                        let is_main_door = y == by + ch - 1 && (x == bx + cw / 2 || x == bx + cw / 2 - 1);
+                        let is_main_door =
+                            y == by + ch - 1 && (x == bx + cw / 2 || x == bx + cw / 2 - 1);
                         let is_back_door = y == by && x == bx + cw / 2;
                         if is_border && !is_main_door && !is_back_door {
                             voxel.props = Some(Props::StoneWall);
@@ -4032,8 +4813,16 @@ fn place_stone_church(map: &mut GameMap, width: CoordinateUnit, height: Coordina
 
 /// Places small outpost structures along the map edges — defensive positions
 /// that serve as spawn anchors for factions on the outskirts.
-fn place_outposts(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed, buildings: &[Building]) {
-    if width < 30 || height < 30 { return; } // map too small for outposts
+fn place_outposts(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+    buildings: &[Building],
+) {
+    if width < 30 || height < 30 {
+        return;
+    } // map too small for outposts
     let out_seed = seed.wrapping_add(191919);
     let num_outposts = 4;
     for i in 0..num_outposts {
@@ -4049,8 +4838,12 @@ fn place_outposts(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUn
         let ow: CoordinateUnit = 6;
         let oh: CoordinateUnit = 6;
 
-        if overlaps_any_building(ox, oy, ow, oh, buildings) { continue; }
-        if map.has_excluded_tile(ox, oy, ow, oh) { continue; }
+        if overlaps_any_building(ox, oy, ow, oh, buildings) {
+            continue;
+        }
+        if map.has_excluded_tile(ox, oy, ow, oh) {
+            continue;
+        }
 
         for dy in 0..oh {
             for dx in 0..ow {
@@ -4077,8 +4870,15 @@ fn place_outposts(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUn
 
 /// Places natural rock formations using noise-driven cluster placement.
 /// Creates visually interesting terrain features on the outskirts.
-fn place_rock_formations(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) {
-    if width < 80 || height < 80 { return; } // map too small for rock formations
+fn place_rock_formations(
+    map: &mut GameMap,
+    width: CoordinateUnit,
+    height: CoordinateUnit,
+    seed: NoiseSeed,
+) {
+    if width < 80 || height < 80 {
+        return;
+    } // map too small for rock formations
     let rock_seed = seed.wrapping_add(282828);
     let num_formations = 6;
     for i in 0..num_formations {
@@ -4094,22 +4894,37 @@ fn place_rock_formations(map: &mut GameMap, width: CoordinateUnit, height: Coord
         let mut placed = 0;
         for dy in -3i32..=3 {
             for dx in -3i32..=3 {
-                if placed >= cluster_size { break; }
+                if placed >= cluster_size {
+                    break;
+                }
                 let pos = GridVec::new(fx + dx, fy + dy);
                 let noise = value_noise(pos.x, pos.y, rock_seed.wrapping_add(222));
-                if noise > 0.4 { continue; }
+                if noise > 0.4 {
+                    continue;
+                }
                 if let Some(voxel) = map.get_voxel_at(&pos) {
-                    if voxel.props.is_some() { continue; }
-                    if matches!(voxel.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor)
-                        | Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::DirtRoad)
-                        | Some(Floor::Bridge) | Some(Floor::BeachSand)) {
+                    if voxel.props.is_some() {
+                        continue;
+                    }
+                    if matches!(
+                        voxel.floor,
+                        Some(Floor::WoodPlanks)
+                            | Some(Floor::StoneFloor)
+                            | Some(Floor::ShallowWater)
+                            | Some(Floor::DeepWater)
+                            | Some(Floor::DirtRoad)
+                            | Some(Floor::Bridge)
+                            | Some(Floor::BeachSand)
+                    ) {
                         continue;
                     }
                 }
                 set_prop(map, pos.x, pos.y, Props::Rock);
                 placed += 1;
             }
-            if placed >= cluster_size { break; }
+            if placed >= cluster_size {
+                break;
+            }
         }
     }
 }
@@ -4130,22 +4945,36 @@ fn place_gunpowder_barrels(
         for x in 2..width - 2 {
             let pos = GridVec::new(x, y);
             if let Some(voxel) = map.get_voxel_at(&pos) {
-                if voxel.props.is_some() { continue; }
+                if voxel.props.is_some() {
+                    continue;
+                }
                 // Only place on suitable terrain
-                if !matches!(voxel.floor,
-                    Some(Floor::Dirt) | Some(Floor::Sand) | Some(Floor::Gravel)
-                    | Some(Floor::Sidewalk) | Some(Floor::WoodPlanks) | Some(Floor::StoneFloor)
-                ) { continue; }
+                if !matches!(
+                    voxel.floor,
+                    Some(Floor::Dirt)
+                        | Some(Floor::Sand)
+                        | Some(Floor::Gravel)
+                        | Some(Floor::Sidewalk)
+                        | Some(Floor::WoodPlanks)
+                        | Some(Floor::StoneFloor)
+                ) {
+                    continue;
+                }
             } else {
                 continue;
             }
             // Skip near spawn
-            if pos.distance_squared(SPAWN_POINT) < 100 { continue; }
+            if pos.distance_squared(SPAWN_POINT) < 100 {
+                continue;
+            }
             let noise = value_noise(x, y, barrel_seed);
-            if noise > GUNPOWDER_BARREL_SPAWN_RATE { continue; }
+            if noise > GUNPOWDER_BARREL_SPAWN_RATE {
+                continue;
+            }
             // Prefer tiles near buildings (at least one adjacent wall)
             let near_wall = pos.cardinal_neighbors().iter().any(|n| {
-                map.get_voxel_at(n).is_some_and(|v| v.props.as_ref().is_some_and(|p| p.is_wall()))
+                map.get_voxel_at(n)
+                    .is_some_and(|v| v.props.as_ref().is_some_and(|p| p.is_wall()))
             });
             if near_wall || value_noise(y, x, barrel_seed.wrapping_add(111)) < 0.3 {
                 set_prop(map, x, y, Props::GunpowderBarrel);
@@ -4164,18 +4993,25 @@ pub fn clear_around(map: &mut GameMap, center: GridVec, radius: CoordinateUnit) 
         for dx in -radius..=radius {
             let pos = center + GridVec::new(dx, dy);
             if pos.distance_squared(center) <= radius_sq
-                && let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                    // Don't clear border walls
-                    let is_border = pos.x == 0 || pos.y == 0
-                        || pos.x == map_width - 1 || pos.y == map_height - 1;
-                    if !is_border {
-                        voxel.props = None;
-                        // Replace water/beach with dirt so the area is walkable
-                        if matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater) | Some(Floor::Beach) | Some(Floor::BeachSand)) {
-                            voxel.floor = Some(Floor::Dirt);
-                        }
+                && let Some(voxel) = map.get_voxel_at_mut(&pos)
+            {
+                // Don't clear border walls
+                let is_border =
+                    pos.x == 0 || pos.y == 0 || pos.x == map_width - 1 || pos.y == map_height - 1;
+                if !is_border {
+                    voxel.props = None;
+                    // Replace water/beach with dirt so the area is walkable
+                    if matches!(
+                        voxel.floor,
+                        Some(Floor::ShallowWater)
+                            | Some(Floor::DeepWater)
+                            | Some(Floor::Beach)
+                            | Some(Floor::BeachSand)
+                    ) {
+                        voxel.floor = Some(Floor::Dirt);
                     }
                 }
+            }
         }
     }
 }
@@ -4205,14 +5041,25 @@ mod tests {
         // Borders should be passable (no wall props) so player can escape
         let mut any_border_passable = false;
         for x in 0..20 {
-            if map.is_passable(&GridVec::new(x, 0)) { any_border_passable = true; }
-            if map.is_passable(&GridVec::new(x, 14)) { any_border_passable = true; }
+            if map.is_passable(&GridVec::new(x, 0)) {
+                any_border_passable = true;
+            }
+            if map.is_passable(&GridVec::new(x, 14)) {
+                any_border_passable = true;
+            }
         }
         for y in 0..15 {
-            if map.is_passable(&GridVec::new(0, y)) { any_border_passable = true; }
-            if map.is_passable(&GridVec::new(19, y)) { any_border_passable = true; }
+            if map.is_passable(&GridVec::new(0, y)) {
+                any_border_passable = true;
+            }
+            if map.is_passable(&GridVec::new(19, y)) {
+                any_border_passable = true;
+            }
         }
-        assert!(any_border_passable, "At least some border tiles should be passable for escape");
+        assert!(
+            any_border_passable,
+            "At least some border tiles should be passable for escape"
+        );
     }
 
     #[test]
@@ -4303,7 +5150,10 @@ mod tests {
                 break;
             }
         }
-        assert!(any_different, "Different seeds should produce different maps");
+        assert!(
+            any_different,
+            "Different seeds should produce different maps"
+        );
     }
 
     #[test]
@@ -4339,7 +5189,10 @@ mod tests {
                 }
             }
         }
-        assert!(wood_count > 50, "Map should contain buildings with wood plank floors, found {wood_count}");
+        assert!(
+            wood_count > 50,
+            "Map should contain buildings with wood plank floors, found {wood_count}"
+        );
     }
 
     #[test]
@@ -4374,7 +5227,11 @@ mod tests {
                 }
             }
         }
-        assert!(alley_count > 0, "Map should have alley tiles between buildings (found {})", alley_count);
+        assert!(
+            alley_count > 0,
+            "Map should have alley tiles between buildings (found {})",
+            alley_count
+        );
     }
 
     #[test]
@@ -4391,9 +5248,13 @@ mod tests {
                         break;
                     }
                 }
-                if found { break; }
+                if found {
+                    break;
+                }
             }
-            if found { break; }
+            if found {
+                break;
+            }
         }
         assert!(found, "At least one of 20 seeds should produce plaza tiles");
     }
@@ -4410,9 +5271,13 @@ mod tests {
                         break;
                     }
                 }
-                if found { break; }
+                if found {
+                    break;
+                }
             }
-            if found { break; }
+            if found {
+                break;
+            }
         }
         assert!(found, "At least one seed should produce rooftop tiles");
     }
@@ -4428,14 +5293,17 @@ mod tests {
     fn bsp_buildings_do_not_overlap() {
         // BSP guarantees non-overlapping plots — verify no building footprints
         // intersect.
-        let (buildings, _, _) = generate_buildings_bsp(400, 280, 42, &[60, 100, 140], &[80, 160, 240], 3, 2);
+        let (buildings, _, _) =
+            generate_buildings_bsp(400, 280, 42, &[60, 100, 140], &[80, 160, 240], 3, 2);
         for (i, a) in buildings.iter().enumerate() {
             for b in &buildings[i + 1..] {
-                let overlaps = a.x < b.x + b.w && a.x + a.w > b.x
-                    && a.y < b.y + b.h && a.y + a.h > b.y;
-                assert!(!overlaps,
+                let overlaps =
+                    a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+                assert!(
+                    !overlaps,
                     "Buildings at ({},{}) {}x{} and ({},{}) {}x{} overlap",
-                    a.x, a.y, a.w, a.h, b.x, b.y, b.w, b.h);
+                    a.x, a.y, a.w, a.h, b.x, b.y, b.w, b.h
+                );
             }
         }
     }
@@ -4445,12 +5313,16 @@ mod tests {
         let avenue_ys = vec![50, 90];
         // Near avenue → commercial zone
         let zone = assign_zone(100, 52, 400, 280, &avenue_ys, 42);
-        assert_eq!(zone, ZONE_COMMERCIAL,
-            "Tiles near avenues should be commercial zones");
+        assert_eq!(
+            zone, ZONE_COMMERCIAL,
+            "Tiles near avenues should be commercial zones"
+        );
         // Far from avenue → not commercial
         let zone_far = assign_zone(100, 200, 400, 280, &avenue_ys, 42);
-        assert_ne!(zone_far, ZONE_COMMERCIAL,
-            "Tiles far from avenues should not be commercial zones");
+        assert_ne!(
+            zone_far, ZONE_COMMERCIAL,
+            "Tiles far from avenues should not be commercial zones"
+        );
     }
 
     #[test]
@@ -4467,9 +5339,11 @@ mod tests {
         // church) should be placed before BSP subdivision.
         let (buildings, _, _) = generate_buildings_bsp(200, 140, 42, &[60], &[80], 3, 2);
         // Expect at least the 3 anchors
-        assert!(buildings.len() >= 3,
+        assert!(
+            buildings.len() >= 3,
             "Large map should have at least 3 landmark anchor buildings, found {}",
-            buildings.len());
+            buildings.len()
+        );
         // Police Station (kind=4), Saloon (kind=1), Church (kind=6) should appear
         let has_police = buildings.iter().any(|b| b.kind == 4);
         let has_saloon = buildings.iter().any(|b| b.kind == 1);
@@ -4488,9 +5362,15 @@ mod tests {
         for y in 0..20 {
             for x in 0..400 {
                 if map.voxels[y][x].props.is_some()
-                    && matches!(map.voxels[y][x].props,
-                        Some(Props::Fence) | Some(Props::DeadTree) | Some(Props::Rock)
-                        | Some(Props::Barrel) | Some(Props::Crate) | Some(Props::Bush))
+                    && matches!(
+                        map.voxels[y][x].props,
+                        Some(Props::Fence)
+                            | Some(Props::DeadTree)
+                            | Some(Props::Rock)
+                            | Some(Props::Barrel)
+                            | Some(Props::Crate)
+                            | Some(Props::Bush)
+                    )
                 {
                     scatter_count += 1;
                 }
@@ -4499,16 +5379,24 @@ mod tests {
         for y in 260..280 {
             for x in 0..400 {
                 if map.voxels[y][x].props.is_some()
-                    && matches!(map.voxels[y][x].props,
-                        Some(Props::Fence) | Some(Props::DeadTree) | Some(Props::Rock)
-                        | Some(Props::Barrel) | Some(Props::Crate) | Some(Props::Bush))
+                    && matches!(
+                        map.voxels[y][x].props,
+                        Some(Props::Fence)
+                            | Some(Props::DeadTree)
+                            | Some(Props::Rock)
+                            | Some(Props::Barrel)
+                            | Some(Props::Crate)
+                            | Some(Props::Bush)
+                    )
                 {
                     scatter_count += 1;
                 }
             }
         }
-        assert!(scatter_count > 0,
-            "Town perimeter should have transition zone scatter");
+        assert!(
+            scatter_count > 0,
+            "Town perimeter should have transition zone scatter"
+        );
     }
 
     #[test]
@@ -4534,9 +5422,14 @@ mod tests {
                         has_dirt = true;
                     }
                 }
-                if has_wood && has_dirt { break; }
+                if has_wood && has_dirt {
+                    break;
+                }
             }
-            assert!(has_wood, "Seed {seed}: map must have buildings (wood plank floors)");
+            assert!(
+                has_wood,
+                "Seed {seed}: map must have buildings (wood plank floors)"
+            );
             assert!(has_dirt, "Seed {seed}: map must have streets (dirt roads)");
             // Spawn area must be clear
             let spawn_passable = map.is_passable(&SPAWN_POINT);
@@ -4549,14 +5442,20 @@ mod tests {
                     // If it has a wall and water floor, it's a violation
                     if let Some(voxel) = map.get_voxel_at(&GridVec::new(x as i32, y as i32)) {
                         if voxel.props.as_ref().is_some_and(|p| p.is_wall())
-                            && matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater))
+                            && matches!(
+                                voxel.floor,
+                                Some(Floor::ShallowWater) | Some(Floor::DeepWater)
+                            )
                         {
                             building_on_water = true;
                         }
                     }
                 }
             }
-            assert!(!building_on_water, "Seed {seed}: no building walls should be on river tiles");
+            assert!(
+                !building_on_water,
+                "Seed {seed}: no building walls should be on river tiles"
+            );
         }
     }
 
@@ -4567,7 +5466,8 @@ mod tests {
         assert!(
             map.is_passable(&pos),
             "120x80: ({},{}) not passable, floor={:?} props={:?}",
-            pos.x, pos.y,
+            pos.x,
+            pos.y,
             map.get_voxel_at(&pos).map(|v| &v.floor),
             map.get_voxel_at(&pos).and_then(|v| v.props.as_ref())
         );
@@ -4579,7 +5479,13 @@ mod tests {
         // than the old single-building-per-lot approach. On a map with
         // multiple road grid cells, empty lots are subdivided into plots.
         let (buildings, _, _) = generate_buildings_bsp(
-            400, 280, 42, &[60, 100, 140, 180], &[80, 160, 240, 320], 3, 2,
+            400,
+            280,
+            42,
+            &[60, 100, 140, 180],
+            &[80, 160, 240, 320],
+            3,
+            2,
         );
         // With 4 avenues and 4 cross streets, there are many lots.
         // Each lot is partitioned into a grid of plots.
@@ -4605,7 +5511,13 @@ mod tests {
         // Lots that already have BSP buildings should still receive
         // additional lot-grid buildings in uncovered areas.
         let (buildings, _, _) = generate_buildings_bsp(
-            400, 280, 42, &[60, 100, 140, 180], &[80, 160, 240, 320], 3, 2,
+            400,
+            280,
+            42,
+            &[60, 100, 140, 180],
+            &[80, 160, 240, 320],
+            3,
+            2,
         );
         // The denser approach should produce significantly more buildings
         // than a system that skips lots with any BSP coverage.
@@ -4617,11 +5529,13 @@ mod tests {
         // Verify no exact overlaps between any two buildings
         for (i, a) in buildings.iter().enumerate() {
             for b in &buildings[i + 1..] {
-                let overlaps = a.x < b.x + b.w && a.x + a.w > b.x
-                    && a.y < b.y + b.h && a.y + a.h > b.y;
-                assert!(!overlaps,
+                let overlaps =
+                    a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+                assert!(
+                    !overlaps,
                     "Buildings at ({},{}) {}x{} and ({},{}) {}x{} overlap",
-                    a.x, a.y, a.w, a.h, b.x, b.y, b.w, b.h);
+                    a.x, a.y, a.w, a.h, b.x, b.y, b.w, b.h
+                );
             }
         }
     }
@@ -4632,9 +5546,7 @@ mod tests {
         // boundary offset of 1 tile, not the full road+sidewalk width.
         let avenue_ys: Vec<CoordinateUnit> = vec![100];
         let cross_xs: Vec<CoordinateUnit> = vec![100];
-        let (buildings, _, _) = generate_buildings_bsp(
-            200, 200, 42, &avenue_ys, &cross_xs, 3, 2,
-        );
+        let (buildings, _, _) = generate_buildings_bsp(200, 200, 42, &avenue_ys, &cross_xs, 3, 2);
         // With only one avenue and one cross street, there are 4 lots.
         // Edge lots (adjacent to map border) should be large enough to
         // hold buildings because they use a minimal 1-tile margin.
@@ -4667,18 +5579,22 @@ mod tests {
                         let right = GridVec::new(x as i32 + 1, y as i32);
                         let up = GridVec::new(x as i32, y as i32 - 1);
                         let down = GridVec::new(x as i32, y as i32 + 1);
-                        let l_floor = map.get_voxel_at(&left).is_some_and(|v|
+                        let l_floor = map.get_voxel_at(&left).is_some_and(|v| {
                             matches!(v.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor))
-                            && !v.props.as_ref().is_some_and(|p| p.is_wall()));
-                        let r_floor = map.get_voxel_at(&right).is_some_and(|v|
+                                && !v.props.as_ref().is_some_and(|p| p.is_wall())
+                        });
+                        let r_floor = map.get_voxel_at(&right).is_some_and(|v| {
                             matches!(v.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor))
-                            && !v.props.as_ref().is_some_and(|p| p.is_wall()));
-                        let u_floor = map.get_voxel_at(&up).is_some_and(|v|
+                                && !v.props.as_ref().is_some_and(|p| p.is_wall())
+                        });
+                        let u_floor = map.get_voxel_at(&up).is_some_and(|v| {
                             matches!(v.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor))
-                            && !v.props.as_ref().is_some_and(|p| p.is_wall()));
-                        let d_floor = map.get_voxel_at(&down).is_some_and(|v|
+                                && !v.props.as_ref().is_some_and(|p| p.is_wall())
+                        });
+                        let d_floor = map.get_voxel_at(&down).is_some_and(|v| {
                             matches!(v.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor))
-                            && !v.props.as_ref().is_some_and(|p| p.is_wall()));
+                                && !v.props.as_ref().is_some_and(|p| p.is_wall())
+                        });
                         // Interior divider: floor on both sides horizontally OR vertically
                         if (l_floor && r_floor) || (u_floor && d_floor) {
                             found_room_grid = true;
@@ -4686,11 +5602,18 @@ mod tests {
                         }
                     }
                 }
-                if found_room_grid { break; }
+                if found_room_grid {
+                    break;
+                }
             }
-            if found_room_grid { break; }
+            if found_room_grid {
+                break;
+            }
         }
-        assert!(found_room_grid, "Large buildings should have interior dividing walls (room grid)");
+        assert!(
+            found_room_grid,
+            "Large buildings should have interior dividing walls (room grid)"
+        );
     }
 
     #[test]
@@ -4700,7 +5623,16 @@ mod tests {
         let mut map = GameMap {
             width: 10,
             height: 10,
-            voxels: vec![vec![Voxel { floor: Some(Floor::Dirt), props: None }; 10]; 10],
+            voxels: vec![
+                vec![
+                    Voxel {
+                        floor: Some(Floor::Dirt),
+                        props: None
+                    };
+                    10
+                ];
+                10
+            ],
             fire_turns: HashMap::new(),
             fire_previous_floor: HashMap::new(),
             sand_cloud_turns: HashMap::new(),
@@ -4716,7 +5648,8 @@ mod tests {
         map.voxels[6][5].floor = Some(Floor::DeepWater);
 
         // Record previous floor and set on fire.
-        map.fire_previous_floor.insert(bridge_pos, Some(Floor::Bridge));
+        map.fire_previous_floor
+            .insert(bridge_pos, Some(Floor::Bridge));
         map.voxels[5][5].floor = Some(Floor::Fire);
         map.fire_turns.insert(bridge_pos, 0);
 
@@ -4737,7 +5670,10 @@ mod tests {
         let sample_y = 140;
         let mut in_road = false;
         for x in 0..400 {
-            let is_road = matches!(map.voxels[sample_y as usize][x as usize].floor, Some(Floor::DirtRoad));
+            let is_road = matches!(
+                map.voxels[sample_y as usize][x as usize].floor,
+                Some(Floor::DirtRoad)
+            );
             if is_road && !in_road {
                 cross_road_xs.push(x);
             }
@@ -4746,9 +5682,15 @@ mod tests {
         // With the wider spacing (48-64 base + ±12 variance), there should be
         // fewer cross streets. On a 400-wide map with old 28-42 spacing, there
         // were ~8-10 roads. With new 48-64 spacing, expect roughly 4-7.
-        assert!(cross_road_xs.len() >= 3,
-            "Should still generate at least 3 vertical roads, got {}", cross_road_xs.len());
-        assert!(cross_road_xs.len() <= 10,
-            "Expected fewer vertical roads with wider spacing, got {}", cross_road_xs.len());
+        assert!(
+            cross_road_xs.len() >= 3,
+            "Should still generate at least 3 vertical roads, got {}",
+            cross_road_xs.len()
+        );
+        assert!(
+            cross_road_xs.len() <= 10,
+            "Expected fewer vertical roads with wider spacing, got {}",
+            cross_road_xs.len()
+        );
     }
 }

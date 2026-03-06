@@ -3,7 +3,10 @@ use bevy::prelude::*;
 use crate::components::{BlocksMovement, Health, PlayerControlled, Position, Stamina, Viewshed};
 use crate::events::MoveIntent;
 use crate::grid_vec::GridVec;
-use crate::resources::{BloodMap, CombatLog, CursorPosition, GameMapResource, GameState, InputState, SpatialIndex, TurnCounter, TurnState};
+use crate::resources::{
+    BloodMap, CombatLog, CursorPosition, GameMapResource, GameState, InputState, SpatialIndex,
+    TurnCounter, TurnState,
+};
 /// Health threshold below which entities leave blood trails when moving.
 const BLOOD_DRIP_THRESHOLD: i32 = 40;
 
@@ -48,9 +51,10 @@ pub fn movement_system(
         let water_blocked = game_map.0.is_water(&target);
 
         // 2. Check spatial index for blocking entities at the target.
-        let entity_blocked = spatial.entities_at(&target).iter().any(|&e| {
-            e != intent.entity && blockers.contains(e)
-        });
+        let entity_blocked = spatial
+            .entities_at(&target)
+            .iter()
+            .any(|&e| e != intent.entity && blockers.contains(e));
 
         let is_player = players.contains(intent.entity);
 
@@ -59,9 +63,10 @@ pub fn movement_system(
 
             // ── Blood trail: wounded entities leave blood below 40 HP ─
             if let Ok(hp) = healths.get(intent.entity)
-                && hp.current < BLOOD_DRIP_THRESHOLD {
-                    blood_map.stains.insert(old_pos, turn_counter.0);
-                }
+                && hp.current < BLOOD_DRIP_THRESHOLD
+            {
+                blood_map.stains.insert(old_pos, turn_counter.0);
+            }
 
             let delta = GridVec::new(intent.dx, intent.dy);
             pos.x = target.x;

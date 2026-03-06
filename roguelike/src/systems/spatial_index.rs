@@ -7,10 +7,7 @@ use crate::resources::SpatialIndex;
 /// O(1) entity-at-position lookups without scanning all entities.
 ///
 /// Runs unconditionally at the start of `Update`.
-pub fn spatial_index_system(
-    mut index: ResMut<SpatialIndex>,
-    query: Query<(Entity, &Position)>,
-) {
+pub fn spatial_index_system(mut index: ResMut<SpatialIndex>, query: Query<(Entity, &Position)>) {
     index.map.clear();
     for (entity, pos) in &query {
         index.map.entry(pos.as_grid_vec()).or_default().push(entity);

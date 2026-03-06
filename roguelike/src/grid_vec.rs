@@ -210,7 +210,8 @@ impl GridVec {
     #[inline]
     pub fn rotate_45_cw(self) -> Self {
         let n = self.king_step();
-        let idx = Self::DIRECTIONS_8.iter()
+        let idx = Self::DIRECTIONS_8
+            .iter()
             .position(|&d| d == n)
             .map(|i| (i + 1) % 8)
             .unwrap_or(0);
@@ -682,7 +683,10 @@ mod tests {
         for i in 1..line.len() {
             let dx = (line[i].x - line[i - 1].x).abs();
             let dy = (line[i].y - line[i - 1].y).abs();
-            assert!(dx <= 1 && dy <= 1, "Step {i} not 8-connected: dx={dx}, dy={dy}");
+            assert!(
+                dx <= 1 && dy <= 1,
+                "Step {i} not 8-connected: dx={dx}, dy={dy}"
+            );
         }
     }
 
@@ -697,7 +701,10 @@ mod tests {
         let mut bwd_set: Vec<GridVec> = backward.clone();
         fwd_set.sort();
         bwd_set.sort();
-        assert_eq!(fwd_set, bwd_set, "Forward and backward should cover same points");
+        assert_eq!(
+            fwd_set, bwd_set,
+            "Forward and backward should cover same points"
+        );
     }
 
     // ─── Neighbor tests ─────────────────────────────────────────

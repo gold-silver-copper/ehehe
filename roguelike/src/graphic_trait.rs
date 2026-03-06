@@ -1,5 +1,5 @@
-use crate::typeenums::{Floor, Props};
 use crate::typedefs::{GraphicTriple, RatColor};
+use crate::typeenums::{Floor, Props};
 use crate::voxel::dim;
 
 /// Trait for game elements that can be rendered as a GraphicTriple.

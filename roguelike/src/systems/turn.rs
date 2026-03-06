@@ -1,8 +1,11 @@
 use bevy::prelude::*;
 
-use crate::components::{Dead, Health, Stamina, PlayerControlled, Position};
+use crate::components::{Dead, Health, PlayerControlled, Position, Stamina};
 use crate::grid_vec::GridVec;
-use crate::resources::{CombatLog, DynamicRng, ExtraWorldTicks, GameMapResource, MapSeed, SoundEvents, SpectatingAfterDeath, TurnCounter, TurnState};
+use crate::resources::{
+    CombatLog, DynamicRng, ExtraWorldTicks, GameMapResource, MapSeed, SoundEvents,
+    SpectatingAfterDeath, TurnCounter, TurnState,
+};
 use crate::typeenums::Floor;
 
 /// Stamina regenerated per world turn.
@@ -87,12 +90,16 @@ pub fn fire_system(
         let entity_name = crate::components::display_name(name);
         if let Some(voxel) = game_map.0.get_voxel_at(&p)
             && matches!(voxel.floor, Some(Floor::Fire))
-                && let Ok(mut hp) = health_query.get_mut(entity) {
-                    let actual = hp.apply_damage(FIRE_DAMAGE);
-                    if actual > 0 {
-                        combat_log.push_at(format!("{entity_name} is burned by fire for {actual} damage!"), p);
-                    }
-                }
+            && let Ok(mut hp) = health_query.get_mut(entity)
+        {
+            let actual = hp.apply_damage(FIRE_DAMAGE);
+            if actual > 0 {
+                combat_log.push_at(
+                    format!("{entity_name} is burned by fire for {actual} damage!"),
+                    p,
+                );
+            }
+        }
     }
 
     // Register any new fire tiles that the tracker doesn't know about yet.
@@ -102,35 +109,63 @@ pub fn fire_system(
         for x in 1..map_width - 1 {
             let pos = GridVec::new(x, y);
             if let Some(voxel) = game_map.0.get_voxel_at(&pos)
-                && matches!(voxel.floor, Some(Floor::Fire)) {
-                    game_map.0.fire_turns.entry(pos).or_insert(turn_counter.0);
-                    // ~30% chance per fire tile per tick to generate smoke.
-                    let smoke_roll = dynamic_rng.roll(seed.0, (pos.x as u64).wrapping_mul(9973).wrapping_add(pos.y as u64));
-                    if smoke_roll < 0.3 {
-                        fire_smoke_tiles.push(pos);
-                    }
+                && matches!(voxel.floor, Some(Floor::Fire))
+            {
+                game_map.0.fire_turns.entry(pos).or_insert(turn_counter.0);
+                // ~30% chance per fire tile per tick to generate smoke.
+                let smoke_roll = dynamic_rng.roll(
+                    seed.0,
+                    (pos.x as u64).wrapping_mul(9973).wrapping_add(pos.y as u64),
+                );
+                if smoke_roll < 0.3 {
+                    fire_smoke_tiles.push(pos);
                 }
+            }
         }
     }
 
     // Place smoke clouds adjacent to fire tiles (smoke rises and drifts).
     for fire_pos in fire_smoke_tiles {
-        let dirs = [GridVec::new(1, 0), GridVec::new(-1, 0), GridVec::new(0, 1), GridVec::new(0, -1),
-                     GridVec::new(1, 1), GridVec::new(-1, 1), GridVec::new(1, -1), GridVec::new(-1, -1)];
-        let dir_hash = dynamic_rng.random_index(seed.0, (fire_pos.x as u64).wrapping_add(fire_pos.y as u64).wrapping_mul(7), dirs.len());
+        let dirs = [
+            GridVec::new(1, 0),
+            GridVec::new(-1, 0),
+            GridVec::new(0, 1),
+            GridVec::new(0, -1),
+            GridVec::new(1, 1),
+            GridVec::new(-1, 1),
+            GridVec::new(1, -1),
+            GridVec::new(-1, -1),
+        ];
+        let dir_hash = dynamic_rng.random_index(
+            seed.0,
+            (fire_pos.x as u64)
+                .wrapping_add(fire_pos.y as u64)
+                .wrapping_mul(7),
+            dirs.len(),
+        );
         let smoke_pos = fire_pos + dirs[dir_hash];
         if let Some(voxel) = game_map.0.get_voxel_at(&smoke_pos)
             && !matches!(voxel.floor, Some(Floor::SandCloud))
-                && !matches!(voxel.floor, Some(Floor::Fire))
-                && !matches!(voxel.props, Some(crate::typeenums::Props::Wall) | Some(crate::typeenums::Props::StoneWall))
-            {
-                let prev_floor = voxel.floor.clone();
-                game_map.0.sand_cloud_previous_floor.entry(smoke_pos).or_insert(prev_floor);
-                if let Some(v) = game_map.0.get_voxel_at_mut(&smoke_pos) {
-                    v.floor = Some(Floor::SandCloud);
-                }
-                game_map.0.sand_cloud_turns.insert(smoke_pos, turn_counter.0);
+            && !matches!(voxel.floor, Some(Floor::Fire))
+            && !matches!(
+                voxel.props,
+                Some(crate::typeenums::Props::Wall) | Some(crate::typeenums::Props::StoneWall)
+            )
+        {
+            let prev_floor = voxel.floor.clone();
+            game_map
+                .0
+                .sand_cloud_previous_floor
+                .entry(smoke_pos)
+                .or_insert(prev_floor);
+            if let Some(v) = game_map.0.get_voxel_at_mut(&smoke_pos) {
+                v.floor = Some(Floor::SandCloud);
             }
+            game_map
+                .0
+                .sand_cloud_turns
+                .insert(smoke_pos, turn_counter.0);
+        }
     }
 
     // Spread fire and burn out old fire tiles every FIRE_SPREAD_INTERVAL turns.
@@ -152,9 +187,10 @@ pub fn fire_system(
 
                 // Deterministic burnout: fire burns out after FIRE_BURNOUT_TURNS world turns.
                 if let Some(&ignited_at) = game_map.0.fire_turns.get(&pos)
-                    && turn_counter.0.saturating_sub(ignited_at) >= FIRE_BURNOUT_TURNS {
-                        burnout_tiles.push(pos);
-                    }
+                    && turn_counter.0.saturating_sub(ignited_at) >= FIRE_BURNOUT_TURNS
+                {
+                    burnout_tiles.push(pos);
+                }
 
                 // Spread fire to adjacent flammable props and wooden/bridge floors.
                 for neighbor in pos.cardinal_neighbors() {
@@ -163,9 +199,10 @@ pub fn fire_system(
                         if matches!(n_voxel.floor, Some(Floor::Fire)) {
                             continue;
                         }
-                        let has_flammable_prop = n_voxel.props.as_ref()
-                            .is_some_and(|f| f.is_flammable());
-                        let has_flammable_floor = matches!(n_voxel.floor, Some(Floor::WoodPlanks) | Some(Floor::Bridge));
+                        let has_flammable_prop =
+                            n_voxel.props.as_ref().is_some_and(|f| f.is_flammable());
+                        let has_flammable_floor =
+                            matches!(n_voxel.floor, Some(Floor::WoodPlanks) | Some(Floor::Bridge));
                         if has_flammable_prop || has_flammable_floor {
                             new_fire_tiles.push(neighbor);
                         }
@@ -191,7 +228,10 @@ pub fn fire_system(
     // revert to water (matching adjacent river tiles); everything else
     // becomes scorched earth.
     for tile in &burnout_tiles {
-        let was_bridge = game_map.0.fire_previous_floor.get(tile)
+        let was_bridge = game_map
+            .0
+            .fire_previous_floor
+            .get(tile)
             .is_some_and(|f| matches!(f, Some(Floor::Bridge)));
         let replacement = if was_bridge {
             // Determine water depth by inspecting the cardinal neighbors
@@ -207,7 +247,11 @@ pub fn fire_system(
                     }
                 }
             }
-            if deep > shallow { Floor::DeepWater } else { Floor::ShallowWater }
+            if deep > shallow {
+                Floor::DeepWater
+            } else {
+                Floor::ShallowWater
+            }
         } else {
             Floor::ScorchedEarth
         };
@@ -221,7 +265,10 @@ pub fn fire_system(
 
     // ── Sand cloud dissipation ──────────────────────────────────────
     // Remove sand cloud tiles that have exceeded their lifetime.
-    let expired_clouds: Vec<GridVec> = game_map.0.sand_cloud_turns.iter()
+    let expired_clouds: Vec<GridVec> = game_map
+        .0
+        .sand_cloud_turns
+        .iter()
         .filter(|entry| turn_counter.0.saturating_sub(*entry.1) >= SAND_CLOUD_LIFETIME)
         .map(|entry| *entry.0)
         .collect();
@@ -230,9 +277,10 @@ pub fn fire_system(
         // Retrieve the saved floor before mutating the voxel.
         let previous = game_map.0.sand_cloud_previous_floor.remove(tile);
         if let Some(voxel) = game_map.0.get_voxel_at_mut(tile)
-            && matches!(voxel.floor, Some(Floor::SandCloud)) {
-                voxel.floor = previous.unwrap_or(Some(Floor::Sand));
-            }
+            && matches!(voxel.floor, Some(Floor::SandCloud))
+        {
+            voxel.floor = previous.unwrap_or(Some(Floor::Sand));
+        }
         game_map.0.sand_cloud_turns.remove(tile);
     }
 
@@ -240,13 +288,21 @@ pub fn fire_system(
     // Every 3 turns, some edge cloud tiles shift by 1 tile for a slow
     // drifting effect. Uses a deterministic hash to pick which tiles move.
     if turn_counter.0.is_multiple_of(3) {
-        let active_clouds: Vec<(GridVec, u32)> = game_map.0.sand_cloud_turns.iter()
+        let active_clouds: Vec<(GridVec, u32)> = game_map
+            .0
+            .sand_cloud_turns
+            .iter()
             .map(|(&pos, &turn)| (pos, turn))
             .collect();
 
         // Collect drift operations: (old_pos, new_pos, placed_turn)
         // Primes 7919 and 6271 provide good hash distribution; modulo 5 = 20% drift probability.
-        let dirs = [GridVec::new(1, 0), GridVec::new(-1, 0), GridVec::new(0, 1), GridVec::new(0, -1)];
+        let dirs = [
+            GridVec::new(1, 0),
+            GridVec::new(-1, 0),
+            GridVec::new(0, 1),
+            GridVec::new(0, -1),
+        ];
         let mut drift_ops: Vec<(GridVec, GridVec, u32)> = Vec::new();
         for (tile, placed_turn) in &active_clouds {
             let hash = (tile.x.wrapping_mul(7919) ^ tile.y.wrapping_mul(6271))
@@ -258,25 +314,35 @@ pub fn fire_system(
             let new_pos = *tile + dirs[dir_idx];
             if let Some(new_voxel) = game_map.0.get_voxel_at(&new_pos)
                 && !matches!(new_voxel.floor, Some(Floor::SandCloud))
-                    && !matches!(new_voxel.props, Some(crate::typeenums::Props::Wall) | Some(crate::typeenums::Props::StoneWall))
-                    && !game_map.0.sand_cloud_turns.contains_key(&new_pos)
-                {
-                    drift_ops.push((*tile, new_pos, *placed_turn));
-                }
+                && !matches!(
+                    new_voxel.props,
+                    Some(crate::typeenums::Props::Wall) | Some(crate::typeenums::Props::StoneWall)
+                )
+                && !game_map.0.sand_cloud_turns.contains_key(&new_pos)
+            {
+                drift_ops.push((*tile, new_pos, *placed_turn));
+            }
         }
         // Apply drift operations.
         for (old_pos, new_pos, placed_turn) in drift_ops {
             // Read the new position's current floor before modifying.
-            let new_floor = game_map.0.get_voxel_at(&new_pos).and_then(|v| v.floor.clone());
+            let new_floor = game_map
+                .0
+                .get_voxel_at(&new_pos)
+                .and_then(|v| v.floor.clone());
             // Restore old position.
             let previous = game_map.0.sand_cloud_previous_floor.remove(&old_pos);
             if let Some(voxel) = game_map.0.get_voxel_at_mut(&old_pos)
-                && matches!(voxel.floor, Some(Floor::SandCloud)) {
-                    voxel.floor = previous.unwrap_or(Some(Floor::Sand));
-                }
+                && matches!(voxel.floor, Some(Floor::SandCloud))
+            {
+                voxel.floor = previous.unwrap_or(Some(Floor::Sand));
+            }
             game_map.0.sand_cloud_turns.remove(&old_pos);
             // Place cloud at new position.
-            game_map.0.sand_cloud_previous_floor.entry(new_pos)
+            game_map
+                .0
+                .sand_cloud_previous_floor
+                .entry(new_pos)
                 .or_insert(new_floor);
             if let Some(voxel) = game_map.0.get_voxel_at_mut(&new_pos) {
                 voxel.floor = Some(Floor::SandCloud);
@@ -336,9 +402,13 @@ pub fn star_level_system(
 
     // Spawn police officer near player every 50 turns while wanted
     const POLICE_SPAWN_INTERVAL: u32 = 50;
-    if star_level.level > 0 && turn_counter.0 > 0 && turn_counter.0.is_multiple_of(POLICE_SPAWN_INTERVAL) {
+    if star_level.level > 0
+        && turn_counter.0 > 0
+        && turn_counter.0.is_multiple_of(POLICE_SPAWN_INTERVAL)
+    {
         // Find a spawnable tile near the player (10-15 tiles away)
-        let spawn_hash = (turn_counter.0.wrapping_mul(7919) ^ star_level.level.wrapping_mul(6271)) as i32;
+        let spawn_hash =
+            (turn_counter.0.wrapping_mul(7919) ^ star_level.level.wrapping_mul(6271)) as i32;
         let dir_idx = (spawn_hash.unsigned_abs() as usize) % 8;
         let dirs = GridVec::DIRECTIONS_8;
         let dist = 10 + (spawn_hash.unsigned_abs() % 6) as i32;
@@ -346,7 +416,14 @@ pub fn star_level_system(
         if game_map.0.is_spawnable(&spawn_pos) {
             // Use the police officer template (index 4)
             let template = &crate::systems::spawn::MONSTER_TEMPLATES[4];
-            crate::systems::spawn::spawn_monster(&mut commands, template, spawn_pos.x, spawn_pos.y, 0, 0);
+            crate::systems::spawn::spawn_monster(
+                &mut commands,
+                template,
+                spawn_pos.x,
+                spawn_pos.y,
+                0,
+                0,
+            );
             // The spawned officer is hostile to the player via faction-based hostility
         }
     }

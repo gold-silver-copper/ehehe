@@ -501,9 +501,17 @@ pub struct Projectile {
 #[derive(Component, Debug)]
 pub enum ThrownExplosive {
     /// Dynamite: spawns shrapnel and environmental destruction on detonation.
-    Dynamite { damage: i32, radius: i32, grenade_index: usize },
+    Dynamite {
+        damage: i32,
+        radius: i32,
+        grenade_index: usize,
+    },
     /// Molotov: sets area on fire and generates smoke on detonation.
-    Molotov { damage: i32, radius: i32, item_index: usize },
+    Molotov {
+        damage: i32,
+        radius: i32,
+        item_index: usize,
+    },
 }
 
 // ─── Inventory & Item system ─────────────────────────────────────
@@ -530,11 +538,19 @@ pub enum ItemKind {
     /// A throwing tomahawk. Can be recovered after landing.
     Tomahawk { attack: i32, blunt_damage: i32 },
     /// A grenade (dynamite stick). Deals area damage.
-    Grenade { damage: i32, radius: i32, blunt_damage: i32 },
+    Grenade {
+        damage: i32,
+        radius: i32,
+        blunt_damage: i32,
+    },
     /// Whiskey bottle. Restores health when consumed.
     Whiskey { heal: i32, blunt_damage: i32 },
     /// A molotov cocktail. Thrown toward cursor; sets a large area on fire.
-    Molotov { damage: i32, radius: i32, blunt_damage: i32 },
+    Molotov {
+        damage: i32,
+        radius: i32,
+        blunt_damage: i32,
+    },
     /// A bow. Fires arrows. Used by Apache.
     Bow { attack: i32, blunt_damage: i32 },
     /// Beer. Restores a small amount of health when consumed.
@@ -710,7 +726,10 @@ mod tests {
 
     #[test]
     fn health_apply_damage_returns_actual() {
-        let mut h = Health { current: 5, max: 30 };
+        let mut h = Health {
+            current: 5,
+            max: 30,
+        };
         assert_eq!(h.apply_damage(3), 3);
         assert_eq!(h.current, 2);
         assert_eq!(h.apply_damage(10), 2);
@@ -719,7 +738,10 @@ mod tests {
 
     #[test]
     fn health_heal_clamps_to_max() {
-        let mut h = Health { current: 25, max: 30 };
+        let mut h = Health {
+            current: 25,
+            max: 30,
+        };
         let healed = h.heal(10);
         assert_eq!(healed, 5, "Should only heal the deficit");
         assert_eq!(h.current, 30);
@@ -727,27 +749,48 @@ mod tests {
 
     #[test]
     fn health_heal_returns_actual() {
-        let mut h = Health { current: 20, max: 30 };
+        let mut h = Health {
+            current: 20,
+            max: 30,
+        };
         assert_eq!(h.heal(5), 5);
         assert_eq!(h.current, 25);
     }
 
     #[test]
     fn health_heal_at_full_returns_zero() {
-        let mut h = Health { current: 30, max: 30 };
+        let mut h = Health {
+            current: 30,
+            max: 30,
+        };
         assert_eq!(h.heal(5), 0);
         assert_eq!(h.current, 30);
     }
 
     #[test]
     fn health_is_dead() {
-        assert!(Health { current: 0, max: 30 }.is_dead());
-        assert!(!Health { current: 1, max: 30 }.is_dead());
+        assert!(
+            Health {
+                current: 0,
+                max: 30
+            }
+            .is_dead()
+        );
+        assert!(
+            !Health {
+                current: 1,
+                max: 30
+            }
+            .is_dead()
+        );
     }
 
     #[test]
     fn health_fraction() {
-        let h = Health { current: 15, max: 30 };
+        let h = Health {
+            current: 15,
+            max: 30,
+        };
         assert!((h.fraction() - 0.5).abs() < 1e-10);
     }
 
@@ -759,7 +802,10 @@ mod tests {
 
     #[test]
     fn health_invariant_maintained() {
-        let mut h = Health { current: 10, max: 30 };
+        let mut h = Health {
+            current: 10,
+            max: 30,
+        };
         h.apply_damage(100);
         assert!(h.current >= 0 && h.current <= h.max);
         h.heal(100);
@@ -1001,46 +1047,63 @@ mod tests {
 
     #[test]
     fn stamina_spend_success() {
-        let mut s = Stamina { current: 50, max: 50 };
+        let mut s = Stamina {
+            current: 50,
+            max: 50,
+        };
         assert!(s.spend(10));
         assert_eq!(s.current, 40);
     }
 
     #[test]
     fn stamina_spend_insufficient() {
-        let mut s = Stamina { current: 5, max: 50 };
+        let mut s = Stamina {
+            current: 5,
+            max: 50,
+        };
         assert!(!s.spend(10));
         assert_eq!(s.current, 5, "Should not mutate on failed spend");
     }
 
     #[test]
     fn stamina_spend_exact() {
-        let mut s = Stamina { current: 10, max: 50 };
+        let mut s = Stamina {
+            current: 10,
+            max: 50,
+        };
         assert!(s.spend(10));
         assert_eq!(s.current, 0);
     }
 
     #[test]
     fn stamina_recover_clamps_to_max() {
-        let mut s = Stamina { current: 45, max: 50 };
+        let mut s = Stamina {
+            current: 45,
+            max: 50,
+        };
         s.recover(10);
         assert_eq!(s.current, 50);
     }
 
     #[test]
     fn stamina_recover_partial() {
-        let mut s = Stamina { current: 30, max: 50 };
+        let mut s = Stamina {
+            current: 30,
+            max: 50,
+        };
         s.recover(5);
         assert_eq!(s.current, 35);
     }
 
     #[test]
     fn stamina_invariant_maintained() {
-        let mut s = Stamina { current: 25, max: 50 };
+        let mut s = Stamina {
+            current: 25,
+            max: 50,
+        };
         s.spend(100); // Should fail (not enough), no mutation
         assert!(s.current >= 0 && s.current <= s.max);
         s.recover(100);
         assert!(s.current >= 0 && s.current <= s.max);
     }
-
 }

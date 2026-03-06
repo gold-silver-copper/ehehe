@@ -6,8 +6,8 @@ use crate::components::{Caliber, CollectibleKind};
 use crate::gamemap::GameMap;
 use crate::grid_vec::GridVec;
 use crate::noise::NoiseSeed;
-use crate::typeenums::{Floor, Props};
 use crate::typedefs::{MyPoint, SPAWN_X, SPAWN_Y};
+use crate::typeenums::{Floor, Props};
 
 /// Explosion radius for gunpowder barrels (Chebyshev distance).
 pub const GUNPOWDER_BARREL_EXPLOSION_RADIUS: i32 = 3;
@@ -54,14 +54,20 @@ impl GameMapResource {
                 let pos = origin + GridVec::new(dx, dy);
                 if let Some(voxel) = self.0.get_voxel_at(&pos)
                     && !matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall))
-                    && !matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater))
+                    && !matches!(
+                        voxel.floor,
+                        Some(Floor::ShallowWater) | Some(Floor::DeepWater)
+                    )
                 {
                     tiles_to_cloud.push((pos, voxel.floor.clone()));
                 }
             }
         }
         for (pos, prev_floor) in tiles_to_cloud {
-            self.0.sand_cloud_previous_floor.entry(pos).or_insert(prev_floor);
+            self.0
+                .sand_cloud_previous_floor
+                .entry(pos)
+                .or_insert(prev_floor);
             if let Some(voxel) = self.0.get_voxel_at_mut(&pos) {
                 voxel.floor = Some(Floor::SandCloud);
             }
@@ -80,15 +86,24 @@ impl GameMapResource {
         for gdx in -radius..=radius {
             for gdy in -radius..=radius {
                 let gp_dist = gdx.abs().max(gdy.abs());
-                if gp_dist > radius { continue; }
+                if gp_dist > radius {
+                    continue;
+                }
                 let fire_pos = origin + GridVec::new(gdx, gdy);
                 if let Some(voxel) = self.0.get_voxel_at(&fire_pos) {
-                    if matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall)) { continue; }
-                    let is_water = matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater));
+                    if matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall)) {
+                        continue;
+                    }
+                    let is_water = matches!(
+                        voxel.floor,
+                        Some(Floor::ShallowWater) | Some(Floor::DeepWater)
+                    );
                     let has_flammable = voxel.props.as_ref().is_some_and(|p| p.is_flammable());
                     let prev = voxel.floor.clone();
                     tiles_to_ignite.push((fire_pos, prev, has_flammable));
-                    if is_water { continue; }
+                    if is_water {
+                        continue;
+                    }
                 }
             }
         }
@@ -100,8 +115,9 @@ impl GameMapResource {
                 fire_count += 1;
             }
             // Save previous floor before setting fire (avoids double mutable borrow).
-            let is_water = self.0.get_voxel_at(&fire_pos)
-                .is_some_and(|v| matches!(v.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)));
+            let is_water = self.0.get_voxel_at(&fire_pos).is_some_and(|v| {
+                matches!(v.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater))
+            });
             if !is_water {
                 self.0.fire_previous_floor.entry(fire_pos).or_insert(prev);
                 self.0.fire_turns.entry(fire_pos).or_insert(turn);
@@ -339,25 +355,26 @@ impl SpellParticles {
         }
         self.frame_accumulator = 0;
 
-        self.particles.retain_mut(|(pos, life, delay, _is_sand, vx, vy)| {
-            if *delay > 0 {
-                *delay -= 1;
-                true // still waiting to appear
-            } else {
-                // Move the particle for visible motion
-                if *life > 0 {
-                    pos.x += *vx;
-                    pos.y += *vy;
+        self.particles
+            .retain_mut(|(pos, life, delay, _is_sand, vx, vy)| {
+                if *delay > 0 {
+                    *delay -= 1;
+                    true // still waiting to appear
+                } else {
+                    // Move the particle for visible motion
+                    if *life > 0 {
+                        pos.x += *vx;
+                        pos.y += *vy;
+                    }
+                    *life = life.saturating_sub(1);
+                    // Slow down particles as they age (plume dissipation)
+                    if *life < 3 {
+                        *vx = 0;
+                        *vy = 0;
+                    }
+                    *life > 0
                 }
-                *life = life.saturating_sub(1);
-                // Slow down particles as they age (plume dissipation)
-                if *life < 3 {
-                    *vx = 0;
-                    *vy = 0;
-                }
-                *life > 0
-            }
-        });
+            });
     }
 }
 
@@ -399,13 +416,22 @@ impl CombatLog {
     pub fn recent(&self, n: usize) -> Vec<&str> {
         let len = self.messages.len();
         let start = len.saturating_sub(n);
-        self.messages.iter().skip(start).map(|s| s.as_str()).collect()
+        self.messages
+            .iter()
+            .skip(start)
+            .map(|s| s.as_str())
+            .collect()
     }
 
     /// Returns the most recent `n` messages that are either untagged
     /// (always visible) or tagged with a position inside `visible`.
-    pub fn recent_visible(&self, n: usize, visible: &std::collections::HashSet<GridVec>) -> Vec<&str> {
-        let visible_msgs: Vec<&str> = self.messages
+    pub fn recent_visible(
+        &self,
+        n: usize,
+        visible: &std::collections::HashSet<GridVec>,
+    ) -> Vec<&str> {
+        let visible_msgs: Vec<&str> = self
+            .messages
             .iter()
             .zip(self.positions.iter())
             .filter(|(_, pos)| pos.is_none_or(|p| visible.contains(&p)))
@@ -430,7 +456,8 @@ const BLOOD_MAX_AGE: u32 = 20;
 impl BloodMap {
     /// Removes blood stains older than `BLOOD_MAX_AGE` turns.
     pub fn prune(&mut self, current_turn: u32) {
-        self.stains.retain(|_, &mut turn| current_turn.saturating_sub(turn) <= BLOOD_MAX_AGE);
+        self.stains
+            .retain(|_, &mut turn| current_turn.saturating_sub(turn) <= BLOOD_MAX_AGE);
     }
 }
 
@@ -603,7 +630,10 @@ impl DynamicRng {
     /// given key, using map_seed + tick as the seed.
     pub fn roll(&self, map_seed: u64, key: u64) -> f64 {
         // LCG constant from Knuth (MMIX) for good bit-mixing properties
-        let seed = map_seed.wrapping_add(self.tick).wrapping_mul(6364136223846793005).wrapping_add(key);
+        let seed = map_seed
+            .wrapping_add(self.tick)
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(key);
         // Squirrel3-like hash for good distribution
         let mut h = seed;
         h ^= h >> 16;
@@ -616,7 +646,9 @@ impl DynamicRng {
 
     /// Returns a random index in `[0, len)` using the dynamic RNG.
     pub fn random_index(&self, map_seed: u64, key: u64, len: usize) -> usize {
-        if len == 0 { return 0; }
+        if len == 0 {
+            return 0;
+        }
         (self.roll(map_seed, key) * len as f64) as usize % len
     }
 
@@ -746,10 +778,7 @@ mod tests {
         assert_eq!(log.messages.len(), MAX_COMBAT_LOG_MESSAGES);
         // Oldest messages (0..9) were trimmed; first remaining is msg-10.
         assert_eq!(log.messages[0], "msg-10");
-        assert_eq!(
-            log.messages[MAX_COMBAT_LOG_MESSAGES - 1],
-            "msg-59"
-        );
+        assert_eq!(log.messages[MAX_COMBAT_LOG_MESSAGES - 1], "msg-59");
     }
 
     #[test]
@@ -884,7 +913,10 @@ mod tests {
     fn collectibles_default_has_starting_supplies() {
         let c = Collectibles::default();
         assert_eq!(c.caps, 10);
-        assert_eq!(c.bullets_31, 0, "Default has no .31 bullets — use for_starting_caliber()");
+        assert_eq!(
+            c.bullets_31, 0,
+            "Default has no .31 bullets — use for_starting_caliber()"
+        );
         assert_eq!(c.bullets_36, 0);
         assert_eq!(c.bullets_44, 0);
         assert_eq!(c.powder, 10);

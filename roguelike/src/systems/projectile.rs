@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 
-use crate::components::{Faction, Health, Name, PlayerControlled, Position, Projectile, ProjectileVisual, Renderable, ThrownItemProjectile, display_name};
+use crate::components::{
+    Faction, Health, Name, PlayerControlled, Position, Projectile, ProjectileVisual, Renderable,
+    ThrownItemProjectile, display_name,
+};
 use crate::events::DamageEvent;
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
@@ -61,12 +64,20 @@ fn resolve_bullet_hit(
         return BulletHitResult::Miss;
     }
 
-    let hs_roll = value_noise(tile.x, tile.y + path_index as i32, roll_seed.wrapping_add(13));
+    let hs_roll = value_noise(
+        tile.x,
+        tile.y + path_index as i32,
+        roll_seed.wrapping_add(13),
+    );
     if hs_roll < headshot_chance {
-        return BulletHitResult::Headshot { damage: target_max_hp };
+        return BulletHitResult::Headshot {
+            damage: target_max_hp,
+        };
     }
 
-    BulletHitResult::Hit { damage: penetration }
+    BulletHitResult::Hit {
+        damage: penetration,
+    }
 }
 
 /// Spawns a bullet projectile entity along a Bresenham line from origin to endpoint.
@@ -83,7 +94,10 @@ pub fn spawn_bullet(
     }
     let start_pos = path.get(1).copied().unwrap_or(origin);
     commands.spawn((
-        Position { x: start_pos.x, y: start_pos.y },
+        Position {
+            x: start_pos.x,
+            y: start_pos.y,
+        },
         Renderable {
             symbol: "◦".into(),
             fg: RatColor::Rgb(255, 200, 80),
@@ -119,7 +133,10 @@ pub fn spawn_arrow(
     }
     let start_pos = path.get(1).copied().unwrap_or(origin);
     commands.spawn((
-        Position { x: start_pos.x, y: start_pos.y },
+        Position {
+            x: start_pos.x,
+            y: start_pos.y,
+        },
         Renderable {
             symbol: "◦".into(),
             fg: RatColor::Rgb(139, 90, 43),
@@ -165,7 +182,10 @@ pub fn spawn_shrapnel(
             }
             let start_pos = path.get(1).copied().unwrap_or(origin);
             commands.spawn((
-                Position { x: start_pos.x, y: start_pos.y },
+                Position {
+                    x: start_pos.x,
+                    y: start_pos.y,
+                },
                 Renderable {
                     symbol: "·".into(),
                     fg: RatColor::Rgb(255, 165, 0),
@@ -206,7 +226,10 @@ pub fn spawn_thrown_projectile(
     }
     let start_pos = path.get(1).copied().unwrap_or(origin);
     commands.spawn((
-        Position { x: start_pos.x, y: start_pos.y },
+        Position {
+            x: start_pos.x,
+            y: start_pos.y,
+        },
         Renderable {
             symbol: "/".into(),
             fg: RatColor::Rgb(200, 200, 200),
@@ -236,10 +259,25 @@ pub fn spawn_thrown_projectile(
 /// `tiles_per_tick` tiles per frame for backwards compatibility.
 pub fn projectile_system(
     mut commands: Commands,
-    mut projectiles: Query<(Entity, &mut Position, &mut Projectile, &mut Renderable, Option<&ThrownItemProjectile>), Without<crate::components::ThrownExplosive>>,
+    mut projectiles: Query<
+        (
+            Entity,
+            &mut Position,
+            &mut Projectile,
+            &mut Renderable,
+            Option<&ThrownItemProjectile>,
+        ),
+        Without<crate::components::ThrownExplosive>,
+    >,
     mut damage_events: MessageWriter<DamageEvent>,
-    targets: Query<(Entity, &Position, &Health, Option<&Name>, Option<&Faction>), (Without<PlayerControlled>, Without<Projectile>)>,
-    player_query: Query<(Entity, &Position, &Health, Option<&Name>), (With<PlayerControlled>, Without<Projectile>)>,
+    targets: Query<
+        (Entity, &Position, &Health, Option<&Name>, Option<&Faction>),
+        (Without<PlayerControlled>, Without<Projectile>),
+    >,
+    player_query: Query<
+        (Entity, &Position, &Health, Option<&Name>),
+        (With<PlayerControlled>, Without<Projectile>),
+    >,
     source_factions: Query<Option<&Faction>>,
     source_names: Query<Option<&Name>>,
     game_map: Res<GameMapResource>,
@@ -249,14 +287,21 @@ pub fn projectile_system(
 ) {
     // Build a lookup of damageable entities by position for O(1) hit detection.
     // Hostility is purely faction-based: entities of different factions are hostile.
-    let mut target_by_pos: std::collections::HashMap<GridVec, Vec<(Entity, String, i32, Option<Faction>)>> =
-        std::collections::HashMap::new();
+    let mut target_by_pos: std::collections::HashMap<
+        GridVec,
+        Vec<(Entity, String, i32, Option<Faction>)>,
+    > = std::collections::HashMap::new();
     for (target_entity, target_pos, target_health, target_name, target_faction) in &targets {
         let t_name = display_name(target_name).to_string();
         target_by_pos
             .entry(target_pos.as_grid_vec())
             .or_default()
-            .push((target_entity, t_name, target_health.max, target_faction.copied()));
+            .push((
+                target_entity,
+                t_name,
+                target_health.max,
+                target_faction.copied(),
+            ));
     }
 
     // PlayerControlled position for NPC bullet hits and shrapnel self-damage.
@@ -319,7 +364,13 @@ pub fn projectile_system(
                     let is_bullet = proj.is_bullet;
                     if is_bullet {
                         let aim_point = proj.path.last().copied().unwrap_or(tile);
-                        match resolve_bullet_hit(tile, aim_point, proj.path_index, *t_max_hp, proj.penetration) {
+                        match resolve_bullet_hit(
+                            tile,
+                            aim_point,
+                            proj.path_index,
+                            *t_max_hp,
+                            proj.penetration,
+                        ) {
                             BulletHitResult::Miss => {
                                 combat_log.push_at(
                                     format!("{source_name}'s bullet barely misses {t_name}!"),
@@ -333,10 +384,8 @@ pub fn projectile_system(
                                     amount: hs_damage,
                                     source: Some(proj.source),
                                 });
-                                combat_log.push_at(
-                                    format!("{source_name} headshots {t_name}!"),
-                                    tile,
-                                );
+                                combat_log
+                                    .push_at(format!("{source_name} headshots {t_name}!"), tile);
                                 sound_events.add(tile);
                                 continue;
                             }
@@ -354,7 +403,9 @@ pub fn projectile_system(
                         source: Some(proj.source),
                     });
                     combat_log.push_at(
-                        format!("{source_name}'s {proj_label} hits {t_name} for {hit_damage} damage!"),
+                        format!(
+                            "{source_name}'s {proj_label} hits {t_name} for {hit_damage} damage!"
+                        ),
                         tile,
                     );
                     sound_events.add(tile);
@@ -384,9 +435,16 @@ pub fn projectile_system(
                 if is_bullet {
                     let aim_point = proj.path.last().copied().unwrap_or(tile);
                     let p_name = display_name(*player_name);
-                    match resolve_bullet_hit(tile, aim_point, proj.path_index, player_health.max, proj.penetration) {
+                    match resolve_bullet_hit(
+                        tile,
+                        aim_point,
+                        proj.path_index,
+                        player_health.max,
+                        proj.penetration,
+                    ) {
                         BulletHitResult::Miss => {
-                            combat_log.push(format!("{source_name}'s bullet barely misses {p_name}!"));
+                            combat_log
+                                .push(format!("{source_name}'s bullet barely misses {p_name}!"));
                             // Bullet continues through on miss — don't despawn.
                         }
                         BulletHitResult::Headshot { damage: hs_damage } => {
@@ -406,7 +464,9 @@ pub fn projectile_system(
                                 amount: hit_damage,
                                 source: Some(proj.source),
                             });
-                            combat_log.push(format!("{source_name}'s bullet hits {p_name} for {hit_damage} damage!"));
+                            combat_log.push(format!(
+                                "{source_name}'s bullet hits {p_name} for {hit_damage} damage!"
+                            ));
                             sound_events.add(tile);
                             despawn = true;
                             break;
@@ -421,7 +481,9 @@ pub fn projectile_system(
                         source: Some(proj.source),
                     });
                     let p_name = display_name(*player_name);
-                    combat_log.push(format!("{source_name}'s {proj_label} hits {p_name} for {hit_damage} damage!"));
+                    combat_log.push(format!(
+                        "{source_name}'s {proj_label} hits {p_name} for {hit_damage} damage!"
+                    ));
                     sound_events.add(tile);
                     despawn = true;
                     break;
@@ -431,17 +493,19 @@ pub fn projectile_system(
             // Shrapnel self-damage: if the projectile's source is the player
             // and the projectile lands on the player's tile.
             if let Some((player_entity, player_pos, _, _)) = &player_info
-                && proj.source == *player_entity && tile == player_pos.as_grid_vec() {
-                    let self_damage = (proj.damage / SELF_DAMAGE_DIVISOR).max(1);
-                    damage_events.write(DamageEvent {
-                        target: *player_entity,
-                        amount: self_damage,
-                        source: Some(proj.source),
-                    });
-                    combat_log.push(format!("Shrapnel hits you for {self_damage} damage!"));
-                    despawn = true;
-                    break;
-                }
+                && proj.source == *player_entity
+                && tile == player_pos.as_grid_vec()
+            {
+                let self_damage = (proj.damage / SELF_DAMAGE_DIVISOR).max(1);
+                damage_events.write(DamageEvent {
+                    target: *player_entity,
+                    amount: self_damage,
+                    source: Some(proj.source),
+                });
+                combat_log.push(format!("Shrapnel hits you for {self_damage} damage!"));
+                despawn = true;
+                break;
+            }
 
             // Record tail position before advancing.
             proj.tail_pos = Some(tile);
@@ -484,12 +548,12 @@ pub fn projectile_system(
             // landing position so the player can recover it.
             if let Some(thrown) = thrown_item {
                 let tile = proj.path[proj.path_index.min(proj.path.len() - 1)];
-                commands.entity(thrown.item_entity).insert(
-                    Position { x: tile.x, y: tile.y },
-                );
+                commands.entity(thrown.item_entity).insert(Position {
+                    x: tile.x,
+                    y: tile.y,
+                });
             }
             commands.entity(proj_entity).despawn();
         }
     }
 }
-
