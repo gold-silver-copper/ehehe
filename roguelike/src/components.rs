@@ -292,6 +292,19 @@ pub enum AimingStyle {
     Suppression,
 }
 
+/// NPC aiming cursor that advances toward the target before firing.
+/// Each time the NPC is ready to shoot, it rolls 1d6 to determine how
+/// many king-steps the internal cursor takes toward the target that turn.
+/// The cursor does *not* reset between shots — it continues from wherever
+/// it currently is.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct AiAimCursor {
+    /// Current aim cursor position in world coordinates.
+    pub pos: GridVec,
+    /// Remaining cursor steps to take this turn before firing.
+    pub steps_remaining: u8,
+}
+
 /// Persistent target tracking for NPC AI.
 /// Once an NPC acquires a target, it pursues and attacks that target
 /// until the target is dead or escapes the NPC's awareness range.

@@ -536,7 +536,8 @@ fn restart_system(
     *res.input_state = InputState::default();
     *res.game_map = GameMapResource(GameMap::new(400, 280, res.seed.0));
     let center = GridVec::new(res.game_map.0.width / 2, res.game_map.0.height / 2);
-    let player_spawn = res.game_map.0.find_spawnable_near(center, 20)
+    let player_spawn = res.game_map.0.find_building_interior(center, 40)
+        .or_else(|| res.game_map.0.find_spawnable_near(center, 20))
         .unwrap_or(GridVec::new(SPAWN_X, SPAWN_Y));
     res.camera.0 = player_spawn;
     *res.cursor = CursorPosition::at(player_spawn);
