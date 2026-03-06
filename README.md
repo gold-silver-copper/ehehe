@@ -182,6 +182,7 @@ You can carry up to **6 items** in your inventory, accessed with keys 1-6.
 - Bowie Knife
 - Whiskey Bottle (heals 10 HP)
 - Molotov Cocktail
+- 
 
 **Consumables:**
 | Item    | Effect               |
