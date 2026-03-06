@@ -486,6 +486,39 @@ impl WorldGenPhase for InfrastructurePhase {
             }
         }
 
+        // ── Pass 3c: Fill BeachSand near bridges with road surface ───────
+        // After bridges are placed, convert remaining BeachSand tiles that
+        // are adjacent to a Bridge tile into Dirt, Gravel, or Sidewalk so
+        // roads don't abruptly stop at the beach.
+        {
+            let mut to_fill: Vec<(GridVec, Floor)> = Vec::new();
+            for y in 1..height - 1 {
+                for x in 1..width - 1 {
+                    let pos = GridVec::new(x, y);
+                    if let Some(voxel) = map.get_voxel_at(&pos) {
+                        if !matches!(voxel.floor, Some(Floor::BeachSand)) { continue; }
+                        let near_bridge = pos.cardinal_neighbors().iter().any(|n| {
+                            map.get_voxel_at(n).is_some_and(|v| matches!(v.floor, Some(Floor::Bridge)))
+                        });
+                        if near_bridge {
+                            // Deterministic choice: use value_noise to pick Dirt, Gravel, or Sidewalk
+                            let n = value_noise(x, y, seed.wrapping_add(88888));
+                            let floor = if n < 0.33 { Floor::Dirt }
+                                else if n < 0.66 { Floor::Gravel }
+                                else { Floor::Sidewalk };
+                            to_fill.push((pos, floor));
+                        }
+                    }
+                }
+            }
+            for (pos, floor) in to_fill {
+                if let Some(voxel) = map.get_voxel_at_mut(&pos) {
+                    voxel.floor = Some(floor);
+                    voxel.props = None;
+                }
+            }
+        }
+
         // ── Collect road-edge tiles for prop placement ───────────────────
         // Road-edge tiles are Sidewalk tiles adjacent to non-road terrain,
         // following the actual curvature of the laid roads.
@@ -923,21 +956,25 @@ impl GameMap {
         false
     }
 
-    /// Returns `true` if the tile at `point` is passable (no blocking props
-    /// and not deep/shallow water).
+    /// Returns `true` if the tile at `point` is passable (no blocking props).
+    /// Water tiles are NOT blocked here — bullets, projectiles, and thrown
+    /// items fly over water. Use `is_water()` for NPC/player movement checks.
     #[inline]
     pub fn is_passable(&self, point: &MyPoint) -> bool {
         self.get_voxel_at(point)
             .is_some_and(|v| {
-                // Water tiles block movement (no swimming).
-                if matches!(v.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)) {
-                    return false;
-                }
                 match &v.props {
                     Some(f) => !f.blocks_movement(),
                     None => true,
                 }
             })
+    }
+
+    /// Returns `true` if the tile at `point` is shallow or deep water.
+    #[inline]
+    pub fn is_water(&self, point: &MyPoint) -> bool {
+        self.get_voxel_at(point)
+            .is_some_and(|v| matches!(v.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)))
     }
 
     /// Returns `true` if the tile is suitable for spawning an entity:
@@ -991,6 +1028,33 @@ impl GameMap {
                     });
                     if has_adjacent_wall {
                         return Some(pos);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Finds a passable tile inside a building near the map center.
+    /// Searches for WoodPlanks or StoneFloor tiles with no props that have
+    /// an adjacent wall, confirming the tile is truly inside a building.
+    pub fn find_building_interior(&self, center: GridVec, radius: i32) -> Option<GridVec> {
+        for r in 0..=radius {
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    if dx.abs() != r && dy.abs() != r { continue; }
+                    let pos = center + GridVec::new(dx, dy);
+                    if let Some(voxel) = self.get_voxel_at(&pos)
+                        && voxel.props.is_none()
+                        && matches!(voxel.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor))
+                    {
+                        // Confirm there's an adjacent wall (inside a building)
+                        let has_wall = pos.cardinal_neighbors().iter().any(|n| {
+                            self.get_voxel_at(n).is_some_and(|v| v.props.as_ref().is_some_and(|p| p.is_wall()))
+                        });
+                        if has_wall {
+                            return Some(pos);
+                        }
                     }
                 }
             }
@@ -1129,7 +1193,7 @@ fn select_desert_floor(biome: f64, detail: f64) -> Floor {
 }
 
 /// Number of distinct building types used during town generation.
-/// Types 0-11: House, Saloon, Stable, General Store, Sheriff's Office,
+/// Types 0-11: House, Saloon, Stable, General Store, Police Station,
 /// Post Office, Church, Bank, Hotel, Jail, Undertaker, Blacksmith.
 const BUILDING_TYPE_COUNT: u32 = 12;
 
@@ -1344,7 +1408,7 @@ fn zone_building_kind(zone: u32, noise: f64) -> u32 {
             if noise < 0.20 { 1 }       // Saloon
             else if noise < 0.40 { 3 }   // General Store
             else if noise < 0.55 { 7 }   // Bank
-            else if noise < 0.70 { 4 }   // Sheriff's Office
+            else if noise < 0.70 { 4 }   // Police Station
             else if noise < 0.85 { 5 }   // Post Office
             else { 9 }                    // Jail
         }
@@ -1390,7 +1454,7 @@ fn pre_place_landmark_anchors(
     let center_x = width / 2;
     let center_y = height / 2;
 
-    // Sheriff's office near the town center
+    // Police station near the town center
     let sx = (center_x - 8 + (value_noise(1, 1, anchor_seed) * 10.0) as CoordinateUnit)
         .clamp(8, width - 20);
     let sy = (center_y - 4 + (value_noise(2, 2, anchor_seed) * 6.0) as CoordinateUnit)
@@ -1877,6 +1941,79 @@ fn generate_buildings_bsp(
     }
     buildings.extend(lot_buildings);
 
+    // ── Random fill: try to squeeze additional buildings into lots ────
+    // After grid partitioning, some lots still have unused space between
+    // or beside the placed buildings. For each lot, make several random
+    // placement attempts with small buildings to increase density.
+    let mut random_fill: Vec<Building> = Vec::new();
+    let fill_seed = bsp_seed.wrapping_add(12345);
+    for yi in 0..y_bounds.len().saturating_sub(1) {
+        for xi in 0..x_bounds.len().saturating_sub(1) {
+            let road_curve_buffer: CoordinateUnit = 3;
+            let lot_top = if avenue_set.contains(&y_bounds[yi]) {
+                y_bounds[yi] + avenue_half_width + sidewalk_width + 1 + road_curve_buffer
+            } else {
+                y_bounds[yi] + 1
+            };
+            let lot_bot = if avenue_set.contains(&y_bounds[yi + 1]) {
+                y_bounds[yi + 1] - avenue_half_width - sidewalk_width - 1 - road_curve_buffer
+            } else {
+                y_bounds[yi + 1] - 1
+            };
+            let lot_left = if cross_set.contains(&x_bounds[xi]) {
+                x_bounds[xi] + cross_half_width + cross_sidewalk_width + 1 + road_curve_buffer
+            } else {
+                x_bounds[xi] + 1
+            };
+            let lot_right = if cross_set.contains(&x_bounds[xi + 1]) {
+                x_bounds[xi + 1] - cross_half_width - cross_sidewalk_width - 1 - road_curve_buffer
+            } else {
+                x_bounds[xi + 1] - 1
+            };
+            let lot_w = lot_right - lot_left;
+            let lot_h = lot_bot - lot_top;
+            if lot_w < LOT_MIN_DIM || lot_h < LOT_MIN_DIM { continue; }
+
+            let lot_fs = fill_seed.wrapping_add(
+                (yi as u64).wrapping_mul(997).wrapping_add(xi as u64).wrapping_mul(13)
+            );
+
+            // Try a handful of random placements within this lot
+            let attempts = 4;
+            for ai in 0..attempts {
+                let nx = value_noise(ai, yi as i32, lot_fs.wrapping_add(ai as u64 * 31));
+                let ny = value_noise(xi as i32, ai, lot_fs.wrapping_add(ai as u64 * 37));
+                let nw = value_noise(ai + 10, yi as i32 + xi as i32, lot_fs.wrapping_add(ai as u64 * 41));
+                let nh = value_noise(yi as i32 + xi as i32, ai + 10, lot_fs.wrapping_add(ai as u64 * 43));
+
+                let bw = 4 + (nw * 8.0) as CoordinateUnit; // 4-12 width
+                let bh = 4 + (nh * 6.0) as CoordinateUnit; // 4-10 height
+                let bx = lot_left + (nx * (lot_w - bw).max(0) as f64) as CoordinateUnit;
+                let by = lot_top + (ny * (lot_h - bh).max(0) as f64) as CoordinateUnit;
+
+                if bx < lot_left || by < lot_top { continue; }
+                if bx + bw > lot_right || by + bh > lot_bot { continue; }
+                if bw < 4 || bh < 4 { continue; }
+
+                // Check placement rules: no overlap with existing buildings
+                let overlaps = placed.iter().any(|&(px, py, pw, ph)| {
+                    rects_overlap(bx - 1, by - 1, bw + 2, bh + 2, px, py, pw, ph)
+                });
+                if overlaps { continue; }
+
+                let plot_cx = bx + bw / 2;
+                let plot_cy = by + bh / 2;
+                let zone = assign_zone(plot_cx, plot_cy, width, height, avenue_ys, seed);
+                let kind_noise = value_noise(bx + by, ai, lot_fs.wrapping_add(8888));
+                let kind = zone_building_kind(zone, kind_noise).min(BUILDING_TYPE_COUNT - 1);
+
+                placed.push((bx, by, bw, bh));
+                random_fill.push(Building { x: bx, y: by, w: bw, h: bh, kind });
+            }
+        }
+    }
+    buildings.extend(random_fill);
+
     (buildings, parks, open_lots)
 }
 
@@ -2045,7 +2182,7 @@ fn ensure_alley_connectivity(map: &mut GameMap, width: CoordinateUnit, height: C
 /// defensible building type rather than spawning randomly.
 fn assign_faction_anchors(map: &mut GameMap, buildings: &[Building]) {
     // Map building kinds to factions:
-    // 1=Saloon → Outlaws, 2=Stable → Vaqueros, 4=Sheriff → Sheriff,
+    // 1=Saloon → Outlaws, 2=Stable → Vaqueros, 4=Police Station → Police,
     // 7=Bank → Lawmen, 8=Hotel → Civilians, 0=House → Indians (outskirts)
     let mut used_kinds: HashSet<u32> = HashSet::new();
     let mut indians_anchor_assigned = false;
@@ -2063,7 +2200,7 @@ fn assign_faction_anchors(map: &mut GameMap, buildings: &[Building]) {
             }
             4 if !used_kinds.contains(&4) => {
                 used_kinds.insert(4);
-                (Faction::Sheriff, "Marshal's Office".to_string())
+                (Faction::Police, "Marshal's Office".to_string())
             }
             7 if !used_kinds.contains(&7) => {
                 used_kinds.insert(7);
@@ -2339,7 +2476,7 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
             }
         }
         4 => {
-            // Sheriff's office: desk area in front, rear cell block
+            // Police station: desk area in front, rear cell block
             if iw >= 5 && ih >= 4 {
                 // Wanted posters on front wall
                 set_prop(map, interior_x, interior_y + ih - 1, Props::Sign);
@@ -2626,7 +2763,7 @@ fn place_exterior_props(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
             set_prop(map, b.x + b.w / 2 + 1, b.y + b.h, Props::Barrel);
         }
         4 => {
-            // Sheriff's office: hitching post and wanted poster
+            // Police station: hitching post and wanted poster
             set_prop(map, b.x + b.w / 2, b.y + b.h, Props::HitchingPost);
             set_prop(map, b.x - 1, b.y + b.h / 2, Props::Sign);
         }
@@ -4372,11 +4509,11 @@ mod tests {
         assert!(buildings.len() >= 3,
             "Large map should have at least 3 landmark anchor buildings, found {}",
             buildings.len());
-        // Sheriff (kind=4), Saloon (kind=1), Church (kind=6) should appear
-        let has_sheriff = buildings.iter().any(|b| b.kind == 4);
+        // Police Station (kind=4), Saloon (kind=1), Church (kind=6) should appear
+        let has_police = buildings.iter().any(|b| b.kind == 4);
         let has_saloon = buildings.iter().any(|b| b.kind == 1);
         let has_church = buildings.iter().any(|b| b.kind == 6);
-        assert!(has_sheriff, "Landmark anchors should include sheriff's office");
+        assert!(has_police, "Landmark anchors should include police station");
         assert!(has_saloon, "Landmark anchors should include saloon");
         assert!(has_church, "Landmark anchors should include church");
     }

@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 
-use crate::components::{CombatStats, Inventory, Item, ItemKind, PlayerControlled, Projectile, ProjectileVisual, SPELL_STAMINA_COST, Stamina, ThrownExplosive, Name, Position, Renderable, display_name};
+use crate::components::{CombatStats, Inventory, Item, ItemKind, Projectile, ProjectileVisual, SPELL_STAMINA_COST, Stamina, ThrownExplosive, Name, Position, Renderable, display_name};
 use crate::events::{MolotovCastIntent, SpellCastIntent};
 use crate::grid_vec::GridVec;
-use crate::resources::{CombatLog, GameMapResource, InputState, MapSeed, SpellParticles, TurnCounter};
+use crate::resources::{CombatLog, GameMapResource, MapSeed, SpellParticles, TurnCounter};
 use crate::typeenums::{Floor, Props};
 use crate::typedefs::RatColor;
 
@@ -417,48 +417,4 @@ fn detonate_molotov(
     }
 
     spawn_molotov_smoke(game_map, origin, turn_counter.0, radius);
-}
-
-/// Processes the water bucket splash effect.
-/// Sets tiles around the player to ShallowWater, extinguishing fires,
-/// and decrements the bucket's uses.
-pub fn water_bucket_system(
-    mut input_state: ResMut<InputState>,
-    mut game_map: ResMut<GameMapResource>,
-    player_query: Query<(&Position, &Inventory), With<PlayerControlled>>,
-    mut item_kind_query: Query<&mut ItemKind>,
-) {
-    let Some((idx, radius)) = input_state.water_bucket_pending.take() else {
-        return;
-    };
-
-    let Ok((player_pos, inv)) = player_query.single() else {
-        return;
-    };
-
-    let center = player_pos.as_grid_vec();
-
-    // Splash water around the player
-    for dy in -radius..=radius {
-        for dx in -radius..=radius {
-            let dist_sq = dx * dx + dy * dy;
-            if dist_sq > radius * radius {
-                continue;
-            }
-            let pos = center + GridVec::new(dx, dy);
-            // Remove fire tracking
-            game_map.0.fire_turns.remove(&pos);
-            if let Some(voxel) = game_map.0.get_voxel_at_mut(&pos)
-                && !matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall)) {
-                    voxel.floor = Some(Floor::ShallowWater);
-                }
-        }
-    }
-
-    // Decrement uses on the water bucket
-    if let Some(&item_entity) = inv.items.get(idx)
-        && let Ok(mut kind) = item_kind_query.get_mut(item_entity)
-            && let ItemKind::WaterBucket { ref mut uses, .. } = *kind {
-                *uses -= 1;
-            }
 }

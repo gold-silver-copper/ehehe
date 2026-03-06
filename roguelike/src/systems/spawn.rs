@@ -16,7 +16,7 @@ use crate::typedefs::RatColor;
 //   - Cowboys (Outlaws/Lawmen): Western first names and surnames
 //   - Indians: Compound nature names (e.g., Eaglefoot, SittingBear)
 //   - Mexicans (Vaqueros): Spanish names
-//   - Sheriff: Famous lawman surnames
+//   - Police: Famous lawman surnames
 //   - Civilians: Nicknames (e.g., Dusty, Slim, Maverick)
 
 /// Cowboy names — used by Outlaws and Lawmen factions.
@@ -55,8 +55,8 @@ const MEXICAN_NAMES: &[&str] = &[
     "Bravo", "Diablo", "Fuego", "Oro", "Toro",
 ];
 
-/// Sheriff names — famous lawman surnames.
-const SHERIFF_NAMES: &[&str] = &[
+/// Police names — famous lawman surnames.
+const POLICE_NAMES: &[&str] = &[
     "Bassett", "Tilghman", "Hickok", "Wallace", "Masterson",
     "Garrett", "Heck", "Reeves", "Selman", "Canton",
     "Plummer", "Allison", "Earp", "Holiday", "Bullock",
@@ -79,7 +79,7 @@ const CIVILIAN_NAMES: &[&str] = &[
 /// Each faction has its own distinct pool:
 ///   - Indians: Compound nature names (Eaglefoot, SittingBear)
 ///   - Vaqueros: Spanish first names or surnames
-///   - Sheriff: Famous lawman surnames
+///   - Police: Famous lawman surnames
 ///   - Civilians: Wild West nicknames
 ///   - Outlaws/Lawmen/default: Cowboy first names or surnames
 fn generate_npc_name(x: i32, y: i32, faction: &Faction) -> String {
@@ -88,7 +88,7 @@ fn generate_npc_name(x: i32, y: i32, faction: &Faction) -> String {
     let pool = match faction {
         Faction::Indians => INDIAN_NAMES,
         Faction::Vaqueros => MEXICAN_NAMES,
-        Faction::Sheriff => SHERIFF_NAMES,
+        Faction::Police => POLICE_NAMES,
         Faction::Civilians => CIVILIAN_NAMES,
         _ => COWBOY_NAMES,
     };
@@ -117,7 +117,7 @@ pub struct MonsterTemplate {
 /// NPC speeds are tuned so that movement frequency roughly matches the
 /// player's movement rate (1 action per 3 world ticks).
 /// - Vaquero: 32, Civilian: 28, Indian Brave: 40, Indian Scout: 45
-/// - Sheriff: 32, Deputy: 30
+/// - Police Officer: 32, Deputy: 30
 pub const MONSTER_TEMPLATES: &[MonsterTemplate] = &[
     // Index 0: Vaqueros — faction color: lime green
     MonsterTemplate { name: "Vaquero", symbol: "@", fg: RatColor::Rgb(140, 220, 60), health: 100, attack: 5, speed: 32, sight_range: 10, faction: Faction::Vaqueros, has_gun: false },
@@ -126,9 +126,9 @@ pub const MONSTER_TEMPLATES: &[MonsterTemplate] = &[
     // Index 2–3: Indians — faction color: warm brown
     MonsterTemplate { name: "Indian Brave", symbol: "@", fg: RatColor::Rgb(200, 120, 60), health: 120, attack: 5, speed: 40, sight_range: 12, faction: Faction::Indians, has_gun: false },
     MonsterTemplate { name: "Indian Scout", symbol: "@", fg: RatColor::Rgb(200, 120, 60), health: 80, attack: 4, speed: 45, sight_range: 14, faction: Faction::Indians, has_gun: false },
-    // Index 4–5: Sheriff and deputies — faction color: gold
-    MonsterTemplate { name: "Sheriff", symbol: "@", fg: RatColor::Rgb(255, 215, 0), health: 150, attack: 8, speed: 32, sight_range: 14, faction: Faction::Sheriff, has_gun: true },
-    MonsterTemplate { name: "Deputy", symbol: "@", fg: RatColor::Rgb(255, 215, 0), health: 100, attack: 6, speed: 30, sight_range: 12, faction: Faction::Sheriff, has_gun: true },
+    // Index 4–5: Police and deputies — faction color: gold
+    MonsterTemplate { name: "Police Officer", symbol: "@", fg: RatColor::Rgb(255, 215, 0), health: 150, attack: 8, speed: 32, sight_range: 14, faction: Faction::Police, has_gun: true },
+    MonsterTemplate { name: "Deputy", symbol: "@", fg: RatColor::Rgb(255, 215, 0), health: 100, attack: 6, speed: 30, sight_range: 12, faction: Faction::Police, has_gun: true },
     // Index 6–7: Outlaws — faction color: dark red
     MonsterTemplate { name: "Outlaw", symbol: "@", fg: RatColor::Rgb(200, 50, 50), health: 110, attack: 6, speed: 34, sight_range: 11, faction: Faction::Outlaws, has_gun: true },
     MonsterTemplate { name: "Bandit", symbol: "@", fg: RatColor::Rgb(180, 40, 40), health: 90, attack: 5, speed: 36, sight_range: 10, faction: Faction::Outlaws, has_gun: true },
@@ -248,6 +248,29 @@ pub fn spawn_monster(
             )).id();
             inv_items.push(molotov);
         }
+
+        // Humanoid NPCs randomly carry alcohol that heals when used.
+        let alcohol_hash = (x.wrapping_mul(47) ^ y.wrapping_mul(83)).unsigned_abs();
+        let alcohol_idx = alcohol_hash % 6;
+        let (alc_name, alc_symbol, alc_kind, alc_fg): (&str, &str, ItemKind, RatColor) = match alcohol_idx {
+            0 => ("Whiskey Bottle", "w", ItemKind::Whiskey { heal: 10, blunt_damage: 4 }, RatColor::Rgb(180, 120, 60)),
+            1 => ("Beer", "b", ItemKind::Beer { heal: 5, blunt_damage: 3 }, RatColor::Rgb(200, 180, 80)),
+            2 => ("Ale", "a", ItemKind::Ale { heal: 7, blunt_damage: 3 }, RatColor::Rgb(190, 150, 70)),
+            3 => ("Stout", "s", ItemKind::Stout { heal: 12, blunt_damage: 4 }, RatColor::Rgb(80, 50, 30)),
+            4 => ("Wine", "v", ItemKind::Wine { heal: 8, blunt_damage: 3 }, RatColor::Rgb(140, 30, 60)),
+            _ => ("Rum", "r", ItemKind::Rum { heal: 15, blunt_damage: 4 }, RatColor::Rgb(160, 100, 40)),
+        };
+        let alcohol = commands.spawn((
+            Item,
+            Name(alc_name.into()),
+            Renderable {
+                symbol: alc_symbol.into(),
+                fg: alc_fg,
+                bg: RatColor::Black,
+            },
+            alc_kind,
+        )).id();
+        inv_items.push(alcohol);
     }
 
     // Humanoid NPCs get procedurally generated cowboy names.
@@ -278,9 +301,9 @@ pub fn spawn_monster(
                     Some(prefixes[prefix_hash / 100 % prefixes.len()])
                 } else { None }
             }
-            Faction::Sheriff => {
-                if template.name.contains("Sheriff") {
-                    Some("Sheriff")
+            Faction::Police => {
+                if template.name.contains("Police") {
+                    Some("Officer")
                 } else {
                     Some("Deputy")
                 }

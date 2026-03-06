@@ -2,7 +2,7 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_ratatui::event::KeyMessage;
 use ratatui::crossterm::event::KeyCode;
 
-use crate::components::{Faction, Health, Inventory, ItemKind, SPELL_STAMINA_COST, Stamina, PlayerControlled, Position, Viewshed};
+use crate::components::{Dead, Faction, Health, Inventory, ItemKind, SPELL_STAMINA_COST, Stamina, PlayerControlled, Position, Viewshed};
 use crate::events::{AttackIntent, MeleeWideIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent, SpellCastIntent, ThrowItemIntent, UseItemIntent};
 use crate::grid_vec::GridVec;
 use crate::resources::{CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameState, InputMode, InputState, MapSeed, RestartRequested, SpectatingAfterDeath, TurnState};
@@ -89,7 +89,7 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
 pub fn input_system(
     mut messages: MessageReader<KeyMessage>,
     mut intents: IntentWriters,
-    player_query: Query<(Entity, &Position, Option<&Stamina>, Option<&Inventory>), With<PlayerControlled>>,
+    player_query: Query<(Entity, &Position, Option<&Stamina>, Option<&Inventory>, Option<&Dead>), With<PlayerControlled>>,
     mut player_viewshed: Query<&mut Viewshed, With<PlayerControlled>>,
     item_kind_query: Query<&ItemKind>,
     (hostiles_query, health_query): (Query<&Position, With<Faction>>, Query<Entity, With<Health>>),
@@ -101,10 +101,10 @@ pub fn input_system(
     mut input_state: ResMut<InputState>,
     mut restart_requested: ResMut<RestartRequested>,
     mut cursor: ResMut<CursorPosition>,
-    (mut extra_world_ticks, _spectating, dynamic_rng, seed, spatial): (ResMut<ExtraWorldTicks>, ResMut<SpectatingAfterDeath>, Res<DynamicRng>, Res<MapSeed>, Res<crate::resources::SpatialIndex>),
+    (mut extra_world_ticks, spectating, dynamic_rng, seed, spatial): (ResMut<ExtraWorldTicks>, ResMut<SpectatingAfterDeath>, Res<DynamicRng>, Res<MapSeed>, Res<crate::resources::SpatialIndex>),
     mut god_mode: ResMut<crate::resources::GodMode>,
 ) {
-    // Handle Dead and Victory states: R to restart only.
+    // Handle Dead and Victory states: R to restart, auto-advance turns when dead.
     if *game_state.get() == GameState::Dead || *game_state.get() == GameState::Victory {
         for message in messages.read() {
             if let KeyCode::Char('r') = message.code {
@@ -114,11 +114,30 @@ pub fn input_system(
         return;
     }
 
-    let Ok((player_entity, player_pos, player_stamina, player_inv)) = player_query.single() else {
+    let Ok((player_entity, player_pos, player_stamina, player_inv, player_dead)) = player_query.single() else {
         // PlayerControlled entity is gone (should only happen transiently).
         messages.read().for_each(|_| {});
         return;
     };
+
+    // If the player is dead, only allow restart and auto-advance time.
+    if player_dead.is_some() {
+        for message in messages.read() {
+            if let KeyCode::Char('r') = message.code {
+                restart_requested.0 = true;
+            }
+        }
+        // Auto-advance turns when spectating after death so the world keeps running.
+        if spectating.0 {
+            let awaiting = turn_state.as_ref().is_some_and(|s| *s.get() == TurnState::AwaitingInput);
+            if awaiting {
+                if let Some(ref mut nts) = next_turn_state {
+                    nts.set(TurnState::PlayerTurn);
+                }
+            }
+        }
+        return;
+    }
 
     let awaiting_input = turn_state
         .as_ref()
@@ -397,16 +416,6 @@ pub fn input_system(
                                         item_index: idx,
                                     });
                                     advance_turn(&mut next_turn_state);
-                                }
-                                handled = true;
-                            } else if let ItemKind::WaterBucket { uses, radius, .. } = kind {
-                                if *uses > 0 {
-                                    extra_world_ticks.0 = 1;
-                                    input_state.water_bucket_pending = Some((idx, *radius));
-                                    advance_turn(&mut next_turn_state);
-                                    combat_log.push("You splash water around you!".into());
-                                } else {
-                                    combat_log.push("The bucket is empty!".into());
                                 }
                                 handled = true;
                             }

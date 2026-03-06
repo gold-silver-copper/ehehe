@@ -54,6 +54,7 @@ impl GameMapResource {
                 let pos = origin + GridVec::new(dx, dy);
                 if let Some(voxel) = self.0.get_voxel_at(&pos)
                     && !matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall))
+                    && !matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater))
                 {
                     tiles_to_cloud.push((pos, voxel.floor.clone()));
                 }
@@ -155,8 +156,6 @@ pub struct InputState {
     pub dive_stamina_pending: i32,
     /// Stamina cost for a pending special ability action.
     pub ability_stamina_pending: i32,
-    /// Pending water bucket splash: (inventory_index, radius).
-    pub water_bucket_pending: Option<(usize, i32)>,
 }
 
 impl Default for InputState {
@@ -169,7 +168,6 @@ impl Default for InputState {
             reload_pending: false,
             dive_stamina_pending: 0,
             ability_stamina_pending: 0,
-            water_bucket_pending: None,
         }
     }
 }

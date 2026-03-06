@@ -2044,7 +2044,7 @@ fn factions_all_different_factions_are_hostile() {
     assert!(ai::factions_are_hostile(Faction::Lawmen, Faction::Vaqueros));
     assert!(ai::factions_are_hostile(Faction::Vaqueros, Faction::Lawmen));
     assert!(ai::factions_are_hostile(Faction::Lawmen, Faction::Civilians));
-    assert!(ai::factions_are_hostile(Faction::Civilians, Faction::Sheriff));
+    assert!(ai::factions_are_hostile(Faction::Civilians, Faction::Police));
     assert!(ai::factions_are_hostile(Faction::Indians, Faction::Wildlife));
     assert!(ai::factions_are_hostile(Faction::Outlaws, Faction::Vaqueros));
 }
