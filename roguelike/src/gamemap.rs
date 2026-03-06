@@ -1525,10 +1525,10 @@ const MAP_EDGE_BUFFER: CoordinateUnit = 1;
 const LOT_MIN_DIM: CoordinateUnit = 14;
 
 /// Minimum side length for the large anchor building placed first in each lot.
-const ANCHOR_MIN_DIM: CoordinateUnit = 12;
+const ANCHOR_MIN_DIM: CoordinateUnit = 10;
 
 /// Minimum side length for smaller filler buildings placed in strips around the anchor.
-const FILLER_MIN_DIM: CoordinateUnit = 6;
+const FILLER_MIN_DIM: CoordinateUnit = 5;
 
 /// Gap in tiles enforced between every pair of adjacent buildings.
 const GAP: CoordinateUnit = 1;
@@ -1692,8 +1692,8 @@ fn place_lot_buildings(
     // complementary fractions so tall lots get wide anchors and vice versa,
     // producing natural variety rather than a uniform aspect ratio.
     let size_n  = value_noise(lot.cx(), lot.cy(), lot_seed.wrapping_add(1111));
-    let frac_w  = 0.55 + size_n * 0.25;
-    let frac_h  = 0.55 + (1.0 - size_n) * 0.25;
+    let frac_w  = 0.48 + size_n * 0.20;
+    let frac_h  = 0.48 + (1.0 - size_n) * 0.20;
 
     let anchor_w = ((lot.w as f64 * frac_w) as CoordinateUnit)
         .max(ANCHOR_MIN_DIM)
@@ -1808,9 +1808,9 @@ fn fill_strip(
 
     // Divide along the longer axis; cap at 3 segments to avoid tiny slivers.
     let segments: CoordinateUnit = if sw >= sh {
-        (sw / (FILLER_MIN_DIM + GAP)).min(3).max(1)
+        (sw / (FILLER_MIN_DIM + GAP)).min(4).max(1)
     } else {
-        (sh / (FILLER_MIN_DIM + GAP)).min(3).max(1)
+        (sh / (FILLER_MIN_DIM + GAP)).min(4).max(1)
     };
 
     if sw >= sh {
