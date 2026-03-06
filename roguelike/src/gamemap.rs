@@ -1035,6 +1035,33 @@ impl GameMap {
         None
     }
 
+    /// Finds a passable tile inside a building near the map center.
+    /// Searches for WoodPlanks or StoneFloor tiles with no props that have
+    /// an adjacent wall, confirming the tile is truly inside a building.
+    pub fn find_building_interior(&self, center: GridVec, radius: i32) -> Option<GridVec> {
+        for r in 0..=radius {
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    if dx.abs() != r && dy.abs() != r { continue; }
+                    let pos = center + GridVec::new(dx, dy);
+                    if let Some(voxel) = self.get_voxel_at(&pos)
+                        && voxel.props.is_none()
+                        && matches!(voxel.floor, Some(Floor::WoodPlanks) | Some(Floor::StoneFloor))
+                    {
+                        // Confirm there's an adjacent wall (inside a building)
+                        let has_wall = pos.cardinal_neighbors().iter().any(|n| {
+                            self.get_voxel_at(n).is_some_and(|v| v.props.as_ref().is_some_and(|p| p.is_wall()))
+                        });
+                        if has_wall {
+                            return Some(pos);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Finds a Bridge tile near the horizontal center of the map.
     /// Returns a point on the bridge closest to `width / 2`.
     pub fn find_bridge_center(&self) -> Option<GridVec> {
