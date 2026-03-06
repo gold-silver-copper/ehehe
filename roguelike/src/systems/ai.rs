@@ -727,7 +727,7 @@ fn count_hostiles_near(
     center: GridVec,
     radius: i32,
     my_faction: Option<Faction>,
-    player_info: Option<(Entity, GridVec)>,
+    player_info: Option<(Entity, GridVec, Option<Faction>)>,
     npc_overview: &Query<
         (Entity, &Position, Option<&Faction>, Option<&AiTarget>),
         Without<PlayerControlled>,
@@ -735,8 +735,14 @@ fn count_hostiles_near(
 ) -> usize {
     let mut count = 0usize;
 
-    if let Some((_, player_pos)) = player_info {
-        if center.chebyshev_distance(player_pos) <= radius {
+    if let Some((_, player_pos, player_faction)) = player_info {
+        let hostile_player = match (my_faction, player_faction) {
+            (Some(my_faction), Some(player_faction)) => {
+                factions_are_hostile(my_faction, player_faction)
+            }
+            _ => true,
+        };
+        if hostile_player && center.chebyshev_distance(player_pos) <= radius {
             count += 1;
         }
     }
@@ -985,14 +991,14 @@ fn patrol_direction(
 fn live_target_position(
     target: Entity,
     player_entity: Option<Entity>,
-    player_info: Option<(Entity, GridVec)>,
+    player_info: Option<(Entity, GridVec, Option<Faction>)>,
     npc_overview: &Query<
         (Entity, &Position, Option<&Faction>, Option<&AiTarget>),
         Without<PlayerControlled>,
     >,
 ) -> Option<GridVec> {
-    if player_info.is_some_and(|(entity, _)| entity == target) {
-        return player_info.map(|(_, pos)| pos);
+    if player_info.is_some_and(|(entity, _, _)| entity == target) {
+        return player_info.map(|(_, pos, _)| pos);
     }
     if player_entity == Some(target) {
         return None;
@@ -1041,7 +1047,7 @@ fn collect_visible_hostiles(
     my_faction: Option<Faction>,
     current_target: Option<Entity>,
     viewshed: Option<&Viewshed>,
-    player_info: Option<(Entity, GridVec)>,
+    player_info: Option<(Entity, GridVec, Option<Faction>)>,
     npc_overview: &Query<
         (Entity, &Position, Option<&Faction>, Option<&AiTarget>),
         Without<PlayerControlled>,
@@ -1049,18 +1055,26 @@ fn collect_visible_hostiles(
 ) -> Vec<Threat> {
     let mut hostiles = Vec::new();
 
-    if let Some((player_entity, player_pos)) = player_info {
-        let distance = my_pos.chebyshev_distance(player_pos);
-        if has_visibility(viewshed, player_pos) || distance <= PROXIMITY_OVERRIDE_RANGE {
-            let mut score = threat_score(distance);
-            if current_target == Some(player_entity) {
-                score += 18;
+    if let Some((player_entity, player_pos, player_faction)) = player_info {
+        let hostile_player = match (my_faction, player_faction) {
+            (Some(my_faction), Some(player_faction)) => {
+                factions_are_hostile(my_faction, player_faction)
             }
-            hostiles.push(Threat {
-                entity: player_entity,
-                pos: player_pos,
-                score,
-            });
+            _ => true,
+        };
+        if hostile_player {
+            let distance = my_pos.chebyshev_distance(player_pos);
+            if has_visibility(viewshed, player_pos) || distance <= PROXIMITY_OVERRIDE_RANGE {
+                let mut score = threat_score(distance);
+                if current_target == Some(player_entity) {
+                    score += 18;
+                }
+                hostiles.push(Threat {
+                    entity: player_entity,
+                    pos: player_pos,
+                    score,
+                });
+            }
         }
     }
 
@@ -1130,7 +1144,7 @@ pub fn ai_system(
         ),
         Without<PlayerControlled>,
     >,
-    player_query: Query<(Entity, &Position, &Health), With<PlayerControlled>>,
+    player_query: Query<(Entity, &Position, &Health, Option<&Faction>), With<PlayerControlled>>,
     npc_overview: Query<
         (Entity, &Position, Option<&Faction>, Option<&AiTarget>),
         Without<PlayerControlled>,
@@ -1159,10 +1173,18 @@ pub fn ai_system(
     let player_data = player_query
         .single()
         .ok()
-        .map(|(entity, position, health)| (entity, position.as_grid_vec(), !health.is_dead()));
-    let player_entity = player_data.map(|(entity, _, _)| entity);
-    let player_info =
-        player_data.and_then(|(entity, position, alive)| alive.then_some((entity, position)));
+        .map(|(entity, position, health, faction)| {
+            (
+                entity,
+                position.as_grid_vec(),
+                !health.is_dead(),
+                faction.copied(),
+            )
+        });
+    let player_entity = player_data.map(|(entity, _, _, _)| entity);
+    let player_info = player_data.and_then(|(entity, position, alive, faction)| {
+        alive.then_some((entity, position, faction))
+    });
 
     let sand_cloud_tiles: HashSet<GridVec> = spell_particles
         .particles
