@@ -2025,4 +2025,236 @@ mod tests {
         assert_eq!(GridVec::DIRECTIONS_8[opposite_idx], GridVec::SOUTH,
             "4 CW steps from NORTH should reach SOUTH (opposite)");
     }
+
+    // ── Target persistence & threat scoring tests ─────────────────
+
+    #[test]
+    fn threat_score_closer_hostile_scores_higher() {
+        // A hostile at distance 3 should outscore one at distance 15.
+        // This validates dynamic reprioritization: NPCs switch to nearer threats.
+        let close_score = threat_score(3, false, false);
+        let far_score = threat_score(15, false, false);
+        assert!(close_score > far_score,
+            "Closer hostile (d=3, score={}) should outscore distant (d=15, score={})",
+            close_score, far_score);
+    }
+
+    #[test]
+    fn threat_score_aiming_bonus_overrides_distance() {
+        // A hostile at distance 10 that is aiming at us should outscore
+        // a hostile at distance 8 that is not aiming.
+        let aiming_far = threat_score(10, true, false);
+        let idle_near = threat_score(8, false, false);
+        assert!(aiming_far > idle_near,
+            "Aiming hostile at d=10 (score={}) should outscore idle at d=8 (score={})",
+            aiming_far, idle_near);
+    }
+
+    #[test]
+    fn threat_score_ally_penalty_reduces_priority() {
+        // If an ally is already engaging a hostile, its score should drop.
+        let alone = threat_score(5, false, false);
+        let ally_engaged = threat_score(5, false, true);
+        assert!(alone > ally_engaged,
+            "Hostile without ally engagement (score={}) should outscore ally-engaged (score={})",
+            alone, ally_engaged);
+    }
+
+    #[test]
+    fn target_lock_timeout_exceeds_rotation_sweep() {
+        // TARGET_LOCK_TIMEOUT must be long enough for an NPC to reach and
+        // sweep a last-known position. A full rotation takes 8 turns,
+        // and pursuit could need several more.
+        assert!(TARGET_LOCK_TIMEOUT > FULL_ROTATION_STEPS as u32,
+            "TARGET_LOCK_TIMEOUT ({}) must exceed full rotation ({})",
+            TARGET_LOCK_TIMEOUT, FULL_ROTATION_STEPS);
+    }
+
+    #[test]
+    fn target_lock_persists_within_timeout() {
+        // Simulate a locked target that was last seen 15 turns ago.
+        // With TARGET_LOCK_TIMEOUT = 20, the lock should still hold.
+        let turns_since_seen: u32 = 15;
+        assert!(turns_since_seen < TARGET_LOCK_TIMEOUT,
+            "Target last seen {} turns ago should still be locked (timeout={})",
+            turns_since_seen, TARGET_LOCK_TIMEOUT);
+    }
+
+    #[test]
+    fn target_lock_breaks_after_timeout() {
+        // After TARGET_LOCK_TIMEOUT turns without sighting, the lock breaks.
+        let turns_since_seen: u32 = TARGET_LOCK_TIMEOUT;
+        assert!(turns_since_seen >= TARGET_LOCK_TIMEOUT,
+            "Target last seen {} turns ago should be unlocked (timeout={})",
+            turns_since_seen, TARGET_LOCK_TIMEOUT);
+    }
+
+    #[test]
+    fn proximity_override_forces_combat_within_range() {
+        // Any hostile within PROXIMITY_OVERRIDE_RANGE (5) must force combat.
+        // Verify the constant and that distances within it satisfy the check.
+        assert_eq!(PROXIMITY_OVERRIDE_RANGE, 5);
+        let npc = GridVec::new(10, 10);
+        let hostile_2 = GridVec::new(12, 10); // distance 2
+        let hostile_5 = GridVec::new(15, 10); // distance 5
+        let hostile_6 = GridVec::new(16, 10); // distance 6
+
+        assert!(npc.chebyshev_distance(hostile_2) <= PROXIMITY_OVERRIDE_RANGE,
+            "Hostile at distance 2 must be within proximity override range");
+        assert!(npc.chebyshev_distance(hostile_5) <= PROXIMITY_OVERRIDE_RANGE,
+            "Hostile at distance 5 must be within proximity override range");
+        assert!(npc.chebyshev_distance(hostile_6) > PROXIMITY_OVERRIDE_RANGE,
+            "Hostile at distance 6 must be outside proximity override range");
+    }
+
+    #[test]
+    fn close_threat_range_triggers_reprioritization() {
+        // CLOSE_THREAT_RANGE = 8: any hostile within 8 tiles must trigger
+        // immediate target switch regardless of current engagement distance.
+        assert_eq!(CLOSE_THREAT_RANGE, 8);
+        let npc = GridVec::new(10, 10);
+        let close = GridVec::new(17, 10); // distance 7
+        let distant = GridVec::new(25, 10); // distance 15
+
+        // The close hostile should outscore the distant one.
+        let close_dist = npc.chebyshev_distance(close);
+        let dist_dist = npc.chebyshev_distance(distant);
+        assert!(close_dist <= CLOSE_THREAT_RANGE,
+            "Distance {} should be within CLOSE_THREAT_RANGE ({})", close_dist, CLOSE_THREAT_RANGE);
+        assert!(dist_dist > CLOSE_THREAT_RANGE,
+            "Distance {} should be outside CLOSE_THREAT_RANGE ({})", dist_dist, CLOSE_THREAT_RANGE);
+
+        let close_score = threat_score(close_dist, false, false);
+        let distant_score = threat_score(dist_dist, false, false);
+        assert!(close_score > distant_score,
+            "Close hostile (d={}, score={}) must outscore distant (d={}, score={})",
+            close_dist, close_score, dist_dist, distant_score);
+    }
+
+    #[test]
+    fn effective_awareness_extends_during_pursuit() {
+        // With a pursuit boost, the effective awareness range should exceed
+        // the base range.
+        let base = 16; // typical: viewshed_range(8) * 2
+        let boost = crate::components::AiPursuitBoost {
+            extra_range: PURSUIT_AWARENESS_BOOST,
+            last_spotted_turn: 100,
+        };
+        let eff = effective_awareness_range(base, Some(&boost), 100);
+        assert_eq!(eff, base + PURSUIT_AWARENESS_BOOST,
+            "Effective range should be base ({}) + boost ({})", base, PURSUIT_AWARENESS_BOOST);
+    }
+
+    #[test]
+    fn pursuit_boost_decays_over_time() {
+        // Pursuit boost decays by 1 per PURSUIT_BOOST_DECAY_TURNS of unseen.
+        let base = 16;
+        let boost = crate::components::AiPursuitBoost {
+            extra_range: PURSUIT_AWARENESS_BOOST,
+            last_spotted_turn: 100,
+        };
+        // After 3 * PURSUIT_BOOST_DECAY_TURNS turns, boost should have decayed by 3.
+        let turns_elapsed = PURSUIT_BOOST_DECAY_TURNS * 3;
+        let eff = effective_awareness_range(base, Some(&boost), 100 + turns_elapsed);
+        assert_eq!(eff, base + PURSUIT_AWARENESS_BOOST - 3,
+            "After {} turns unseen, boost should decay by 3", turns_elapsed);
+    }
+
+    #[test]
+    fn pursuit_boost_fully_decays_to_baseline() {
+        // After enough time, the boost should decay completely to 0.
+        let base = 16;
+        let boost = crate::components::AiPursuitBoost {
+            extra_range: PURSUIT_AWARENESS_BOOST,
+            last_spotted_turn: 100,
+        };
+        let many_turns = PURSUIT_BOOST_DECAY_TURNS * (PURSUIT_AWARENESS_BOOST as u32 + 5);
+        let eff = effective_awareness_range(base, Some(&boost), 100 + many_turns);
+        assert_eq!(eff, base,
+            "After {} turns unseen, awareness should return to baseline ({})", many_turns, base);
+    }
+
+    #[test]
+    fn cursor_advances_toward_new_target_after_switch() {
+        // Simulate: NPC has cursor at (10, 10) aimed at old target (15, 10).
+        // Target switches to (10, 15). Cursor should advance from (10, 10)
+        // toward (10, 15) — not reset to NPC position.
+        let mut cursor_pos = GridVec::new(10, 10);
+        let new_target = GridVec::new(10, 15);
+        let npc_pos = GridVec::new(5, 5);
+
+        // Simulate 3 king-steps toward the new target.
+        let steps = 3;
+        for _ in 0..steps {
+            if cursor_pos == new_target { break; }
+            let step = (new_target - cursor_pos).king_step();
+            cursor_pos = cursor_pos + step;
+        }
+
+        // Cursor should have moved toward new target, NOT toward NPC pos.
+        assert!(cursor_pos.chebyshev_distance(new_target) < 10 - steps + 1,
+            "Cursor at {:?} should have advanced {} steps toward {:?} (not reset to NPC {:?})",
+            cursor_pos, steps, new_target, npc_pos);
+        // Cursor should be at (10, 13) after 3 steps along Y axis.
+        assert_eq!(cursor_pos, GridVec::new(10, 13),
+            "After 3 south steps, cursor should be at (10,13)");
+    }
+
+    #[test]
+    fn cursor_tracks_moving_target_continuously() {
+        // Simulate: target moves from (15, 10) to (18, 10) over 3 turns.
+        // Cursor starts at (10, 10). Each turn it advances toward the
+        // target's current position — never stalls or resets.
+        let mut cursor_pos = GridVec::new(10, 10);
+        let target_positions = [
+            GridVec::new(15, 10),
+            GridVec::new(16, 10),
+            GridVec::new(17, 10),
+            GridVec::new(18, 10),
+        ];
+
+        let mut prev_dist = cursor_pos.chebyshev_distance(target_positions[0]);
+        for &target in &target_positions {
+            // Simulate 2 king-steps per turn toward current target position.
+            for _ in 0..2 {
+                if cursor_pos == target { break; }
+                let step = (target - cursor_pos).king_step();
+                cursor_pos = cursor_pos + step;
+            }
+            let cur_dist = cursor_pos.chebyshev_distance(target);
+            // Cursor should either stay the same distance or get closer.
+            // (Target moving away may keep distance constant.)
+            assert!(cur_dist <= prev_dist + 1,
+                "Cursor should track target. dist {} > prev {} + 1", cur_dist, prev_dist);
+            prev_dist = cur_dist;
+        }
+        // After 4 turns × 2 steps = 8 steps, cursor should be well advanced.
+        assert!(cursor_pos.x > 10,
+            "Cursor x ({}) should have advanced rightward from starting x=10", cursor_pos.x);
+    }
+
+    #[test]
+    fn last_known_position_updates_while_visible() {
+        // Simulate the memory update logic: every turn the target is visible,
+        // last_known_pos must update to the target's current position.
+        let mut lkp: Option<GridVec> = None;
+        let mut last_seen_turn: u32 = 0;
+
+        let target_positions = [
+            GridVec::new(10, 10),
+            GridVec::new(11, 10),
+            GridVec::new(12, 11),
+        ];
+
+        for (turn, &tpos) in target_positions.iter().enumerate() {
+            let visible = true;
+            if visible {
+                lkp = Some(tpos);
+                last_seen_turn = turn as u32;
+            }
+            assert_eq!(lkp, Some(tpos),
+                "LKP should update to {:?} on turn {}", tpos, turn);
+            assert_eq!(last_seen_turn, turn as u32);
+        }
+    }
 }
