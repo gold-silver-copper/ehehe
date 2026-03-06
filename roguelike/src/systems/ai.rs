@@ -29,11 +29,11 @@ mod cost {
 const MAX_A_STAR_NODES: usize = 640;
 const MAX_DIJKSTRA_NODES: usize = 640;
 
-const MEMORY_DURATION: u32 = 28;
-const TARGET_LOCK_TIMEOUT: u32 = 18;
-const PURSUIT_AWARENESS_BOOST: i32 = 8;
-const PURSUIT_BOOST_DECAY_TURNS: u32 = 3;
-const PROXIMITY_OVERRIDE_RANGE: i32 = 4;
+const MEMORY_DURATION: u32 = 40;
+const TARGET_LOCK_TIMEOUT: u32 = 28;
+const PURSUIT_AWARENESS_BOOST: i32 = 12;
+const PURSUIT_BOOST_DECAY_TURNS: u32 = 4;
+const PROXIMITY_OVERRIDE_RANGE: i32 = 6;
 const ALLY_SHARE_RANGE: i32 = 24;
 const PATROL_RADIUS: i32 = 18;
 const LOOK_AROUND_BASE_INTERVAL: u32 = 10;
@@ -54,6 +54,7 @@ const HASH_MIX_B: u64 = 0xc4ceb9fe1a85ec53;
 struct Threat {
     entity: Entity,
     pos: GridVec,
+    distance: i32,
     score: i32,
 }
 
@@ -420,13 +421,13 @@ fn adjust_profile_for_style(
         },
         Some(AimingStyle::SnapShot) => WeaponProfile {
             min_range: (profile.min_range - 1).max(1),
-            preferred_range: (profile.preferred_range - aggression_bias).max(2),
+            preferred_range: (profile.preferred_range - (1 + aggression_bias)).max(2),
             max_range: profile.max_range + 1,
         },
         Some(AimingStyle::Suppression) => WeaponProfile {
             min_range: (profile.min_range - 1).max(1),
-            preferred_range: profile.preferred_range,
-            max_range: profile.max_range + 3,
+            preferred_range: (profile.preferred_range - aggression_bias).max(2),
+            max_range: profile.max_range + 2,
         },
         None => profile,
     }
@@ -524,10 +525,12 @@ fn should_flee(health: Option<&Health>, has_heal: bool, personality: AiPersonali
         return false;
     }
 
-    let base_threshold = 12;
-    let courage_modifier = (personality.courage * 8.0).round() as i32;
-    let hp_threshold = (base_threshold - courage_modifier).clamp(4, 14);
-    health.current <= hp_threshold || health.fraction() <= 0.18
+    let base_threshold = 10;
+    let resolve_modifier =
+        ((personality.courage * 6.0) + (personality.aggression * 4.0)).round() as i32;
+    let hp_threshold = (base_threshold - resolve_modifier).clamp(2, 12);
+    let panic_fraction = (0.16 - personality.aggression * 0.08).clamp(0.06, 0.16);
+    health.current <= hp_threshold || health.fraction() <= panic_fraction
 }
 
 fn heal_threshold(personality: AiPersonality) -> f64 {
@@ -537,6 +540,7 @@ fn heal_threshold(personality: AiPersonality) -> f64 {
 fn effective_awareness_range(
     base_range: i32,
     pursuit_boost: Option<&AiPursuitBoost>,
+    personality: AiPersonality,
     current_turn: u32,
 ) -> i32 {
     let bonus = pursuit_boost
@@ -547,21 +551,28 @@ fn effective_awareness_range(
         })
         .unwrap_or(0);
 
-    base_range + bonus
+    base_range + bonus + (personality.aggression * 6.0).round() as i32
 }
 
 fn threat_score(distance: i32) -> i32 {
-    (30 - distance).max(0) * 6
+    (24 - distance).max(0) * 2
+}
+
+fn select_priority_target(hostiles: &[Threat]) -> Option<Threat> {
+    hostiles
+        .iter()
+        .min_by_key(|threat| (threat.distance, Reverse(threat.score)))
+        .copied()
 }
 
 fn choose_aiming_style(entity: Entity, turn: u32, personality: AiPersonality) -> AimingStyle {
-    if personality.aggression >= 0.9 {
+    if personality.aggression >= 0.75 {
         return AimingStyle::SnapShot;
     }
 
-    match turn_hash(entity, turn, HASH_KNUTH) % 3 {
+    match turn_hash(entity, turn, HASH_KNUTH) % 4 {
         0 => AimingStyle::CarefulAim,
-        1 => AimingStyle::SnapShot,
+        1 | 2 => AimingStyle::SnapShot,
         _ => AimingStyle::Suppression,
     }
 }
@@ -1072,6 +1083,7 @@ fn collect_visible_hostiles(
                 hostiles.push(Threat {
                     entity: player_entity,
                     pos: player_pos,
+                    distance,
                     score,
                 });
             }
@@ -1104,6 +1116,7 @@ fn collect_visible_hostiles(
             hostiles.push(Threat {
                 entity: other_entity,
                 pos: target_pos,
+                distance,
                 score,
             });
         }
@@ -1283,7 +1296,7 @@ pub fn ai_system(
         }
 
         let current_target_entity = ai_target.map(|target| target.entity);
-        let mut visible_hostiles = collect_visible_hostiles(
+        let visible_hostiles = collect_visible_hostiles(
             entity,
             my_pos,
             my_faction,
@@ -1292,13 +1305,13 @@ pub fn ai_system(
             player_info,
             &npc_overview,
         );
-        visible_hostiles.sort_by_key(|threat| threat.score);
-        let best_visible = visible_hostiles.last().copied();
+        let best_visible = select_priority_target(&visible_hostiles);
 
         let viewshed_range = viewshed_ref
             .map(|viewshed| viewshed.range as i32)
             .unwrap_or(8);
-        let awareness = effective_awareness_range(viewshed_range * 2, pursuit_boost, current_turn);
+        let awareness =
+            effective_awareness_range(viewshed_range * 2, pursuit_boost, personality, current_turn);
 
         let mut target = best_visible.map(|threat| TrackedTarget {
             entity: threat.entity,
@@ -1676,9 +1689,10 @@ pub fn ai_system(
                         continue;
                     }
 
-                    if let Some(profile) = gun
-                        .map(|gun| gun.profile)
-                        .or_else(|| bow.map(|bow| bow.profile))
+                    if personality.aggression < 0.8
+                        && let Some(profile) = gun
+                            .map(|gun| gun.profile)
+                            .or_else(|| bow.map(|bow| bow.profile))
                     {
                         if distance < profile.min_range && distance > 1 {
                             if let Some(dir) = retreat_direction(
@@ -1705,8 +1719,10 @@ pub fn ai_system(
 
                     let flank_now = ai_memory
                         .as_deref()
-                        .is_some_and(|memory| memory.stationary_turns >= STUCK_FLANK_TURNS);
-                    let goal = if flank_now || (target.visible && (!has_los || friendly_blocked)) {
+                        .is_some_and(|memory| memory.stationary_turns >= STUCK_FLANK_TURNS + 1);
+                    let should_flank =
+                        friendly_blocked || (flank_now && (!target.visible || !has_los));
+                    let goal = if should_flank {
                         flank_goal(entity, current_turn, my_pos, target_pos)
                     } else {
                         target_pos
@@ -1752,7 +1768,7 @@ pub fn ai_system(
                         clear_engagement(&mut commands, entity);
                         *ai_state = AiState::Patrolling;
                     } else if let Some(dir) = first_step_toward(
-                        my_pos, goal, entity, &game_map, &spatial, &blockers, false,
+                        my_pos, goal, entity, &game_map, &spatial, &blockers, true,
                     ) {
                         move_intents.write(MoveIntent {
                             entity,
@@ -1877,12 +1893,25 @@ mod tests {
     #[test]
     fn pursuit_boost_decays_over_time() {
         let boost = AiPursuitBoost {
-            extra_range: 8,
+            extra_range: 12,
             last_spotted_turn: 10,
         };
-        assert_eq!(effective_awareness_range(12, Some(&boost), 10), 20);
-        assert_eq!(effective_awareness_range(12, Some(&boost), 16), 18);
-        assert_eq!(effective_awareness_range(12, Some(&boost), 40), 12);
+        let personality = AiPersonality {
+            aggression: 0.5,
+            courage: 0.5,
+        };
+        assert_eq!(
+            effective_awareness_range(12, Some(&boost), personality, 10),
+            27
+        );
+        assert_eq!(
+            effective_awareness_range(12, Some(&boost), personality, 18),
+            25
+        );
+        assert_eq!(
+            effective_awareness_range(12, Some(&boost), personality, 58),
+            15
+        );
     }
 
     #[test]
@@ -1903,5 +1932,53 @@ mod tests {
         };
         assert!(should_flee(Some(&health), false, personality));
         assert!(!should_flee(Some(&health), true, personality));
+    }
+
+    #[test]
+    fn closest_visible_target_wins_priority() {
+        let threats = vec![
+            Threat {
+                entity: Entity::from_bits(1),
+                pos: GridVec::new(10, 10),
+                distance: 5,
+                score: 60,
+            },
+            Threat {
+                entity: Entity::from_bits(2),
+                pos: GridVec::new(7, 10),
+                distance: 2,
+                score: 4,
+            },
+            Threat {
+                entity: Entity::from_bits(3),
+                pos: GridVec::new(8, 10),
+                distance: 3,
+                score: 120,
+            },
+        ];
+
+        let best = select_priority_target(&threats).expect("target");
+        assert_eq!(best.entity, Entity::from_bits(2));
+    }
+
+    #[test]
+    fn target_priority_breaks_ties_with_pressure() {
+        let threats = vec![
+            Threat {
+                entity: Entity::from_bits(11),
+                pos: GridVec::new(10, 10),
+                distance: 3,
+                score: 10,
+            },
+            Threat {
+                entity: Entity::from_bits(12),
+                pos: GridVec::new(11, 10),
+                distance: 3,
+                score: 42,
+            },
+        ];
+
+        let best = select_priority_target(&threats).expect("target");
+        assert_eq!(best.entity, Entity::from_bits(12));
     }
 }

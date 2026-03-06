@@ -2125,6 +2125,37 @@ fn ai_idle_transitions_to_chasing_on_player_sight() {
 }
 
 #[test]
+fn ai_prefers_closest_visible_hostile() {
+    let mut app = test_app_with_ai();
+
+    for dx in -8..=8 {
+        for dy in -4..=4 {
+            clear_tile(&mut app, 60 + dx, 40 + dy);
+        }
+    }
+
+    let npc = spawn_ai_npc(&mut app, 60, 40, "Outlaw", Faction::Outlaws);
+    let closer_enemy = spawn_ai_npc(&mut app, 62, 40, "Lawman A", Faction::Lawmen);
+    let _farther_enemy = spawn_ai_npc(&mut app, 66, 40, "Lawman B", Faction::Lawmen);
+
+    {
+        let mut vs = app.world_mut().get_mut::<Viewshed>(npc).unwrap();
+        vs.visible_tiles.insert(GridVec::new(62, 40));
+        vs.visible_tiles.insert(GridVec::new(66, 40));
+        vs.dirty = false;
+    }
+
+    app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+    app.update();
+
+    let target = app.world().get::<AiTarget>(npc).unwrap();
+    assert_eq!(
+        target.entity, closer_enemy,
+        "NPC should focus the closest visible hostile"
+    );
+}
+
+#[test]
 fn ai_chasing_npc_moves_toward_player() {
     let mut app = test_app_with_ai();
 
