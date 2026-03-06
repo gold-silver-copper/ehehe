@@ -4258,13 +4258,14 @@ fn ai_aim_cursor_advances_toward_target() {
     };
     let target = GridVec::new(15, 10);
 
-    for _ in 0..cursor.steps_remaining {
-        if cursor.pos == target { break; }
+    while cursor.steps_remaining > 0 && cursor.pos != target {
         let step = (target - cursor.pos).king_step();
         cursor.pos = cursor.pos + step;
+        cursor.steps_remaining -= 1;
     }
     // After 3 king-steps east, cursor should be at (13, 10).
     assert_eq!(cursor.pos, GridVec::new(13, 10));
+    assert_eq!(cursor.steps_remaining, 0);
 }
 
 #[test]
@@ -4276,13 +4277,14 @@ fn ai_aim_cursor_reaches_target_stops() {
     };
     let target = GridVec::new(15, 10);
 
-    for _ in 0..cursor.steps_remaining {
-        if cursor.pos == target { break; }
+    while cursor.steps_remaining > 0 && cursor.pos != target {
         let step = (target - cursor.pos).king_step();
         cursor.pos = cursor.pos + step;
+        cursor.steps_remaining -= 1;
     }
-    // Should stop at target (15, 10), not overshoot.
+    // Should stop at target (15, 10), not overshoot. 4 steps remaining unused.
     assert_eq!(cursor.pos, target);
+    assert_eq!(cursor.steps_remaining, 4);
 }
 
 #[test]
@@ -4306,10 +4308,10 @@ fn ai_aim_cursor_persists_between_shots() {
 
     // Simulate first "shot": roll 2 steps
     cursor.steps_remaining = 2;
-    for _ in 0..cursor.steps_remaining {
-        if cursor.pos == target { break; }
+    while cursor.steps_remaining > 0 && cursor.pos != target {
         let step = (target - cursor.pos).king_step();
         cursor.pos = cursor.pos + step;
+        cursor.steps_remaining -= 1;
     }
     // Cursor should be at (15, 10) — exactly on target
     assert_eq!(cursor.pos, target);
@@ -4321,10 +4323,11 @@ fn ai_aim_cursor_persists_between_shots() {
     // If target moves, cursor advances from current pos, not NPC pos
     let new_target = GridVec::new(18, 10);
     cursor.steps_remaining = 2;
-    for _ in 0..cursor.steps_remaining {
-        if cursor.pos == new_target { break; }
+    while cursor.steps_remaining > 0 && cursor.pos != new_target {
         let step = (new_target - cursor.pos).king_step();
         cursor.pos = cursor.pos + step;
+        cursor.steps_remaining -= 1;
     }
     assert_eq!(cursor.pos, GridVec::new(17, 10));
+    assert_eq!(cursor.steps_remaining, 0);
 }

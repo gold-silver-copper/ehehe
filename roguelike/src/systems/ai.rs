@@ -1318,14 +1318,10 @@ pub fn ai_system(
                         cursor.steps_remaining = ((roll_hash % 6) as u8) + 1; // 1-6
                     }
                     // Advance cursor toward target
-                    let steps_to_take = cursor.steps_remaining;
-                    for _ in 0..steps_to_take {
-                        if cursor.pos == target_vec {
-                            break;
-                        }
+                    while cursor.steps_remaining > 0 && cursor.pos != target_vec {
                         let step = (target_vec - cursor.pos).king_step();
                         cursor.pos = cursor.pos + step;
-                        cursor.steps_remaining = cursor.steps_remaining.saturating_sub(1);
+                        cursor.steps_remaining -= 1;
                     }
                     // If cursor hasn't reached the target yet, spend the
                     // turn aiming and don't fire.
