@@ -642,6 +642,23 @@ fn process_inputs(
                             combat_log.push("Gun is empty! Press R to reload.".into());
                             handled = true;
                         }
+                    } else if let ItemKind::Bow { .. } = kind {
+                        let delta = cursor.pos - player_pos.as_grid_vec();
+                        if delta != crate::grid_vec::GridVec::ZERO {
+                            extra_world_ticks.0 = 1;
+                            intents.ranged_intents.write(RangedAttackIntent {
+                                attacker: player_entity,
+                                range: 28,
+                                dx: delta.x,
+                                dy: delta.y,
+                                gun_item: Some(item_entity),
+                            });
+                            advance_turn(next_turn_state);
+                            handled = true;
+                        } else {
+                            combat_log.push("Cursor is on your position!".into());
+                            handled = true;
+                        }
                     } else if let ItemKind::Knife { attack, .. }
                     | ItemKind::Tomahawk { attack, .. } = kind
                     {

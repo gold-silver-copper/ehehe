@@ -1174,6 +1174,7 @@ fn test_app_with_ranged() -> App {
     app.init_resource::<DynamicRng>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
+    app.init_resource::<Collectibles>();
     app.init_resource::<roguelike::resources::PropHealth>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_state::<GameState>();
@@ -1229,6 +1230,36 @@ fn spawn_test_player_with_gun(app: &mut App, x: i32, y: i32, attack: i32) -> (En
         ))
         .id();
     (player, gun)
+}
+
+fn spawn_test_player_with_bow(app: &mut App, x: i32, y: i32, attack: i32) -> (Entity, Entity) {
+    let bow = app
+        .world_mut()
+        .spawn((
+            Item,
+            Name("Test Bow".into()),
+            ItemKind::Bow {
+                attack,
+                blunt_damage: 3,
+            },
+        ))
+        .id();
+    let player = app
+        .world_mut()
+        .spawn((
+            Position { x, y },
+            PlayerControlled,
+            BlocksMovement,
+            Name("Player".into()),
+            Health {
+                current: 30,
+                max: 30,
+            },
+            CombatStats { attack },
+            Inventory { items: vec![bow] },
+        ))
+        .id();
+    (player, bow)
 }
 
 #[test]
@@ -1423,6 +1454,35 @@ fn ranged_attack_logs_shoot_message() {
         !log.messages.iter().any(|m| m.contains("fires")),
         "Combat log should suppress generic fire announcements"
     );
+}
+
+#[test]
+fn ranged_bow_consumes_arrows_and_spawns_arrow() {
+    let mut app = test_app_with_ranged();
+    let (player, bow) = spawn_test_player_with_bow(&mut app, 60, 40, 24);
+    app.world_mut().resource_mut::<Collectibles>().arrows = 3;
+
+    app.update();
+
+    app.world_mut().write_message(RangedAttackIntent {
+        attacker: player,
+        range: 40,
+        dx: 1,
+        dy: 0,
+        gun_item: Some(bow),
+    });
+    app.update();
+
+    let arrows_remaining = app.world().resource::<Collectibles>().arrows;
+    let arrow_projectiles = app
+        .world_mut()
+        .query::<&Projectile>()
+        .iter(app.world())
+        .filter(|p| !p.is_bullet)
+        .count();
+
+    assert_eq!(arrows_remaining, 2, "Bow shot should consume one arrow");
+    assert_eq!(arrow_projectiles, 1, "Bow shot should spawn one arrow projectile");
 }
 
 #[test]
@@ -1639,6 +1699,53 @@ fn fov_min_radius_always_visible() {
     assert!(
         !viewshed.visible_tiles.contains(&close_south),
         "Close tiles in opposite direction should NOT be visible when aiming away"
+    );
+}
+
+#[test]
+fn fov_wall_blocks_visibility_behind_it() {
+    let mut app = test_app_with_fov();
+    let player_pos = Position { x: 60, y: 40 };
+    app.world_mut().spawn((
+        player_pos,
+        PlayerControlled,
+        Viewshed {
+            range: 40,
+            visible_tiles: std::collections::HashSet::new(),
+            revealed_tiles: std::collections::HashSet::new(),
+            dirty: true,
+        },
+    ));
+
+    app.world_mut().resource_mut::<CursorPosition>().pos = GridVec::new(60, 40);
+
+    {
+        let map = &mut app.world_mut().resource_mut::<GameMapResource>().0;
+        for x in 60..=64 {
+            if let Some(voxel) = map.get_voxel_at_mut(&GridVec::new(x, 40)) {
+                voxel.props = None;
+            }
+        }
+        if let Some(voxel) = map.get_voxel_at_mut(&GridVec::new(62, 40)) {
+            voxel.props = Some(Props::Wall);
+        }
+    }
+
+    app.update();
+
+    let viewshed = app
+        .world_mut()
+        .query::<&Viewshed>()
+        .single(app.world())
+        .unwrap();
+
+    assert!(
+        viewshed.visible_tiles.contains(&GridVec::new(62, 40)),
+        "The blocking wall tile itself should remain visible"
+    );
+    assert!(
+        !viewshed.visible_tiles.contains(&GridVec::new(64, 40)),
+        "Tiles directly behind a wall should not be visible"
     );
 }
 
@@ -2059,6 +2166,11 @@ fn spawn_whiskey_item(app: &mut App) -> Entity {
         .id()
 }
 
+fn force_next_ai_heal_window(app: &mut App, entity: Entity) {
+    let turn = entity.to_bits() as u32 % 5 + (((entity.to_bits() >> 8) as u32) % 20) * 5;
+    app.world_mut().resource_mut::<TurnCounter>().0 = turn;
+}
+
 /// Spawns a knife item entity (not in any inventory).
 fn spawn_knife_item(app: &mut App) -> Entity {
     app.world_mut()
@@ -2292,6 +2404,7 @@ fn ai_npc_heals_with_whiskey_when_wounded() {
         .push(whiskey);
     app.world_mut().get_mut::<Health>(npc).unwrap().current = 8; // 40% HP (below 50% threshold)
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+    force_next_ai_heal_window(&mut app, npc);
 
     let hp_before = app.world().get::<Health>(npc).unwrap().current;
 
@@ -2335,6 +2448,7 @@ fn ai_npc_does_not_heal_when_healthy() {
         .push(whiskey);
     // HP is full (20/20) - above 50% threshold
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+    force_next_ai_heal_window(&mut app, npc);
 
     app.update();
 
@@ -2366,6 +2480,7 @@ fn ai_npc_does_not_heal_at_exactly_50_percent() {
         .push(whiskey);
     app.world_mut().get_mut::<Health>(npc).unwrap().current = 10; // 50% HP
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+    force_next_ai_heal_window(&mut app, npc);
 
     app.update();
 
@@ -4012,6 +4127,7 @@ fn ai_heal_via_use_item_intent() {
         .push(whiskey);
     app.world_mut().get_mut::<Health>(npc).unwrap().current = 8; // 40% < 50% threshold
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+    force_next_ai_heal_window(&mut app, npc);
 
     let hp_before = app.world().get::<Health>(npc).unwrap().current;
 
@@ -4572,6 +4688,7 @@ fn ai_unified_use_item_works_for_npc() {
         .push(whiskey);
     app.world_mut().get_mut::<Health>(npc).unwrap().current = 5;
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+    force_next_ai_heal_window(&mut app, npc);
 
     app.update();
 
@@ -4617,6 +4734,7 @@ fn ai_chasing_uses_a_star_pathfinding() {
         .unwrap()
         .clone_from(&AiState::Chasing);
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+    force_next_ai_heal_window(&mut app, npc);
     app.world_mut().get_mut::<Cursor>(npc).unwrap().pos = GridVec::new(57, 40);
     {
         let mut vs = app.world_mut().get_mut::<Viewshed>(npc).unwrap();
@@ -4766,6 +4884,7 @@ fn ai_npc_heals_before_chasing() {
         .unwrap()
         .clone_from(&AiState::Chasing);
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
+    force_next_ai_heal_window(&mut app, npc);
     app.world_mut().get_mut::<Cursor>(npc).unwrap().pos = GridVec::new(57, 40);
     {
         let mut vs = app.world_mut().get_mut::<Viewshed>(npc).unwrap();

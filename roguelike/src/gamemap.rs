@@ -838,6 +838,7 @@ impl WorldGenPhase for BuildingPhase {
 
         // Ensure every alley region connects to a road or sidewalk
         ensure_alley_connectivity(map, width, height);
+        clear_props_near_alleys(map, width, height);
 
         // Transition zone scatter around town perimeter
         place_transition_zones(map, width, height, seed, &data.buildings);
@@ -913,11 +914,12 @@ impl WorldGenPhase for FinalizationPhase {
         data: &mut WorldGenData,
         width: CoordinateUnit,
         height: CoordinateUnit,
-        _seed: NoiseSeed,
+        seed: NoiseSeed,
     ) {
         for building in &data.buildings {
             clear_building_entrance(map, building);
         }
+        clear_props_near_alleys(map, width, height);
 
         // Post-pass coherence: verify every building can reach the main street
         check_connectivity(
@@ -965,6 +967,10 @@ impl WorldGenPhase for FinalizationPhase {
                 }
             }
         }
+
+        // Re-apply the railroad after all other worldgen passes so later
+        // landmark/detail placement cannot leave the track fragmented.
+        place_railroad(map, width, height, seed);
     }
 }
 
@@ -2030,8 +2036,10 @@ fn try_place(
 fn reserve_building_entrance(map: &mut GameMap, b: &Building) {
     let door_x = b.x + b.w / 2;
     let door_y = b.y + b.h;
-    for dy in 0..=1 {
-        map.mark_occupied(door_x, door_y + dy, 1, 1);
+    for dy in 0..=2 {
+        for dx in -1..=1 {
+            map.mark_occupied(door_x + dx, door_y + dy, 1, 1);
+        }
     }
 }
 
@@ -2039,12 +2047,12 @@ fn reserve_building_entrance(map: &mut GameMap, b: &Building) {
 fn clear_building_entrance(map: &mut GameMap, b: &Building) {
     let door_x = b.x + b.w / 2;
     let door_y = b.y + b.h;
-    let apron = [
-        GridVec::new(door_x, door_y),
-        GridVec::new(door_x, door_y + 1),
-        GridVec::new(door_x - 1, door_y),
-        GridVec::new(door_x + 1, door_y),
-    ];
+    let mut apron = Vec::new();
+    for dy in 0..=2 {
+        for dx in -1..=1 {
+            apron.push(GridVec::new(door_x + dx, door_y + dy));
+        }
+    }
 
     for pos in apron {
         if pos.x < 0 || pos.x >= map.width || pos.y < 0 || pos.y >= map.height {
@@ -2056,6 +2064,37 @@ fn clear_building_entrance(map: &mut GameMap, b: &Building) {
                 .as_ref()
                 .is_some_and(|prop| prop.blocks_movement() && !prop.is_wall())
         {
+            voxel.props = None;
+        }
+    }
+}
+
+fn clear_props_near_alleys(map: &mut GameMap, width: CoordinateUnit, height: CoordinateUnit) {
+    let mut to_clear: Vec<GridVec> = Vec::new();
+    for y in 1..height - 1 {
+        for x in 1..width - 1 {
+            let pos = GridVec::new(x, y);
+            let Some(voxel) = map.get_voxel_at(&pos) else {
+                continue;
+            };
+            let adjacent_to_alley = matches!(voxel.floor, Some(Floor::Alley))
+                || pos.cardinal_neighbors().iter().any(|neighbor| {
+                    map.get_voxel_at(neighbor)
+                        .is_some_and(|v| matches!(v.floor, Some(Floor::Alley)))
+                });
+            if !adjacent_to_alley {
+                continue;
+            }
+            if voxel.props.as_ref().is_some_and(|prop| {
+                prop.blocks_movement() && !prop.is_wall() && !matches!(prop, Props::Fence)
+            }) {
+                to_clear.push(pos);
+            }
+        }
+    }
+
+    for pos in to_clear {
+        if let Some(voxel) = map.get_voxel_at_mut(&pos) {
             voxel.props = None;
         }
     }
@@ -4867,9 +4906,9 @@ fn place_street_props_curved(
     seed: NoiseSeed,
 ) {
     let furn_seed = seed.wrapping_add(77777);
-    // Place props every ~4 road-edge tiles for spacing.
+    // Place props more sparsely so sidewalks and frontage paths read cleanly.
     for (idx, &(x, y)) in road_edge_tiles.iter().enumerate() {
-        if idx % 4 != 0 {
+        if idx % 7 != 0 {
             continue;
         }
         let noise = value_noise(x, y, furn_seed.wrapping_add(idx as u64));
@@ -4934,9 +4973,9 @@ fn place_desert_decorations(
             let noise = value_noise(x, y, deco_seed);
             let density = fbm(x as f64, y as f64, 3, 0.06, 0.5, density_seed);
 
-            // ~4% of tiles pass the noise check; density threshold creates
+            // Keep desert clutter relatively sparse; density threshold creates
             // natural-looking clusters rather than uniform scatter.
-            if noise > 0.04 || density < 0.45 {
+            if noise > 0.028 || density < 0.5 {
                 continue;
             }
 
@@ -5207,13 +5246,6 @@ fn place_railroad(
             }
             let pos = GridVec::new(x, y);
             if let Some(voxel) = map.get_voxel_at(&pos) {
-                // Never place tracks on the main road or buildings
-                if matches!(voxel.floor, Some(Floor::DirtRoad) | Some(Floor::Sidewalk)) {
-                    continue;
-                }
-                if matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall)) {
-                    continue;
-                }
                 // Rail bridge over water/beach — lay bridge tile with track
                 if matches!(
                     voxel.floor,
@@ -5232,7 +5264,9 @@ fn place_railroad(
                 }
             }
             if let Some(voxel) = map.get_voxel_at_mut(&pos) {
-                voxel.floor = Some(Floor::Gravel);
+                if !matches!(voxel.floor, Some(Floor::DirtRoad) | Some(Floor::Sidewalk)) {
+                    voxel.floor = Some(Floor::Gravel);
+                }
                 voxel.props = Some(Props::RailTrack);
             }
             // Mark rail tile as occupied
@@ -5937,6 +5971,24 @@ mod tests {
     }
 
     #[test]
+    fn alley_tiles_are_not_cluttered_with_blocking_props() {
+        let map = GameMap::new(400, 280, 42);
+        for y in 0..280 {
+            for x in 0..400 {
+                if matches!(map.voxels[y][x].floor, Some(Floor::Alley))
+                    && let Some(prop) = map.voxels[y][x].props.as_ref()
+                {
+                    assert!(
+                        !prop.blocks_movement() || prop.is_wall(),
+                        "Alley tile ({x}, {y}) should not have blocking clutter: {:?}",
+                        prop
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn large_map_has_plaza() {
         // Try several seeds — road spacing changes can shift landmark
         // placement, so a single seed may not always produce a plaza.
@@ -6099,6 +6151,35 @@ mod tests {
             scatter_count > 0,
             "Town perimeter should have transition zone scatter"
         );
+    }
+
+    #[test]
+    fn railroad_corridors_are_continuous_across_map() {
+        for seed in [0, 7, 13, 42, 99] {
+            let map = GameMap::new(400, 280, seed);
+            for x in 4..map.width - 4 {
+                let north_has_track = (0..32).any(|y| {
+                    map.get_voxel_at(&GridVec::new(x, y))
+                        .is_some_and(|voxel| matches!(voxel.props, Some(Props::RailTrack)))
+                });
+                let south_has_track = (map.height - 32..map.height).any(|y| {
+                    map.get_voxel_at(&GridVec::new(x, y))
+                        .is_some_and(|voxel| matches!(voxel.props, Some(Props::RailTrack)))
+                });
+                assert!(
+                    north_has_track,
+                    "Missing north rail coverage at x={} for seed {}",
+                    x,
+                    seed
+                );
+                assert!(
+                    south_has_track,
+                    "Missing south rail coverage at x={} for seed {}",
+                    x,
+                    seed
+                );
+            }
+        }
     }
 
     #[test]

@@ -432,7 +432,7 @@ pub fn spawn_monster(
                     bg: RatColor::Black,
                 },
                 ItemKind::Bow {
-                    attack: scaled_attack,
+                    attack: (scaled_attack * 5).max(24),
                     blunt_damage: 3,
                 },
             ))

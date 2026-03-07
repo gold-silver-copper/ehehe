@@ -24,7 +24,7 @@ fn main() {
             .set(ImagePlugin::default_nearest())
             .set(WindowPlugin {
                 primary_window: Some(Window {
-                    title: "Roguelike".into(),
+                    title: "Escape from Yerba Buena".into(),
                     fit_canvas_to_parent: true,
                     prevent_default_event_handling: false,
                     canvas: Some("#bevy".into()),

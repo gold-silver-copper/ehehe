@@ -638,6 +638,7 @@ pub struct LootTable;
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub enum CollectibleKind {
     Caps(i32),
+    Arrows(i32),
     Bullets31(i32),
     Bullets36(i32),
     Bullets44(i32),

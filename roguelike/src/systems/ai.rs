@@ -36,8 +36,8 @@ const PURSUIT_BOOST_DECAY_TURNS: u32 = 4;
 const PROXIMITY_OVERRIDE_RANGE: i32 = 10;
 const ALLY_SHARE_RANGE: i32 = 32;
 const PATROL_RADIUS: i32 = 18;
-const LOOK_AROUND_BASE_INTERVAL: u32 = 6;
-const LOOK_AROUND_DICE_RANGE: u32 = 3;
+const LOOK_AROUND_BASE_INTERVAL: u32 = 40;
+const LOOK_AROUND_DICE_RANGE: u32 = 5;
 const MAX_SEARCH_SWEEPS: u8 = 3;
 const FULL_ROTATION_STEPS: u8 = GridVec::DIRECTIONS_4.len() as u8;
 const ROTATION_MOVE_INTERVAL: u8 = 2;
@@ -46,8 +46,11 @@ const ITEM_INTEREST_RANGE: i32 = 8;
 const FLEE_RECOVERY_FRACTION: f64 = 0.75;
 const EXPLOSIVE_MIN_RANGE: i32 = 4;
 const EXPLOSIVE_MAX_RANGE: i32 = 8;
-const BOW_MAX_RANGE: i32 = 14;
+const BOW_MAX_RANGE: i32 = 40;
 const SCAN_CURSOR_DISTANCE: i32 = 6;
+const UNSEEN_CURSOR_ADJUST_INTERVAL: u32 = 40;
+const HEAL_CHECK_INTERVAL: u32 = 5;
+const HEAL_CHECK_PERIOD: u32 = 20;
 const REVERSE_STEP_PENALTY: i32 = 160;
 
 const HASH_KNUTH: u64 = 2_654_435_761;
@@ -130,6 +133,11 @@ fn turn_hash(entity: Entity, turn: u32, salt: u64) -> u64 {
 #[inline]
 fn look_interval(entity: Entity) -> u32 {
     LOOK_AROUND_BASE_INTERVAL + (entity.to_bits() as u32 % LOOK_AROUND_DICE_RANGE.max(1))
+}
+
+#[inline]
+fn scan_rotation_due(entity: Entity, turn: u32) -> bool {
+    turn % UNSEEN_CURSOR_ADJUST_INTERVAL == entity.to_bits() as u32 % UNSEEN_CURSOR_ADJUST_INTERVAL
 }
 
 #[inline]
@@ -240,9 +248,14 @@ fn chase_tile_cost(pos: GridVec, game_map: &GameMapResource) -> Option<i32> {
 fn tile_cost_for_ai(
     pos: GridVec,
     self_entity: Entity,
+    my_faction: Option<Faction>,
     game_map: &GameMapResource,
     spatial: &SpatialIndex,
     blockers: &Query<(), With<BlocksMovement>>,
+    npc_overview: &Query<
+        (Entity, &Position, Option<&Faction>, Option<&AiTarget>),
+        Without<PlayerControlled>,
+    >,
 ) -> Option<i32> {
     if spatial
         .entities_at(&pos)
@@ -251,15 +264,22 @@ fn tile_cost_for_ai(
     {
         return None;
     }
-    base_tile_cost(pos, game_map)
+    let mut value = base_tile_cost(pos, game_map)?;
+    value += ally_cohesion_cost(pos, self_entity, my_faction, npc_overview);
+    Some(value)
 }
 
 fn tile_cost_for_ai_chase(
     pos: GridVec,
     self_entity: Entity,
+    my_faction: Option<Faction>,
     game_map: &GameMapResource,
     spatial: &SpatialIndex,
     blockers: &Query<(), With<BlocksMovement>>,
+    npc_overview: &Query<
+        (Entity, &Position, Option<&Faction>, Option<&AiTarget>),
+        Without<PlayerControlled>,
+    >,
 ) -> Option<i32> {
     if spatial
         .entities_at(&pos)
@@ -268,7 +288,46 @@ fn tile_cost_for_ai_chase(
     {
         return None;
     }
-    chase_tile_cost(pos, game_map)
+    let mut value = chase_tile_cost(pos, game_map)?;
+    value += ally_cohesion_cost(pos, self_entity, my_faction, npc_overview);
+    Some(value)
+}
+
+fn ally_cohesion_cost(
+    pos: GridVec,
+    self_entity: Entity,
+    my_faction: Option<Faction>,
+    npc_overview: &Query<
+        (Entity, &Position, Option<&Faction>, Option<&AiTarget>),
+        Without<PlayerControlled>,
+    >,
+) -> i32 {
+    let Some(my_faction) = my_faction else {
+        return 0;
+    };
+
+    let mut close_allies = 0;
+    let mut support_allies = 0;
+
+    for (other_entity, other_pos, other_faction, _) in npc_overview {
+        if other_entity == self_entity || other_faction.copied() != Some(my_faction) {
+            continue;
+        }
+
+        let dist = pos.chebyshev_distance(other_pos.as_grid_vec());
+        if dist == 0 {
+            continue;
+        }
+        if dist == 1 {
+            close_allies += 1;
+        } else if dist <= 6 {
+            support_allies += 1;
+        }
+    }
+
+    let support_bonus = (support_allies * 5).min(18);
+    let crowding_penalty = close_allies * 7;
+    crowding_penalty - support_bonus
 }
 
 fn a_star_first_step(
@@ -488,8 +547,8 @@ fn analyze_inventory(
                     tactics.bow = Some(BowChoice {
                         attack: *attack,
                         profile: WeaponProfile {
-                            min_range: 3,
-                            preferred_range: 7,
+                            min_range: 4,
+                            preferred_range: 16,
                             max_range: BOW_MAX_RANGE,
                         },
                     });
@@ -550,8 +609,19 @@ fn should_flee(health: Option<&Health>, has_heal: bool, personality: AiPersonali
     health.current <= hp_threshold || health.fraction() <= panic_fraction
 }
 
-fn heal_threshold(personality: AiPersonality) -> f64 {
-    (0.52 - personality.courage * 0.22).clamp(0.24, 0.52)
+fn should_attempt_heal(entity: Entity, turn: u32, health: &Health) -> bool {
+    if health.fraction() >= 0.5 {
+        return false;
+    }
+
+    let check_offset = entity.to_bits() as u32 % HEAL_CHECK_INTERVAL;
+    if turn % HEAL_CHECK_INTERVAL != check_offset {
+        return false;
+    }
+
+    let check_index = turn / HEAL_CHECK_INTERVAL;
+    let trigger_offset = ((entity.to_bits() >> 8) as u32) % HEAL_CHECK_PERIOD;
+    check_index % HEAL_CHECK_PERIOD == trigger_offset
 }
 
 fn effective_awareness_range(
@@ -696,13 +766,69 @@ fn moving_scan_cursor_target(origin: GridVec, interest: GridVec, entity: Entity,
         return origin + GridVec::NORTH * SCAN_CURSOR_DISTANCE;
     }
 
-    let phase = ((turn / 2) as u64 + entity.to_bits()) % 3;
+    let phase = ((turn / UNSEEN_CURSOR_ADJUST_INTERVAL.max(1)) as u64 + entity.to_bits()) % 3;
     let dir = match phase {
         0 => forward.rotate_90_ccw(),
         1 => forward,
         _ => forward.rotate_90_cw(),
     };
     origin + dir * SCAN_CURSOR_DISTANCE
+}
+
+fn step_cursor_toward(
+    commands: &mut Commands,
+    entity: Entity,
+    cursor: &mut Option<Mut<Cursor>>,
+    origin: GridVec,
+    desired_dir: GridVec,
+    viewshed: &mut Option<Mut<Viewshed>>,
+) {
+    let current_index = cursor_direction_index(origin, cursor);
+    let desired_index = GridVec::DIRECTIONS_4
+        .iter()
+        .position(|&candidate| candidate == desired_dir)
+        .unwrap_or(current_index);
+    let next_index = if current_index == desired_index {
+        current_index
+    } else {
+        let clockwise = (desired_index + GridVec::DIRECTIONS_4.len() - current_index)
+            % GridVec::DIRECTIONS_4.len();
+        let counter_clockwise = (current_index + GridVec::DIRECTIONS_4.len() - desired_index)
+            % GridVec::DIRECTIONS_4.len();
+        if clockwise <= counter_clockwise {
+            (current_index + 1) % GridVec::DIRECTIONS_4.len()
+        } else {
+            (current_index + GridVec::DIRECTIONS_4.len() - 1) % GridVec::DIRECTIONS_4.len()
+        }
+    };
+    orient_cursor(
+        commands,
+        entity,
+        cursor,
+        origin,
+        origin + GridVec::DIRECTIONS_4[next_index] * SCAN_CURSOR_DISTANCE,
+        viewshed,
+    );
+}
+
+fn track_unseen_objective_cursor(
+    commands: &mut Commands,
+    entity: Entity,
+    cursor: &mut Option<Mut<Cursor>>,
+    origin: GridVec,
+    interest: GridVec,
+    turn: u32,
+    viewshed: &mut Option<Mut<Viewshed>>,
+) {
+    let desired = moving_scan_cursor_target(origin, interest, entity, turn);
+    let desired_dir = cardinal_step_toward(desired - origin);
+    if desired_dir.is_zero() {
+        return;
+    }
+    if !scan_rotation_due(entity, turn) {
+        return;
+    }
+    step_cursor_toward(commands, entity, cursor, origin, desired_dir, viewshed);
 }
 
 fn prime_scan_cursor(
@@ -748,11 +874,16 @@ fn rotate_cursor(
 fn rotation_probe_step(
     my_pos: GridVec,
     entity: Entity,
+    my_faction: Option<Faction>,
     cursor: &Option<Mut<Cursor>>,
     remaining_rotation_steps: u8,
     game_map: &GameMapResource,
     spatial: &SpatialIndex,
     blockers: &Query<(), With<BlocksMovement>>,
+    npc_overview: &Query<
+        (Entity, &Position, Option<&Faction>, Option<&AiTarget>),
+        Without<PlayerControlled>,
+    >,
 ) -> Option<GridVec> {
     if remaining_rotation_steps == 0 || remaining_rotation_steps % ROTATION_MOVE_INTERVAL != 0 {
         return None;
@@ -770,7 +901,16 @@ fn rotation_probe_step(
         !dir.is_zero()
             && {
                 let next = my_pos + *dir;
-                tile_cost_for_ai(next, entity, game_map, spatial, blockers).is_some()
+                tile_cost_for_ai(
+                    next,
+                    entity,
+                    my_faction,
+                    game_map,
+                    spatial,
+                    blockers,
+                    npc_overview,
+                )
+                .is_some()
             }
     })
 }
@@ -880,6 +1020,11 @@ fn reverse_step_penalty(memory: Option<&AiMemory>, current_turn: u32, dir: GridV
     } else {
         0
     }
+}
+
+fn reset_search_state(memory: &mut AiMemory) {
+    memory.search_attempts = 0;
+    memory.search_rotation_steps = 0;
 }
 
 fn record_move(memory: &mut Option<Mut<AiMemory>>, dir: GridVec, current_turn: u32) {
@@ -997,14 +1142,19 @@ fn flee_direction(
     my_pos: GridVec,
     threat_pos: GridVec,
     entity: Entity,
+    my_faction: Option<Faction>,
     game_map: &GameMapResource,
     spatial: &SpatialIndex,
     blockers: &Query<(), With<BlocksMovement>>,
+    npc_overview: &Query<
+        (Entity, &Position, Option<&Faction>, Option<&AiTarget>),
+        Without<PlayerControlled>,
+    >,
     memory: Option<&AiMemory>,
     current_turn: u32,
 ) -> Option<GridVec> {
     let threat_map = dijkstra_map(&[threat_pos], |pos| {
-        tile_cost_for_ai(pos, entity, game_map, spatial, blockers)
+        tile_cost_for_ai(pos, entity, my_faction, game_map, spatial, blockers, npc_overview)
     });
 
     let my_distance = *threat_map.get(&my_pos).unwrap_or(&0);
@@ -1014,7 +1164,15 @@ fn flee_direction(
 
     for dir in GridVec::DIRECTIONS_4 {
         let neighbor = my_pos + dir;
-        let tile_cost = match tile_cost_for_ai(neighbor, entity, game_map, spatial, blockers) {
+        let tile_cost = match tile_cost_for_ai(
+            neighbor,
+            entity,
+            my_faction,
+            game_map,
+            spatial,
+            blockers,
+            npc_overview,
+        ) {
             Some(cost) => cost,
             None => continue,
         };
@@ -1043,9 +1201,14 @@ fn retreat_direction(
     my_pos: GridVec,
     threat_pos: GridVec,
     entity: Entity,
+    my_faction: Option<Faction>,
     game_map: &GameMapResource,
     spatial: &SpatialIndex,
     blockers: &Query<(), With<BlocksMovement>>,
+    npc_overview: &Query<
+        (Entity, &Position, Option<&Faction>, Option<&AiTarget>),
+        Without<PlayerControlled>,
+    >,
     sand_clouds: &HashSet<GridVec>,
     preserve_los: bool,
     memory: Option<&AiMemory>,
@@ -1056,7 +1219,15 @@ fn retreat_direction(
 
     for dir in GridVec::DIRECTIONS_4 {
         let candidate = my_pos + dir;
-        let tile_cost = match tile_cost_for_ai(candidate, entity, game_map, spatial, blockers) {
+        let tile_cost = match tile_cost_for_ai(
+            candidate,
+            entity,
+            my_faction,
+            game_map,
+            spatial,
+            blockers,
+            npc_overview,
+        ) {
             Some(cost) => cost,
             None => continue,
         };
@@ -1079,9 +1250,14 @@ fn first_step_toward(
     start: GridVec,
     goal: GridVec,
     entity: Entity,
+    my_faction: Option<Faction>,
     game_map: &GameMapResource,
     spatial: &SpatialIndex,
     blockers: &Query<(), With<BlocksMovement>>,
+    npc_overview: &Query<
+        (Entity, &Position, Option<&Faction>, Option<&AiTarget>),
+        Without<PlayerControlled>,
+    >,
     aggressive: bool,
     memory: Option<&AiMemory>,
     current_turn: u32,
@@ -1092,9 +1268,25 @@ fn first_step_toward(
     for dir in GridVec::DIRECTIONS_4 {
         let next = start + dir;
         let tile_cost = if aggressive {
-            tile_cost_for_ai_chase(next, entity, game_map, spatial, blockers)
+            tile_cost_for_ai_chase(
+                next,
+                entity,
+                my_faction,
+                game_map,
+                spatial,
+                blockers,
+                npc_overview,
+            )
         } else {
-            tile_cost_for_ai(next, entity, game_map, spatial, blockers)
+            tile_cost_for_ai(
+                next,
+                entity,
+                my_faction,
+                game_map,
+                spatial,
+                blockers,
+                npc_overview,
+            )
         };
         let Some(tile_cost) = tile_cost else {
             continue;
@@ -1122,11 +1314,27 @@ fn first_step_toward(
         let candidate_goal = goal + dir;
         let step = if aggressive {
             a_star_first_step(start, candidate_goal, |pos| {
-                tile_cost_for_ai_chase(pos, entity, game_map, spatial, blockers)
+                tile_cost_for_ai_chase(
+                    pos,
+                    entity,
+                    my_faction,
+                    game_map,
+                    spatial,
+                    blockers,
+                    npc_overview,
+                )
             })
         } else {
             a_star_first_step(start, candidate_goal, |pos| {
-                tile_cost_for_ai(pos, entity, game_map, spatial, blockers)
+                tile_cost_for_ai(
+                    pos,
+                    entity,
+                    my_faction,
+                    game_map,
+                    spatial,
+                    blockers,
+                    npc_overview,
+                )
             })
         };
         let Some(step) = step else {
@@ -1161,9 +1369,14 @@ fn patrol_direction(
     entity: Entity,
     my_pos: GridVec,
     origin: GridVec,
+    my_faction: Option<Faction>,
     game_map: &GameMapResource,
     spatial: &SpatialIndex,
     blockers: &Query<(), With<BlocksMovement>>,
+    npc_overview: &Query<
+        (Entity, &Position, Option<&Faction>, Option<&AiTarget>),
+        Without<PlayerControlled>,
+    >,
     memory: Option<&AiMemory>,
     turn: u32,
 ) -> Option<GridVec> {
@@ -1173,9 +1386,11 @@ fn patrol_direction(
             my_pos,
             origin,
             entity,
+            my_faction,
             game_map,
             spatial,
             blockers,
+            npc_overview,
             false,
             memory,
             turn,
@@ -1187,7 +1402,15 @@ fn patrol_direction(
 
     for (index, dir) in GridVec::DIRECTIONS_4.iter().copied().enumerate() {
         let candidate = my_pos + dir;
-        let tile_cost = match tile_cost_for_ai(candidate, entity, game_map, spatial, blockers) {
+        let tile_cost = match tile_cost_for_ai(
+            candidate,
+            entity,
+            my_faction,
+            game_map,
+            spatial,
+            blockers,
+            npc_overview,
+        ) {
             Some(cost) => cost,
             None => continue,
         };
@@ -1574,7 +1797,7 @@ pub fn ai_system(
                         if let Some(memory) = ai_memory.as_deref_mut() {
                             memory.last_known_pos = Some(alert_pos);
                             memory.last_seen_turn = current_turn;
-                            memory.search_attempts = 0;
+                            reset_search_state(memory);
                         }
                     }
                 }
@@ -1613,8 +1836,8 @@ pub fn ai_system(
                 memory.last_known_pos = Some(target.pos);
                 if target.visible {
                     memory.last_seen_turn = current_turn;
+                    reset_search_state(memory);
                 }
-                memory.search_attempts = 0;
             }
 
             if target.visible {
@@ -1625,12 +1848,13 @@ pub fn ai_system(
             }
         } else if let Some(goal) = objective {
             let _ = ensure_cursor_origin(&mut commands, entity, &mut cursor, my_pos, false);
-            prime_scan_cursor(
+            track_unseen_objective_cursor(
                 &mut commands,
                 entity,
                 &mut cursor,
                 my_pos,
-                Some(goal),
+                goal,
+                current_turn,
                 &mut viewshed,
             );
             commands.entity(entity).remove::<AiTarget>();
@@ -1645,9 +1869,11 @@ pub fn ai_system(
                     my_pos,
                     fire_center,
                     entity,
+                    my_faction,
                     &game_map,
                     &spatial,
                     &blockers,
+                    &npc_overview,
                     ai_memory.as_deref(),
                     current_turn,
                 )
@@ -1673,7 +1899,7 @@ pub fn ai_system(
 
         let health_ref = health.as_deref();
         if let (Some(health), Some(heal)) = (health_ref, tactics.heal) {
-            if health.fraction() <= heal_threshold(personality) {
+            if should_attempt_heal(entity, current_turn, health) {
                 let _ = heal.amount;
                 use_item_intents.write(UseItemIntent {
                     user: entity,
@@ -1714,21 +1940,35 @@ pub fn ai_system(
             AiState::Fleeing => {
                 if let Some(goal) = visible_threat_pos.or(objective) {
                     let direct_away = cardinal_step_toward(my_pos - goal);
+                    let desired_cursor = if visible_threat_pos.is_some() {
+                        goal
+                    } else {
+                        moving_scan_cursor_target(my_pos, goal, entity, current_turn)
+                    };
                     if !direct_away.is_zero()
-                        && tile_cost_for_ai(my_pos + direct_away, entity, &game_map, &spatial, &blockers)
-                            .is_some()
+                        && tile_cost_for_ai(
+                            my_pos + direct_away,
+                            entity,
+                            my_faction,
+                            &game_map,
+                            &spatial,
+                            &blockers,
+                            &npc_overview,
+                        )
+                        .is_some()
                     {
                         move_intents.write(MoveIntent {
                             entity,
                             dx: direct_away.x,
                             dy: direct_away.y,
                         });
+                        record_move(&mut ai_memory, direct_away, current_turn);
                         orient_cursor(
                             &mut commands,
                             entity,
                             &mut cursor,
                             my_pos,
-                            my_pos + direct_away,
+                            desired_cursor,
                             &mut viewshed,
                         );
                         energy.spend_action();
@@ -1739,9 +1979,11 @@ pub fn ai_system(
                             my_pos,
                             goal,
                             entity,
+                            my_faction,
                             &game_map,
                             &spatial,
                             &blockers,
+                            &npc_overview,
                             ai_memory.as_deref(),
                             current_turn,
                         )
@@ -1757,7 +1999,7 @@ pub fn ai_system(
                             entity,
                             &mut cursor,
                             my_pos,
-                            my_pos + dir,
+                            desired_cursor,
                             &mut viewshed,
                         );
                         energy.spend_action();
@@ -1818,6 +2060,16 @@ pub fn ai_system(
                             &mut cursor,
                             my_pos,
                             target_pos,
+                            &mut viewshed,
+                        );
+                    } else if !target.visible {
+                        track_unseen_objective_cursor(
+                            &mut commands,
+                            entity,
+                            &mut cursor,
+                            my_pos,
+                            target_pos,
+                            current_turn,
                             &mut viewshed,
                         );
                     }
@@ -2004,9 +2256,11 @@ pub fn ai_system(
                                 my_pos,
                                 target_pos,
                                 entity,
+                                my_faction,
                                 &game_map,
                                 &spatial,
                                 &blockers,
+                                &npc_overview,
                                 &sand_cloud_tiles,
                                 target.visible,
                                 ai_memory.as_deref(),
@@ -2024,7 +2278,16 @@ pub fn ai_system(
                                     entity,
                                     &mut cursor,
                                     my_pos,
-                                    desired_cursor,
+                                    if target.visible {
+                                        desired_cursor
+                                    } else {
+                                        moving_scan_cursor_target(
+                                            my_pos,
+                                            target_pos,
+                                            entity,
+                                            current_turn,
+                                        )
+                                    },
                                     &mut viewshed,
                                 );
                                 energy.spend_action();
@@ -2050,9 +2313,11 @@ pub fn ai_system(
                         my_pos,
                         goal,
                         entity,
+                        my_faction,
                         &game_map,
                         &spatial,
                         &blockers,
+                        &npc_overview,
                         true,
                         ai_memory.as_deref(),
                         current_turn,
@@ -2069,7 +2334,16 @@ pub fn ai_system(
                             entity,
                             &mut cursor,
                             my_pos,
-                            desired_cursor,
+                            if target.visible {
+                                desired_cursor
+                            } else {
+                                moving_scan_cursor_target(
+                                    my_pos,
+                                    target_pos,
+                                    entity,
+                                    current_turn,
+                                )
+                            },
                             &mut viewshed,
                         );
                         energy.spend_action();
@@ -2090,11 +2364,13 @@ pub fn ai_system(
                             if let Some(dir) = rotation_probe_step(
                                 my_pos,
                                 entity,
+                                my_faction,
                                 &cursor,
                                 search_rotation_steps,
                                 &game_map,
                                 &spatial,
                                 &blockers,
+                                &npc_overview,
                             ) {
                                 move_intents.write(MoveIntent {
                                     entity,
@@ -2103,7 +2379,9 @@ pub fn ai_system(
                                 });
                                 record_move(&mut ai_memory, dir, current_turn);
                             }
-                            if let Some(memory) = ai_memory.as_deref_mut() {
+                            if scan_rotation_due(entity, current_turn)
+                                && let Some(memory) = ai_memory.as_deref_mut()
+                            {
                                 rotate_cursor(
                                     &mut commands,
                                     entity,
@@ -2151,9 +2429,11 @@ pub fn ai_system(
                         my_pos,
                         goal,
                         entity,
+                        my_faction,
                         &game_map,
                         &spatial,
                         &blockers,
+                        &npc_overview,
                         true,
                         ai_memory.as_deref(),
                         current_turn,
@@ -2205,9 +2485,11 @@ pub fn ai_system(
                     my_pos,
                     item_pos,
                     entity,
+                    my_faction,
                     &game_map,
                     &spatial,
                     &blockers,
+                    &npc_overview,
                     false,
                     ai_memory.as_deref(),
                     current_turn,
@@ -2240,11 +2522,13 @@ pub fn ai_system(
             if let Some(dir) = rotation_probe_step(
                 my_pos,
                 entity,
+                my_faction,
                 &cursor,
                 search_rotation_steps,
                 &game_map,
                 &spatial,
                 &blockers,
+                &npc_overview,
             ) {
                 move_intents.write(MoveIntent {
                     entity,
@@ -2253,7 +2537,7 @@ pub fn ai_system(
                 });
                 record_move(&mut ai_memory, dir, current_turn);
             }
-            if let Some(memory) = ai_memory.as_deref_mut() {
+            if scan_rotation_due(entity, current_turn) && let Some(memory) = ai_memory.as_deref_mut() {
                 rotate_cursor(
                     &mut commands,
                     entity,
@@ -2309,9 +2593,11 @@ pub fn ai_system(
                 entity,
                 my_pos,
                 origin,
+                my_faction,
                 &game_map,
                 &spatial,
                 &blockers,
+                &npc_overview,
                 ai_memory.as_deref(),
                 current_turn,
             ) {
@@ -2416,6 +2702,39 @@ mod tests {
     }
 
     #[test]
+    fn heal_check_requires_below_half_hp() {
+        let entity = Entity::from_bits(1234);
+        let trigger_turn =
+            entity.to_bits() as u32 % HEAL_CHECK_INTERVAL
+                + (((entity.to_bits() >> 8) as u32) % HEAL_CHECK_PERIOD) * HEAL_CHECK_INTERVAL;
+        let exactly_half = Health {
+            current: 10,
+            max: 20,
+        };
+        let wounded = Health { current: 9, max: 20 };
+
+        assert!(!should_attempt_heal(entity, trigger_turn, &exactly_half));
+        assert!(should_attempt_heal(entity, trigger_turn, &wounded));
+    }
+
+    #[test]
+    fn heal_check_is_sparse_and_cadenced() {
+        let entity = Entity::from_bits(4321);
+        let trigger_turn =
+            entity.to_bits() as u32 % HEAL_CHECK_INTERVAL
+                + (((entity.to_bits() >> 8) as u32) % HEAL_CHECK_PERIOD) * HEAL_CHECK_INTERVAL;
+        let wounded = Health { current: 6, max: 20 };
+
+        assert!(should_attempt_heal(entity, trigger_turn, &wounded));
+        assert!(!should_attempt_heal(entity, trigger_turn + 1, &wounded));
+        assert!(!should_attempt_heal(
+            entity,
+            trigger_turn + HEAL_CHECK_INTERVAL,
+            &wounded
+        ));
+    }
+
+    #[test]
     fn closest_visible_target_wins_priority() {
         let threats = vec![
             Threat {
@@ -2461,5 +2780,26 @@ mod tests {
 
         let best = select_priority_target(&threats).expect("target");
         assert_eq!(best.entity, Entity::from_bits(12));
+    }
+
+    #[test]
+    fn moving_scan_cursor_fans_around_interest() {
+        let origin = GridVec::new(10, 10);
+        let interest = GridVec::new(20, 10);
+        let entity = Entity::from_bits(99);
+
+        let expected = [
+            GridVec::new(1, 0).rotate_90_ccw(),
+            GridVec::new(1, 0),
+            GridVec::new(1, 0).rotate_90_cw(),
+        ];
+        let mut actual = HashSet::new();
+        for turn in [0, 40, 80, 120, 160, 200] {
+            let dir =
+                cardinal_step_toward(moving_scan_cursor_target(origin, interest, entity, turn) - origin);
+            actual.insert(dir);
+            assert!(expected.contains(&dir), "unexpected scan direction: {:?}", dir);
+        }
+        assert_eq!(actual.len(), 3, "scan should cover left, forward, and right");
     }
 }

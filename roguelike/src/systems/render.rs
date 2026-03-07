@@ -257,7 +257,7 @@ pub fn draw_system(
         // Animals (Wildlife) and Civilians are excluded from FOV highlighting.
         {
             /// Maximum Chebyshev distance from an NPC for direction tint.
-            const FOV_TINT_ARC_RADIUS: i32 = 8;
+            const FOV_TINT_ARC_RADIUS: i32 = 3;
 
             let mut enemy_visible: HashSet<MyPoint> = HashSet::new();
             for (vs, faction, npc_pos, npc_cursor) in &npc_viewsheds {
@@ -938,7 +938,7 @@ fn render_stats_column(
             Constraint::Length(1), // Collectibles row 1
             Constraint::Length(1), // Collectibles row 2
             Constraint::Length(1), // Collectibles row 3
-            Constraint::Min(0),    // padding
+            Constraint::Length(1), // Collectibles row 4
         ])
         .split(
             Block::default()
@@ -992,16 +992,20 @@ fn render_stats_column(
 
     // Collectibles — 3 entries per row
     let row1 = format!(
-        "Cap:{} Pdr:{} .31:{}",
-        collectibles.caps, collectibles.powder, collectibles.bullets_31,
+        "Cap:{} Pdr:{} Arr:{}",
+        collectibles.caps, collectibles.powder, collectibles.arrows,
     );
     let row2 = format!(
-        ".36:{} .44:{} .50:{}",
-        collectibles.bullets_36, collectibles.bullets_44, collectibles.bullets_50,
+        ".31:{} .36:{} .44:{}",
+        collectibles.bullets_31, collectibles.bullets_36, collectibles.bullets_44,
     );
     let row3 = format!(
-        ".58:{} .577:{} .69:{}",
-        collectibles.bullets_58, collectibles.bullets_577, collectibles.bullets_69,
+        ".50:{} .58:{} .577:{}",
+        collectibles.bullets_50, collectibles.bullets_58, collectibles.bullets_577,
+    );
+    let row4 = format!(
+        ".69:{}",
+        collectibles.bullets_69,
     );
     frame.render_widget(
         Paragraph::new(Line::from(row1).white()).style(Style::default().bg(UI_BG)),
@@ -1014,6 +1018,10 @@ fn render_stats_column(
     frame.render_widget(
         Paragraph::new(Line::from(row3).white()).style(Style::default().bg(UI_BG)),
         chunks[4],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(row4).white()).style(Style::default().bg(UI_BG)),
+        chunks[5],
     );
 }
 

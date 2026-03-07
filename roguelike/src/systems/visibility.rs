@@ -85,12 +85,12 @@ pub fn visibility_system(
         } else if is_npc {
             // Human NPCs: moderate sight range with a practical cone.
             if let Some(_dir) = cone_dir {
-                let range = 84;
+                let range = 150;
                 // Slightly tighter cone than before, but with longer useful range.
                 let cos_t = 0.92;
                 (range, cos_t)
             } else {
-                (84, 0.92)
+                (150, 0.92)
             }
         } else {
             // PlayerControlled: use the original formula.
@@ -150,6 +150,10 @@ pub fn visibility_system(
                     dot >= cos_threshold
                 });
             }
+
+            viewshed.visible_tiles.retain(|&tile| {
+                has_clear_los(&game_map, origin, tile, &sand_cloud_tiles)
+            });
         }
 
         // Smoke attenuation: smoke particles halve remaining vision range
@@ -251,6 +255,25 @@ fn is_opaque(game_map: &GameMapResource, point: MyPoint, _sand_clouds: &HashSet<
         Some(v) => v.props.as_ref().is_some_and(|f| f.blocks_vision()),
         None => true, // off-map ⇒ opaque
     }
+}
+
+fn has_clear_los(
+    game_map: &GameMapResource,
+    origin: MyPoint,
+    tile: MyPoint,
+    sand_clouds: &HashSet<MyPoint>,
+) -> bool {
+    if tile == origin {
+        return true;
+    }
+
+    for ray_tile in origin.bresenham_line(tile).into_iter().skip(1) {
+        if ray_tile != tile && is_opaque(game_map, ray_tile, sand_clouds) {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn cast_npc_cone(

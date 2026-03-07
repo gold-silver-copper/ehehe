@@ -11,7 +11,8 @@ use crate::events::{
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
 use crate::resources::{
-    CombatLog, DynamicRng, GameMapResource, GameState, KillCount, MapSeed, SoundEvents, TurnCounter,
+    Collectibles, CombatLog, DynamicRng, GameMapResource, GameState, KillCount, MapSeed,
+    SoundEvents, TurnCounter,
 };
 use crate::typedefs::{CoordinateUnit, RatColor};
 use crate::typeenums::Props;
@@ -469,7 +470,7 @@ pub fn death_system(
                     CollectibleKind::Powder(amount),
                 ));
             }
-            // Drop ammo matching the NPC's gun caliber, if they had one.
+            // Drop ammo matching the NPC's weapon, if they had one.
             let ammo_roll = value_noise(
                 p.y.wrapping_add(kill_count.0 as i32 + 1),
                 p.x,
@@ -477,39 +478,49 @@ pub fn death_system(
             );
             if ammo_roll < 0.4 {
                 let amount = ((ammo_roll * 15.0) as i32).max(1);
-                // Find the caliber of the NPC's gun from their inventory.
-                let npc_caliber = inventory.and_then(|inv| {
+                let arrow_amount = amount.max(2);
+                let ammo_drop = inventory.and_then(|inv| {
                     inv.items.iter().find_map(|&ent| {
-                        item_query.get(ent).ok().and_then(|k| {
-                            if let ItemKind::Gun { caliber, .. } = k {
-                                Some(*caliber)
-                            } else {
-                                None
-                            }
+                        item_query.get(ent).ok().and_then(|k| match k {
+                            ItemKind::Gun { caliber, .. } => Some((
+                                format!("{amount}x {caliber} Bullets"),
+                                Renderable {
+                                    symbol: "·".into(),
+                                    fg: RatColor::Rgb(180, 180, 180),
+                                    bg: RatColor::Black,
+                                },
+                                match caliber {
+                                    Caliber::Cal31 => CollectibleKind::Bullets31(amount),
+                                    Caliber::Cal36 => CollectibleKind::Bullets36(amount),
+                                    Caliber::Cal44 => CollectibleKind::Bullets44(amount),
+                                    Caliber::Cal50 => CollectibleKind::Bullets50(amount),
+                                    Caliber::Cal58 => CollectibleKind::Bullets58(amount),
+                                    Caliber::Cal577 => CollectibleKind::Bullets577(amount),
+                                    Caliber::Cal69 => CollectibleKind::Bullets69(amount),
+                                },
+                            )),
+                            ItemKind::Bow { .. } => Some((
+                                format!("{arrow_amount}x Arrows"),
+                                Renderable {
+                                    symbol: "|".into(),
+                                    fg: RatColor::Rgb(170, 120, 70),
+                                    bg: RatColor::Black,
+                                },
+                                CollectibleKind::Arrows(arrow_amount),
+                            )),
+                            _ => None,
                         })
                     })
                 });
-                let (cal_name, collectible) = match npc_caliber {
-                    Some(Caliber::Cal31) => (".31", CollectibleKind::Bullets31(amount)),
-                    Some(Caliber::Cal36) => (".36", CollectibleKind::Bullets36(amount)),
-                    Some(Caliber::Cal44) => (".44", CollectibleKind::Bullets44(amount)),
-                    Some(Caliber::Cal50) => (".50", CollectibleKind::Bullets50(amount)),
-                    Some(Caliber::Cal58) => (".58", CollectibleKind::Bullets58(amount)),
-                    Some(Caliber::Cal577) => (".577", CollectibleKind::Bullets577(amount)),
-                    Some(Caliber::Cal69) => (".69", CollectibleKind::Bullets69(amount)),
-                    None => (".36", CollectibleKind::Bullets36(amount)),
-                };
-                commands.spawn((
-                    Position { x: p.x, y: p.y },
-                    Item,
-                    Name(format!("{amount}x {cal_name} Bullets")),
-                    Renderable {
-                        symbol: "·".into(),
-                        fg: RatColor::Rgb(180, 180, 180),
-                        bg: RatColor::Black,
-                    },
-                    collectible,
-                ));
+                if let Some((name, renderable, collectible)) = ammo_drop {
+                    commands.spawn((
+                        Position { x: p.x, y: p.y },
+                        Item,
+                        Name(name),
+                        renderable,
+                        collectible,
+                    ));
+                }
             }
         }
 
@@ -548,6 +559,7 @@ pub fn ranged_attack_system(
     mut intents: MessageReader<RangedAttackIntent>,
     mut caster_query: Query<(&Position, Option<&Name>)>,
     mut combat_log: ResMut<CombatLog>,
+    mut collectibles: ResMut<Collectibles>,
     mut item_kind_query: Query<&mut ItemKind>,
     mut sound_events: ResMut<SoundEvents>,
     dynamic_rng: Res<DynamicRng>,
@@ -556,6 +568,11 @@ pub fn ranged_attack_system(
     turn_counter: Res<TurnCounter>,
     player_visibility_query: Query<(&Position, Option<&Viewshed>), With<PlayerControlled>>,
 ) {
+    enum ShotKind {
+        Gun,
+        Bow,
+    }
+
     let player_visibility = player_visibility_query
         .single()
         .ok()
@@ -569,21 +586,29 @@ pub fn ranged_attack_system(
 
         // Determine damage and consume a loaded round from the gun item.
         // Damage is strictly based on caliber: .31 cal = 31 damage, etc.
-        let damage;
+        let (damage, shot_kind);
         if let Some(gun_entity) = intent.gun_item {
             if let Ok(mut kind) = item_kind_query.get_mut(gun_entity) {
-                if let ItemKind::Gun {
-                    loaded, caliber, ..
-                } = kind.as_mut()
-                {
-                    if *loaded <= 0 {
-                        combat_log.push("Gun is empty!".into());
-                        continue;
+                match kind.as_mut() {
+                    ItemKind::Gun {
+                        loaded, caliber, ..
+                    } => {
+                        if *loaded <= 0 {
+                            combat_log.push("Gun is empty!".into());
+                            continue;
+                        }
+                        *loaded -= 1;
+                        (damage, shot_kind) = (caliber.damage(), ShotKind::Gun);
                     }
-                    *loaded -= 1;
-                    damage = caliber.damage();
-                } else {
-                    continue;
+                    ItemKind::Bow { attack, .. } => {
+                        if collectibles.arrows <= 0 {
+                            combat_log.push("No arrows!".into());
+                            continue;
+                        }
+                        collectibles.arrows -= 1;
+                        (damage, shot_kind) = (*attack, ShotKind::Bow);
+                    }
+                    _ => continue,
                 }
             } else {
                 continue;
@@ -601,44 +626,55 @@ pub fn ranged_attack_system(
             continue;
         }
 
-        // Misfire check: small chance the gun misfires (ammo wasted, no bullet).
-        let misfire_roll = dynamic_rng.roll(
-            seed.0,
-            (origin.x as u64) << 32 | (origin.y as u64 & 0xFFFFFFFF) ^ 0xDEAD,
-        );
-        if misfire_roll < MISFIRE_CHANCE {
-            if player_can_see_event(origin, player_visibility) {
-                combat_log.push_at(format!("{c_name}'s gun misfires! *click*"), origin);
+        if matches!(shot_kind, ShotKind::Gun) {
+            // Misfire check: small chance the gun misfires (ammo wasted, no bullet).
+            let misfire_roll = dynamic_rng.roll(
+                seed.0,
+                (origin.x as u64) << 32 | (origin.y as u64 & 0xFFFFFFFF) ^ 0xDEAD,
+            );
+            if misfire_roll < MISFIRE_CHANCE {
+                if player_can_see_event(origin, player_visibility) {
+                    combat_log.push_at(format!("{c_name}'s gun misfires! *click*"), origin);
+                }
+                sound_events.add(origin);
+                continue;
             }
+
+            // Apply gun spread: slight random angular offset to the trajectory.
+            let spread_roll = dynamic_rng.roll(
+                seed.0,
+                (origin.x as u64).wrapping_mul(7) ^ (origin.y as u64) ^ 0x5BAD,
+            );
+            let (spread_dx, spread_dy) = apply_gun_spread(dx, dy, spread_roll);
+
+            // Compute the bullet endpoint — bullets travel until they hit a wall,
+            // entity, or reach the map boundary. No maximum range cap.
+            let map_range = game_map.0.width.max(game_map.0.height);
+            let endpoint = bullet_endpoint(origin, spread_dx, spread_dy, map_range);
+
             sound_events.add(origin);
-            continue;
+
+            // Spawn gun smoke at the firing position (persists and blocks sight).
+            spawn_gun_smoke(&mut game_map, origin, turn_counter.0, dx, dy);
+
+            // Spawn a bullet projectile entity that will travel along the path.
+            crate::systems::projectile::spawn_bullet(
+                &mut commands,
+                origin,
+                endpoint,
+                damage,
+                intent.attacker,
+            );
+        } else {
+            let endpoint = bullet_endpoint(origin, dx, dy, intent.range.max(1));
+            crate::systems::projectile::spawn_arrow(
+                &mut commands,
+                origin,
+                endpoint,
+                damage,
+                intent.attacker,
+            );
         }
-
-        // Apply gun spread: slight random angular offset to the trajectory.
-        let spread_roll = dynamic_rng.roll(
-            seed.0,
-            (origin.x as u64).wrapping_mul(7) ^ (origin.y as u64) ^ 0x5BAD,
-        );
-        let (spread_dx, spread_dy) = apply_gun_spread(dx, dy, spread_roll);
-
-        // Compute the bullet endpoint — bullets travel until they hit a wall,
-        // entity, or reach the map boundary. No maximum range cap.
-        let map_range = game_map.0.width.max(game_map.0.height);
-        let endpoint = bullet_endpoint(origin, spread_dx, spread_dy, map_range);
-
-        sound_events.add(origin);
-
-        // Spawn gun smoke at the firing position (persists and blocks sight).
-        spawn_gun_smoke(&mut game_map, origin, turn_counter.0, dx, dy);
-
-        // Spawn a bullet projectile entity that will travel along the path.
-        crate::systems::projectile::spawn_bullet(
-            &mut commands,
-            origin,
-            endpoint,
-            damage,
-            intent.attacker,
-        );
     }
 }
 

@@ -562,6 +562,8 @@ pub struct ExtraWorldTicks(pub i32);
 pub struct Collectibles {
     /// Percussion caps (needed for reloading: 1 per round)
     pub caps: i32,
+    /// Arrows for bows.
+    pub arrows: i32,
     /// .31 caliber lead bullets
     pub bullets_31: i32,
     /// .36 caliber lead bullets
@@ -584,6 +586,7 @@ impl Default for Collectibles {
     fn default() -> Self {
         Self {
             caps: 10,
+            arrows: 0,
             bullets_31: 0,
             bullets_36: 0,
             bullets_44: 0,
@@ -652,6 +655,7 @@ impl Collectibles {
     pub fn collect(&mut self, kind: CollectibleKind) {
         match kind {
             CollectibleKind::Caps(n) => self.caps += n,
+            CollectibleKind::Arrows(n) => self.arrows += n,
             CollectibleKind::Bullets31(n) => self.bullets_31 += n,
             CollectibleKind::Bullets36(n) => self.bullets_36 += n,
             CollectibleKind::Bullets44(n) => self.bullets_44 += n,
@@ -965,6 +969,7 @@ mod tests {
             c.bullets_31, 0,
             "Default has no .31 bullets — use for_starting_caliber()"
         );
+        assert_eq!(c.arrows, 0);
         assert_eq!(c.bullets_36, 0);
         assert_eq!(c.bullets_44, 0);
         assert_eq!(c.powder, 10);
