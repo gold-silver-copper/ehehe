@@ -4,6 +4,7 @@
 
 pub mod components;
 pub mod events;
+pub mod fov;
 pub mod gamemap;
 pub mod graphic_trait;
 pub mod grid_vec;
@@ -11,6 +12,6 @@ pub mod noise;
 pub mod plugins;
 pub mod resources;
 pub mod systems;
-pub mod typeenums;
 pub mod typedefs;
+pub mod typeenums;
 pub mod voxel;
