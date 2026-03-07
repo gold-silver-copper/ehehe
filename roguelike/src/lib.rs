@@ -4,6 +4,7 @@
 
 pub mod components;
 pub mod events;
+pub mod fov;
 pub mod gamemap;
 pub mod graphic_trait;
 pub mod grid_vec;
