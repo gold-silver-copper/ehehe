@@ -478,7 +478,7 @@ fn process_inputs(
                 }
             }
             // ── Movement keys (only while awaiting input) ───────
-            // Normal movement — costs 3 ticks (physical movement is slower) and 2 stamina
+            // Normal movement — costs 3 ticks and 2 stamina
             GameInput::MoveUp if awaiting_input => {
                 extra_world_ticks.0 = 2;
                 input_state.ability_stamina_pending = MOVE_STAMINA_COST;
@@ -528,9 +528,9 @@ fn process_inputs(
                 combat_log.push("You wait...".into());
                 advance_turn(next_turn_state);
             }
-            // ── Reload weapon from inventory magazine — costs 6 ticks ──
+            // ── Reload weapon from inventory magazine — costs 10 ticks ──
             GameInput::ReloadOrRestart if awaiting_input => {
-                extra_world_ticks.0 = 5;
+                extra_world_ticks.0 = 9;
                 input_state.reload_pending = true;
                 advance_turn(next_turn_state);
             }
@@ -623,8 +623,8 @@ fn process_inputs(
                         if *loaded > 0 {
                             let delta = cursor.pos - player_pos.as_grid_vec();
                             if delta != crate::grid_vec::GridVec::ZERO {
-                                // Double-action revolvers (Starr 1858) cost only 1 tick.
-                                extra_world_ticks.0 = if name.contains("Starr") { 0 } else { 1 };
+                                let _is_starr = name.contains("Starr");
+                                extra_world_ticks.0 = 1;
                                 intents.ranged_intents.write(RangedAttackIntent {
                                     attacker: player_entity,
                                     range: RANGED_ATTACK_RANGE,

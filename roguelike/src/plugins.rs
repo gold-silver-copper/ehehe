@@ -619,23 +619,29 @@ fn play_startup_explosion_smoke(
     pending.breach_tiles.clear();
 }
 
+fn resolve_player_spawn(map: &GameMap) -> GridVec {
+    let center = GridVec::new(map.width / 2, map.height / 2);
+    map.find_jail_interior(center, 48)
+        .or_else(|| map.find_building_interior(center, 40))
+        .or_else(|| map.find_spawnable_near(center, 20))
+        .unwrap_or(center)
+}
+
 /// Helper: spawns NPCs in faction groups distributed across the full map.
 /// Enemy gangs spawn all over roads and inside buildings within a 150-tile
 /// radius of the player, with many more groups than before.
 fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) {
     let group_seed = seed.wrapping_add(54321);
-    let player_spawn = map
-        .0
-        .find_spawnable_near(GridVec::new(map.0.width / 2, map.0.height / 2), 20)
-        .unwrap_or(GridVec::new(map.0.width / 2, map.0.height / 2));
+    let player_spawn = resolve_player_spawn(&map.0);
     let min_spawn_dist_sq = crate::systems::spawn::PLAYER_SAFE_SPAWN_RADIUS
         * crate::systems::spawn::PLAYER_SAFE_SPAWN_RADIUS;
     // keep a generous clear zone around player spawn
     let max_spawn_dist_sq: i32 = 150 * 150; // non-civilian NPCs spawn within 150 tiles of player
 
     // ── Faction gang groups across the full map ──────────────────
-    // Each faction gets many larger groups (5-8 NPCs) spread over
-    // a wide area including roads and building interiors.
+    // Groups nearer the player spawn slightly smaller and more diffuse so the
+    // opening has pressure without becoming a dogpile. Farther out, groups
+    // continue to appear but taper down in size instead of disappearing.
     let gang_seed = group_seed.wrapping_add(99999);
     let center_x = map.0.width / 2;
     let center_y = map.0.height / 2;
@@ -643,12 +649,12 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
 
     // (template indices, faction offset seed, number of groups, is_civilian)
     let gang_configs: &[(&[usize], u64, i32, bool)] = &[
-        (&[2, 3], 10, 14, false), // Apache: 14 groups
-        (&[0], 20, 14, false),    // Vaqueros: 14 groups
-        (&[1], 30, 8, true),      // Civilians: 8 groups (exempt from radius)
-        (&[4, 5], 40, 12, false), // Police: 12 groups
-        (&[6, 7], 50, 16, false), // Outlaws: 16 groups
-        (&[8, 9], 60, 12, false), // Lawmen: 12 groups
+        (&[2, 3], 10, 24, false), // Apache
+        (&[0], 20, 24, false),    // Vaqueros
+        (&[1], 30, 12, true),     // Civilians (exempt from radius)
+        (&[4, 5], 40, 20, false), // Police
+        (&[6, 7], 50, 28, false), // Outlaws
+        (&[8, 9], 60, 20, false), // Lawmen
     ];
 
     for &(templates, offset, num_groups, is_civilian_group) in gang_configs {
@@ -665,15 +671,32 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
             let anchor_x = anchor_x.clamp(10, map.0.width - 10);
             let anchor_y = anchor_y.clamp(10, map.0.height - 10);
 
-            // Spawn 5-8 NPCs spread across a wider cluster area
-            let group_size = 5 + (value_noise(anchor_x, anchor_y, gs.wrapping_add(2)) * 4.0) as i32;
+            let anchor = GridVec::new(anchor_x, anchor_y);
+            let distance = anchor.chebyshev_distance(player_spawn);
+            let (min_size, max_size, cluster_radius) = if distance < 55 {
+                (6, 9, 16)
+            } else if distance < 80 {
+                (7, 10, 14)
+            } else if distance < 120 {
+                (5, 8, 12)
+            } else {
+                (3, 6, 10)
+            };
+            let group_size = min_size
+                + (value_noise(anchor_x, anchor_y, gs.wrapping_add(2))
+                    * (max_size - min_size + 1) as f64) as i32;
             let mut spawned = 0;
-            for dy in -8i32..=8 {
-                for dx in -8i32..=8 {
+            let mut occupied = Vec::new();
+            for dy in -cluster_radius..=cluster_radius {
+                for dx in -cluster_radius..=cluster_radius {
                     if spawned >= group_size {
                         break;
                     }
                     let pos = GridVec::new(anchor_x + dx, anchor_y + dy);
+                    let local_dist = pos.chebyshev_distance(anchor);
+                    if local_dist > cluster_radius || local_dist < 2 {
+                        continue;
+                    }
                     if pos.distance_squared(player_spawn) < min_spawn_dist_sq {
                         continue;
                     }
@@ -686,12 +709,20 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
                         continue;
                     }
                     let tile_noise = value_noise(pos.x, pos.y, gs.wrapping_add(3333));
-                    if tile_noise > 0.50 {
+                    if tile_noise > 0.62 {
+                        continue;
+                    }
+                    let min_spacing = 1;
+                    if occupied
+                        .iter()
+                        .any(|other: &GridVec| other.chebyshev_distance(pos) < min_spacing)
+                    {
                         continue;
                     }
                     let template_idx = templates[(spawned as usize) % templates.len()];
                     let template = &MONSTER_TEMPLATES[template_idx];
                     spawn::spawn_monster(commands, template, pos.x, pos.y, 0, 0);
+                    occupied.push(pos);
                     spawned += 1;
                 }
                 if spawned >= group_size {

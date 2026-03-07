@@ -40,6 +40,7 @@ const LOOK_AROUND_BASE_INTERVAL: u32 = 10;
 const LOOK_AROUND_DICE_RANGE: u32 = 5;
 const MAX_SEARCH_SWEEPS: u8 = 2;
 const FULL_ROTATION_STEPS: u8 = 8;
+const ROTATION_MOVE_INTERVAL: u8 = 2;
 const STUCK_FLANK_TURNS: u8 = 2;
 const ITEM_INTEREST_RANGE: i32 = 8;
 const EXPLOSIVE_MIN_RANGE: i32 = 4;
@@ -648,6 +649,14 @@ fn rotate_look_dir(ai_look_dir: &mut Option<Mut<AiLookDir>>, viewshed: &mut Opti
     }
 }
 
+fn look_dir_index(ai_look_dir: &Option<Mut<AiLookDir>>) -> usize {
+    ai_look_dir
+        .as_ref()
+        .map(|look| look.0.king_step())
+        .and_then(|dir| GridVec::DIRECTIONS_8.iter().position(|&candidate| candidate == dir))
+        .unwrap_or(0)
+}
+
 fn begin_circular_rotation(
     ai_look_dir: &mut Option<Mut<AiLookDir>>,
     viewshed: &mut Option<Mut<Viewshed>>,
@@ -660,6 +669,32 @@ fn begin_circular_rotation(
 
 fn is_rotating(ai_look_dir: &Option<Mut<AiLookDir>>) -> bool {
     ai_look_dir.as_ref().is_some_and(|look| look.1 > 0)
+}
+
+fn rotation_probe_step(
+    my_pos: GridVec,
+    entity: Entity,
+    ai_look_dir: &Option<Mut<AiLookDir>>,
+    game_map: &GameMapResource,
+    spatial: &SpatialIndex,
+    blockers: &Query<(), With<BlocksMovement>>,
+) -> Option<GridVec> {
+    let remaining = ai_look_dir.as_ref().map(|look| look.1).unwrap_or(0);
+    if remaining == 0 || remaining % ROTATION_MOVE_INTERVAL != 0 {
+        return None;
+    }
+
+    let index = look_dir_index(ai_look_dir);
+    let directions = [
+        GridVec::DIRECTIONS_8[index],
+        GridVec::DIRECTIONS_8[(index + 1) % GridVec::DIRECTIONS_8.len()],
+        GridVec::DIRECTIONS_8[(index + GridVec::DIRECTIONS_8.len() - 1) % GridVec::DIRECTIONS_8.len()],
+    ];
+
+    directions.into_iter().find(|dir| {
+        let next = my_pos + *dir;
+        tile_cost_for_ai(next, entity, game_map, spatial, blockers).is_some()
+    })
 }
 
 fn has_clear_line_of_sight(
@@ -941,7 +976,28 @@ fn first_step_toward(
             {
                 Some(direct)
             } else {
-                None
+                let mut fallback = None;
+                let mut fallback_dist = i32::MAX;
+                for dir in GridVec::DIRECTIONS_8 {
+                    let candidate_goal = goal + dir;
+                    let step = if aggressive {
+                        a_star_first_step(start, candidate_goal, |pos| {
+                            tile_cost_for_ai_chase(pos, entity, game_map, spatial, blockers)
+                        })
+                    } else {
+                        a_star_first_step(start, candidate_goal, |pos| {
+                            tile_cost_for_ai(pos, entity, game_map, spatial, blockers)
+                        })
+                    };
+                    if let Some(step) = step {
+                        let dist = (start + step).chebyshev_distance(goal);
+                        if dist < fallback_dist {
+                            fallback_dist = dist;
+                            fallback = Some(step);
+                        }
+                    }
+                }
+                fallback
             }
         }
     })
@@ -1748,6 +1804,20 @@ pub fn ai_system(
                 if let Some(goal) = objective {
                     if my_pos == goal {
                         if is_rotating(&ai_look_dir) {
+                            if let Some(dir) = rotation_probe_step(
+                                my_pos,
+                                entity,
+                                &ai_look_dir,
+                                &game_map,
+                                &spatial,
+                                &blockers,
+                            ) {
+                                move_intents.write(MoveIntent {
+                                    entity,
+                                    dx: dir.x,
+                                    dy: dir.y,
+                                });
+                            }
                             rotate_look_dir(&mut ai_look_dir, &mut viewshed);
                             energy.spend_action();
                             continue;
@@ -1821,6 +1891,20 @@ pub fn ai_system(
         }
 
         if is_rotating(&ai_look_dir) {
+            if let Some(dir) = rotation_probe_step(
+                my_pos,
+                entity,
+                &ai_look_dir,
+                &game_map,
+                &spatial,
+                &blockers,
+            ) {
+                move_intents.write(MoveIntent {
+                    entity,
+                    dx: dir.x,
+                    dy: dir.y,
+                });
+            }
             rotate_look_dir(&mut ai_look_dir, &mut viewshed);
             energy.spend_action();
             continue;
