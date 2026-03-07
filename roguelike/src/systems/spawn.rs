@@ -20,7 +20,7 @@ pub const PLAYER_SAFE_SPAWN_RADIUS: i32 = 15;
 //   - Cowboys (Outlaws/Lawmen): Western first names and surnames
 //   - Apache: Compound nature names (e.g., Eaglefoot, SittingBear)
 //   - Vaqueros: Spanish names
-//   - Police: Famous lawman surnames
+//   - Police: frontier officer surnames
 //   - Civilians: Nicknames (e.g., Dusty, Slim, Maverick)
 
 /// Cowboy names — used by Outlaws and Lawmen factions.
@@ -120,7 +120,7 @@ const VAQUERO_NAMES: &[&str] = &[
     "Toro",
 ];
 
-/// Police names — famous lawman surnames.
+/// Police names — frontier officer surnames.
 const POLICE_NAMES: &[&str] = &[
     "Bassett",
     "Tilghman",
@@ -192,7 +192,7 @@ const CIVILIAN_NAMES: &[&str] = &[
 /// Each faction has its own distinct pool:
 ///   - Apache: Compound nature names (Eaglefoot, SittingBear)
 ///   - Vaqueros: Spanish first names or surnames
-///   - Police: Famous lawman surnames
+///   - Police: frontier officer surnames
 ///   - Civilians: Wild West nicknames
 ///   - Outlaws/Lawmen/default: Cowboy first names or surnames
 fn generate_npc_name(x: i32, y: i32, faction: &Faction) -> String {

@@ -124,7 +124,6 @@ impl Plugin for RoguelikePlugin {
             .init_resource::<crate::resources::DeathFade>()
             .init_resource::<DynamicRng>()
             .init_resource::<crate::resources::GodMode>()
-            .init_resource::<crate::resources::StarLevel>()
             .init_resource::<crate::resources::PropHealth>()
             // ── States ──
             .init_state::<GameState>()
@@ -205,8 +204,8 @@ impl Plugin for ActionPlugin {
     }
 }
 
-/// Manages turn state transitions, fire spreading, star level decay, and
-/// AI behaviour. Turn-phase systems are gated on their respective sub-states.
+/// Manages turn state transitions, fire spreading, and AI behaviour.
+/// Turn-phase systems are gated on their respective sub-states.
 struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
@@ -726,7 +725,6 @@ struct RestartResources<'w> {
     dynamic_rng: ResMut<'w, DynamicRng>,
     key_repeat: ResMut<'w, WindowedKeyRepeat>,
     god_mode: ResMut<'w, crate::resources::GodMode>,
-    star_level: ResMut<'w, crate::resources::StarLevel>,
     prop_health: ResMut<'w, crate::resources::PropHealth>,
     death_fade: ResMut<'w, crate::resources::DeathFade>,
 }
@@ -773,7 +771,6 @@ fn restart_system(
     res.spectating.0 = false;
     res.god_mode.0 = false;
     res.dynamic_rng.reset();
-    *res.star_level = crate::resources::StarLevel::default();
     res.prop_health.hp.clear();
     res.death_fade.frames = 0;
     res.next_game_state.set(GameState::Playing);

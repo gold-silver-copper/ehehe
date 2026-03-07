@@ -523,16 +523,6 @@ pub struct DeathFade {
 #[derive(Resource, Debug, Default)]
 pub struct GodMode(pub bool);
 
-/// GTA-style star (wanted) level. Higher stars = more sheriffs spawn.
-/// Decays when the player is not in hostile or sheriff vision for a while.
-#[derive(Resource, Debug, Default)]
-pub struct StarLevel {
-    /// Current wanted level (0 = peaceful, 1+ = wanted).
-    pub level: u32,
-    /// Turns since last seen by a hostile or sheriff NPC.
-    pub unseen_turns: u32,
-}
-
 /// Prop health map: tracks damage dealt to props.
 /// When accumulated damage exceeds the prop's max HP, it is destroyed.
 #[derive(Resource, Debug, Default)]

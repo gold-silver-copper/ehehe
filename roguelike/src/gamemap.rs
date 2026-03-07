@@ -38,7 +38,7 @@ struct Building {
     w: CoordinateUnit,
     h: CoordinateUnit,
     /// What kind of building: 0=house, 1=saloon, 2=stable, 3=general store,
-    /// 4=sheriff's office, 5=post office, 6=church, 7=bank, 8=hotel,
+    /// 4=police station, 5=post office, 6=church, 7=bank, 8=hotel,
     /// 9=jail, 10=undertaker, 11=blacksmith.
     kind: u32,
 }
@@ -1679,7 +1679,7 @@ fn assign_zone(
 }
 
 /// Selects a building kind based on semantic zone type.
-/// Commercial: saloons, general stores, banks, sheriff's office.
+/// Commercial: saloons, general stores, banks, police station.
 /// Residential: houses, churches, hotels.
 /// Industrial: stables, blacksmiths, undertakers.
 fn zone_building_kind(zone: u32, noise: f64) -> u32 {
@@ -3408,7 +3408,7 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
             }
         }
         9 => {
-            // Jail: cells, wanted posters, desk
+                // Jail: cells, notices, desk
             if iw >= 5 && ih >= 4 {
                 // Desk
                 set_prop(map, interior_x + 1, interior_y, Props::Table);
@@ -3863,7 +3863,7 @@ fn place_exterior_props(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
             set_prop(map, b.x + b.w / 2 + 1, b.y + b.h, Props::Barrel);
         }
         4 => {
-            // Police station: hitching post and wanted poster
+            // Police station: hitching post and town notice
             set_prop(map, b.x + b.w / 2, b.y + b.h, Props::HitchingPost);
             set_prop(map, b.x - 1, b.y + b.h / 2, Props::Sign);
         }
@@ -6027,7 +6027,7 @@ mod tests {
 
     #[test]
     fn bsp_landmark_anchors_placed_first() {
-        // On sufficiently large maps, landmark anchors (sheriff, saloon,
+        // On sufficiently large maps, landmark anchors (police, saloon,
         // church) should be placed before BSP subdivision.
         let (buildings, _, _) = generate_buildings_bsp(200, 140, 42, &[60], &[80], 3, 2);
         // Expect at least the 3 anchors
