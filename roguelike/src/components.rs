@@ -233,17 +233,6 @@ pub enum AiState {
     Fleeing,
 }
 
-/// Directional cursor for enemy entities. Defines which direction the enemy is
-/// currently looking. Used by the visibility system to restrict the enemy's
-/// viewshed to a cone (mirroring the player's cursor-based FOV). Enemies must
-/// spend ticks to rotate their look direction, making awareness directional.
-///
-/// The second field tracks remaining steps in a circular rotation sequence.
-/// When > 0, the NPC rotates one 45° CW step per turn and decrements until a
-/// full 360° circle is complete before resuming movement.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct AiLookDir(pub GridVec, pub u8);
-
 /// Patrol origin: the position this NPC considers "home". It will patrol
 /// around this position when not chasing the player.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -263,6 +252,8 @@ pub struct AiMemory {
     pub search_attempts: u8,
     /// Cursor steps taken since last fire (for blind-fire after 4 steps).
     pub cursor_steps: u8,
+    /// Remaining cursor rotation steps while searching at a last-known position.
+    pub search_rotation_steps: u8,
     /// Consecutive turns the NPC has been stationary (same tile).
     pub stationary_turns: u8,
     /// Previous position, used to detect stationarity.
@@ -276,6 +267,7 @@ impl Default for AiMemory {
             last_seen_turn: 0,
             search_attempts: 0,
             cursor_steps: 0,
+            search_rotation_steps: 0,
             stationary_turns: 0,
             prev_pos: None,
         }
@@ -313,10 +305,9 @@ pub enum AimingStyle {
     Suppression,
 }
 
-/// Shared cursor component for aiming.  Both the player and NPCs use this
-/// same component — the AI system drives the cursor position; it does not
-/// bypass it.  The cursor advances one king-step per turn, matching player
-/// cursor speed exactly.
+/// Shared cursor component for aiming. Both the player and NPCs use this same
+/// component. NPC AI drives the cursor position directly and may never center
+/// it on their own tile.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Cursor {
     /// Current aim cursor position in world coordinates.
@@ -455,8 +446,10 @@ impl Stamina {
 /// its own `ProjectileVisual` so the renderer can pick the correct symbols.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectileVisual {
-    /// Bullets and shrapnel: center dot head (`◦`/`·`) with a trailing dot tail.
+    /// Bullets and arrows: center dot head with a trailing dot tail.
     BulletTrail,
+    /// Explosion fragments: hot spark / shard visuals distinct from normal shots.
+    ShrapnelTrail,
     /// Tomahawks and knives: spinning slashes and dashes (`/`, `—`, `\`, `|`).
     SpinningBlade,
     /// Everything else (dynamite, molotov, generic): asterisk (`*`).

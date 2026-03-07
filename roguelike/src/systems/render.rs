@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
 
 use crate::components::{
-    AiLookDir, Faction, Health, Inventory, ItemKind, Name, PlayerControlled, Position, Projectile,
+    Cursor, Faction, Health, Inventory, ItemKind, Name, PlayerControlled, Position, Projectile,
     ProjectileVisual, Renderable, Stamina, Viewshed, display_name, item_display_name,
 };
 use crate::grid_vec::GridVec;
@@ -18,7 +18,6 @@ use crate::resources::{
     InputMode, InputState, KillCount, SOUND_RANGE, SoundEvents, SpellParticles, TurnCounter,
 };
 use crate::systems::input::KEYBINDINGS;
-use crate::systems::visibility::NPC_PROXIMITY_RADIUS;
 use crate::typedefs::{CoordinateUnit, MyPoint, RatColor};
 
 const UI_BG: Color = Color::Black;
@@ -97,7 +96,7 @@ pub fn draw_system(
         With<PlayerControlled>,
     >,
     item_query: Query<(Option<&Name>, Option<&ItemKind>), With<crate::components::Item>>,
-    npc_viewsheds: Query<(&Viewshed, Option<&Faction>, &Position, Option<&AiLookDir>)>,
+    npc_viewsheds: Query<(&Viewshed, Option<&Faction>, &Position, Option<&Cursor>)>,
     npc_info_query: Query<(
         &Position,
         Option<&Name>,
@@ -256,14 +255,16 @@ pub fn draw_system(
         // All NPCs (hostile or not): tint only a small arc in their facing direction.
         // This shows just enough of their FOV to indicate where they're looking.
         // Animals (Wildlife) and Civilians are excluded from FOV highlighting.
-        // The 3-tile circular proximity awareness zone is NOT tinted.
         {
             /// Maximum Chebyshev distance from an NPC for direction tint.
             const FOV_TINT_ARC_RADIUS: i32 = 8;
 
             let mut enemy_visible: HashSet<MyPoint> = HashSet::new();
-            for (vs, faction, npc_pos, ai_look) in &npc_viewsheds {
+            for (vs, faction, npc_pos, npc_cursor) in &npc_viewsheds {
                 if faction.is_some_and(|f| matches!(f, Faction::Wildlife | Faction::Civilians)) {
+                    continue;
+                }
+                if vs.dirty {
                     continue;
                 }
                 // Only tint FOV for NPCs that the player can currently see
@@ -274,29 +275,21 @@ pub fn draw_system(
                 if !npc_in_player_view {
                     continue;
                 }
-
-                let prox_sq = (NPC_PROXIMITY_RADIUS * NPC_PROXIMITY_RADIUS) as i64;
+                let Some(look_delta) = npc_cursor
+                    .map(|cursor| (cursor.pos - npc_gv).king_step())
+                    .filter(|delta| !delta.is_zero())
+                else {
+                    continue;
+                };
 
                 // Tint only a small arc in facing direction — just enough to
                 // see where people are looking.
-                // Skip tiles within the circular proximity zone.
                 for &tile in &vs.visible_tiles {
                     let diff = tile - npc_gv;
-                    let dist_sq =
-                        (diff.x as i64) * (diff.x as i64) + (diff.y as i64) * (diff.y as i64);
-                    // For tiles in the circular proximity zone, only tint
-                    // those in the forward-facing direction (fixes the gap
-                    // between NPC and their FOV tint).
-                    let in_proximity = dist_sq <= prox_sq;
                     if diff.x.abs().max(diff.y.abs()) <= FOV_TINT_ARC_RADIUS {
-                        if let Some(look) = ai_look {
-                            let dot =
-                                diff.x as i64 * look.0.x as i64 + diff.y as i64 * look.0.y as i64;
-                            if dot <= 0 && diff != GridVec::ZERO {
-                                continue;
-                            }
-                        } else if in_proximity {
-                            // No look direction and in proximity — skip.
+                        let dot =
+                            diff.x as i64 * look_delta.x as i64 + diff.y as i64 * look_delta.y as i64;
+                        if dot <= 0 && diff != GridVec::ZERO {
                             continue;
                         }
                         enemy_visible.insert(tile);
@@ -477,8 +470,11 @@ pub fn draw_system(
                     render_packet[screen.y as usize][screen.x as usize] =
                         (proj_render.symbol.clone(), fg, bg);
 
-                    // Render tail (only for BulletTrail visuals)
-                    if proj.visual == ProjectileVisual::BulletTrail
+                    // Render tail for fast moving linear projectiles.
+                    if matches!(
+                        proj.visual,
+                        ProjectileVisual::BulletTrail | ProjectileVisual::ShrapnelTrail
+                    )
                         && let Some(tail) = proj.tail_pos
                     {
                         let tail_screen = tail - bottom_left;
@@ -501,8 +497,14 @@ pub fn draw_system(
                                 } else {
                                     proj_render.fg
                                 };
+                                let tail_symbol = if proj.visual == ProjectileVisual::ShrapnelTrail
+                                {
+                                    "∙"
+                                } else {
+                                    "·"
+                                };
                                 render_packet[tail_screen.y as usize][tail_screen.x as usize] =
-                                    ("·".into(), tail_fg, tail_bg);
+                                    (tail_symbol.into(), tail_fg, tail_bg);
                             }
                         }
                     }

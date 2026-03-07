@@ -4,9 +4,9 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::components::{
-    ACTION_COST, AiLookDir, AiMemory, AiPersonality, AiState, BlocksMovement, Caliber,
-    CameraFollow, CombatStats, Energy, Faction, Health, Inventory, Item, ItemKind, Name,
-    PatrolOrigin, PlayerControlled, Position, Renderable, Speed, Stamina, Viewshed,
+    ACTION_COST, AiMemory, AiPersonality, AiState, BlocksMovement, Caliber, CameraFollow,
+    CombatStats, Cursor, Energy, Faction, Health, Inventory, Item, ItemKind, Name, PatrolOrigin,
+    PlayerControlled, Position, Renderable, Speed, Stamina, Viewshed,
 };
 use crate::events::{
     AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, MolotovCastIntent,
@@ -560,7 +560,9 @@ fn do_spawn_player(
                 dirty: true,
             },
             AiState::Idle,
-            AiLookDir(GridVec::new(0, -1), 0),
+            Cursor {
+                pos: GridVec::new(spawn_pos.x, spawn_pos.y) + GridVec::NORTH,
+            },
             PatrolOrigin(GridVec::new(spawn_pos.x, spawn_pos.y)),
             AiMemory::default(),
             AiPersonality {
@@ -673,14 +675,14 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
 
             let anchor = GridVec::new(anchor_x, anchor_y);
             let distance = anchor.chebyshev_distance(player_spawn);
-            let (min_size, max_size, cluster_radius) = if distance < 55 {
-                (6, 9, 16)
+            let (min_size, max_size, cluster_radius, min_spacing) = if distance < 55 {
+                (6, 9, 22, 3)
             } else if distance < 80 {
-                (7, 10, 14)
+                (7, 10, 20, 3)
             } else if distance < 120 {
-                (5, 8, 12)
+                (5, 8, 18, 3)
             } else {
-                (3, 6, 10)
+                (3, 6, 16, 2)
             };
             let group_size = min_size
                 + (value_noise(anchor_x, anchor_y, gs.wrapping_add(2))
@@ -694,7 +696,7 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
                     }
                     let pos = GridVec::new(anchor_x + dx, anchor_y + dy);
                     let local_dist = pos.chebyshev_distance(anchor);
-                    if local_dist > cluster_radius || local_dist < 2 {
+                    if local_dist > cluster_radius || local_dist < 3 {
                         continue;
                     }
                     if pos.distance_squared(player_spawn) < min_spawn_dist_sq {
@@ -712,7 +714,6 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
                     if tile_noise > 0.62 {
                         continue;
                     }
-                    let min_spacing = 1;
                     if occupied
                         .iter()
                         .any(|other: &GridVec| other.chebyshev_distance(pos) < min_spacing)

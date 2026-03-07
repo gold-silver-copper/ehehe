@@ -409,6 +409,20 @@ fn combat_log_records_death_message() {
 
     app.update();
 
+    if let Some(mut vs) = app.world_mut().get_mut::<Viewshed>(player) {
+        vs.visible_tiles.insert(GridVec::new(61, 40));
+        vs.dirty = false;
+    } else {
+        let mut visible_tiles = std::collections::HashSet::new();
+        visible_tiles.insert(GridVec::new(61, 40));
+        app.world_mut().entity_mut(player).insert(Viewshed {
+            range: 8,
+            visible_tiles,
+            revealed_tiles: std::collections::HashSet::new(),
+            dirty: false,
+        });
+    }
+
     app.world_mut().write_message(AttackIntent {
         attacker: player,
         target: monster,
@@ -1290,8 +1304,8 @@ fn ranged_attack_no_target_in_range() {
 
     let log = app.world().resource::<CombatLog>();
     assert!(
-        log.messages.iter().any(|m| m.contains("fires")),
-        "Combat log should note the player fired"
+        !log.messages.iter().any(|m| m.contains("fires")),
+        "Combat log should suppress generic fire announcements"
     );
 }
 
@@ -1406,10 +1420,8 @@ fn ranged_attack_logs_shoot_message() {
 
     let log = app.world().resource::<CombatLog>();
     assert!(
-        log.messages
-            .iter()
-            .any(|m| m.contains("fires") || m.contains("hits")),
-        "Combat log should contain a fire/hit message"
+        !log.messages.iter().any(|m| m.contains("fires")),
+        "Combat log should suppress generic fire announcements"
     );
 }
 
@@ -1631,14 +1643,16 @@ fn fov_min_radius_always_visible() {
 }
 
 #[test]
-fn fov_npc_uses_ai_look_dir() {
+fn fov_npc_uses_cursor_direction() {
     let mut app = test_app_with_fov();
-    // Spawn NPC with AiLookDir pointing east
+    // Spawn NPC with cursor pointing east
     let npc_pos = Position { x: 60, y: 40 };
     app.world_mut().spawn((
         npc_pos,
         Faction::Outlaws,
-        AiLookDir(GridVec::new(10, 0), 0),
+        Cursor {
+            pos: GridVec::new(70, 40),
+        },
         Viewshed {
             range: 40,
             visible_tiles: std::collections::HashSet::new(),
@@ -2003,7 +2017,9 @@ fn spawn_ai_npc(app: &mut App, x: i32, y: i32, name: &str, faction: Faction) -> 
             Speed(ACTION_COST),
             Energy(0),
             AiState::Idle,
-            AiLookDir(GridVec::new(1, 0), 0),
+            Cursor {
+                pos: GridVec::new(x, y) + GridVec::EAST,
+            },
             PatrolOrigin(GridVec::new(x, y)),
             AiMemory::default(),
             AiPersonality::default(),
@@ -2450,12 +2466,12 @@ fn a_star_diagonal_path() {
 
     let step = ai::a_star_first_step_pub(start, goal, |_| true);
 
-    assert!(step.is_some(), "A* should find diagonal path");
+    assert!(step.is_some(), "A* should find a cardinal path to the diagonal goal");
     let s = step.unwrap();
-    // Should step diagonally toward goal
+    // NPC pathing is cardinal-only, so the first step should be along one axis.
     assert!(
-        s.x > 0 && s.y > 0,
-        "Should take a diagonal step toward (5,5), got ({}, {})",
+        (s.x == 1 && s.y == 0) || (s.x == 0 && s.y == 1),
+        "Should take a cardinal step toward (5,5), got ({}, {})",
         s.x,
         s.y
     );
@@ -3238,9 +3254,6 @@ fn gridvec_cardinal_neighbors_count() {
 fn combat_log_filters_by_visibility() {
     let mut log = CombatLog::default();
 
-    // Message always visible (no position)
-    log.push("Global event".into());
-
     // Message at a specific position
     log.push_at("Local event".into(), GridVec::new(5, 5));
 
@@ -3252,7 +3265,6 @@ fn combat_log_filters_by_visibility() {
 
     let msgs = log.recent_visible(10, &visible);
 
-    assert!(msgs.contains(&"Global event"));
     assert!(msgs.contains(&"Local event"));
     assert!(
         !msgs.contains(&"Far event"),
@@ -3544,7 +3556,7 @@ fn bullet_projectile_has_bullet_trail_visual() {
 }
 
 #[test]
-fn shrapnel_projectile_has_bullet_trail_visual() {
+fn shrapnel_projectile_has_shrapnel_visual() {
     use roguelike::components::ProjectileVisual;
     let mut app = test_app_with_spells();
     let grenade = app
@@ -3595,11 +3607,11 @@ fn shrapnel_projectile_has_bullet_trail_visual() {
         .world_mut()
         .query::<&Projectile>()
         .iter(app.world())
-        .filter(|p| p.visual == ProjectileVisual::BulletTrail && !p.is_bullet)
+        .filter(|p| p.visual == ProjectileVisual::ShrapnelTrail && !p.is_bullet)
         .count();
     assert!(
         shrapnel_count > 0,
-        "Shrapnel should use BulletTrail visual with is_bullet=false"
+        "Shrapnel should use ShrapnelTrail visual with is_bullet=false"
     );
 }
 
@@ -3675,13 +3687,15 @@ fn explosive_projectile_has_asterisk_visual() {
 
 #[test]
 fn npc_fov_is_narrow_around_45_degrees() {
-    // Spawn an NPC looking east at unit distance (typical AiLookDir).
+    // Spawn an NPC with a cursor pointing east.
     let mut app = test_app_with_fov();
 
     app.world_mut().spawn((
         Position { x: 60, y: 40 },
         Faction::Outlaws,
-        AiLookDir(GridVec::new(1, 0), 0), // looking east
+        Cursor {
+            pos: GridVec::new(61, 40),
+        },
         Viewshed {
             range: 20,
             visible_tiles: std::collections::HashSet::new(),
@@ -3731,7 +3745,9 @@ fn wildlife_fov_is_short_range() {
 
     app.world_mut().spawn((
         Position { x: 60, y: 40 },
-        AiLookDir(GridVec::new(1, 0), 0),
+        Cursor {
+            pos: GridVec::new(61, 40),
+        },
         Faction::Wildlife,
         Viewshed {
             range: 20,
@@ -3810,7 +3826,7 @@ fn ai_memory_expires_after_duration() {
     let _player = spawn_test_player(&mut app, 10, 40);
     let npc = spawn_ai_npc(&mut app, 60, 40, "Outlaw", Faction::Outlaws);
 
-    // NPC in Chasing state with stale memory (> 15 turns ago)
+    // NPC in Chasing state with stale memory beyond the current memory timeout.
     {
         let mut mem = app.world_mut().get_mut::<AiMemory>(npc).unwrap();
         mem.last_known_pos = Some(GridVec::new(50, 40));
@@ -3821,8 +3837,8 @@ fn ai_memory_expires_after_duration() {
         .unwrap()
         .clone_from(&AiState::Chasing);
 
-    // Advance turn counter well past MEMORY_DURATION (40)
-    app.world_mut().resource_mut::<TurnCounter>().0 = 45;
+    // Advance turn counter well past MEMORY_DURATION (56)
+    app.world_mut().resource_mut::<TurnCounter>().0 = 60;
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
 
     app.update();
@@ -4101,7 +4117,6 @@ fn ai_ranged_attack_via_ranged_intent() {
         .unwrap()
         .clone_from(&AiState::Chasing);
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
-    app.world_mut().get_mut::<AiLookDir>(npc).unwrap().0 = GridVec::new(-1, 0);
     // Cursor already on-target so the NPC can fire immediately.
     app.world_mut().entity_mut(npc).insert(Cursor {
         pos: GridVec::new(50, 40),
@@ -4109,17 +4124,20 @@ fn ai_ranged_attack_via_ranged_intent() {
     app.world_mut()
         .entity_mut(npc)
         .insert(AimingStyle::SnapShot);
+    app.world_mut().entity_mut(npc).insert(AiTarget {
+        entity: player,
+        last_pos: GridVec::new(50, 40),
+        last_seen: 0,
+        locked: true,
+    });
     {
         let mut vs = app.world_mut().get_mut::<Viewshed>(npc).unwrap();
         vs.visible_tiles.insert(GridVec::new(50, 40));
         vs.dirty = false;
     }
 
-    // Run updates for AI + projectile processing
-    for _ in 0..6 {
-        app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
-        app.update();
-    }
+    // Run one update so the NPC can resolve a single aimed shot.
+    app.update();
 
     // The gun ammo should have decreased
     let inv = app.world().get::<Inventory>(npc).unwrap();
@@ -4127,7 +4145,14 @@ fn ai_ranged_attack_via_ranged_intent() {
         && let Some(kind) = app.world().get::<ItemKind>(gun_ent)
         && let ItemKind::Gun { loaded, .. } = kind
     {
-        assert!(*loaded < 6, "Gun should have fewer rounds after firing",);
+        let cursor = app.world().get::<Cursor>(npc).copied();
+        let state = app.world().get::<AiState>(npc).copied();
+        let target = app.world().get::<AiTarget>(npc).copied();
+        let log = app.world().resource::<CombatLog>().recent(4);
+        assert!(
+            *loaded < 6,
+            "Gun should have fewer rounds after firing (loaded={loaded}, cursor={cursor:?}, state={state:?}, target={target:?}, log={log:?})",
+        );
     }
 }
 
@@ -4229,7 +4254,7 @@ fn ai_npc_reloads_empty_gun() {
         .unwrap()
         .clone_from(&AiState::Chasing);
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
-    app.world_mut().get_mut::<AiLookDir>(npc).unwrap().0 = GridVec::new(-1, 0);
+    app.world_mut().get_mut::<Cursor>(npc).unwrap().pos = GridVec::new(50, 40);
     {
         let mut vs = app.world_mut().get_mut::<Viewshed>(npc).unwrap();
         vs.visible_tiles.insert(GridVec::new(50, 40));
@@ -4276,7 +4301,7 @@ fn ai_npc_throws_grenade_at_medium_range() {
         .unwrap()
         .clone_from(&AiState::Chasing);
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = 0;
-    app.world_mut().get_mut::<AiLookDir>(npc).unwrap().0 = GridVec::new(-1, 0);
+    app.world_mut().get_mut::<Cursor>(npc).unwrap().pos = GridVec::new(50, 40);
     {
         let mut vs = app.world_mut().get_mut::<Viewshed>(npc).unwrap();
         vs.visible_tiles.insert(GridVec::new(50, 40));
@@ -4319,7 +4344,7 @@ fn ai_npc_throws_knife_at_medium_range() {
         .unwrap()
         .clone_from(&AiState::Chasing);
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = 0;
-    app.world_mut().get_mut::<AiLookDir>(npc).unwrap().0 = GridVec::new(-1, 0);
+    app.world_mut().get_mut::<Cursor>(npc).unwrap().pos = GridVec::new(60, 40);
     {
         let mut vs = app.world_mut().get_mut::<Viewshed>(npc).unwrap();
         vs.visible_tiles.insert(GridVec::new(50, 40));
@@ -4360,7 +4385,7 @@ fn ai_npc_melee_wide_when_surrounded() {
         .clone_from(&AiState::Chasing);
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
     // Look toward the player so no rotation is needed
-    app.world_mut().get_mut::<AiLookDir>(npc).unwrap().0 = GridVec::new(-1, 0);
+    app.world_mut().get_mut::<Cursor>(npc).unwrap().pos = GridVec::new(54, 40);
     app.world_mut().get_mut::<Stamina>(npc).unwrap().current = 50;
     {
         let mut vs = app.world_mut().get_mut::<Viewshed>(npc).unwrap();
@@ -4592,7 +4617,7 @@ fn ai_chasing_uses_a_star_pathfinding() {
         .unwrap()
         .clone_from(&AiState::Chasing);
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
-    app.world_mut().get_mut::<AiLookDir>(npc).unwrap().0 = GridVec::new(-1, 0);
+    app.world_mut().get_mut::<Cursor>(npc).unwrap().pos = GridVec::new(57, 40);
     {
         let mut vs = app.world_mut().get_mut::<Viewshed>(npc).unwrap();
         vs.visible_tiles.insert(GridVec::new(50, 40));
@@ -4688,7 +4713,7 @@ fn ai_multiple_npcs_independent_states() {
     let _player = spawn_test_player(&mut app, 55, 40);
 
     let npc1 = spawn_ai_npc(&mut app, 58, 40, "Outlaw1", Faction::Outlaws);
-    let npc2 = spawn_ai_npc(&mut app, 62, 40, "Outlaw2", Faction::Outlaws);
+    let npc2 = spawn_ai_npc(&mut app, 66, 40, "Outlaw2", Faction::Outlaws);
 
     // NPC1 can see the player, NPC2 cannot
     {
@@ -4741,7 +4766,7 @@ fn ai_npc_heals_before_chasing() {
         .unwrap()
         .clone_from(&AiState::Chasing);
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
-    app.world_mut().get_mut::<AiLookDir>(npc).unwrap().0 = GridVec::new(-1, 0);
+    app.world_mut().get_mut::<Cursor>(npc).unwrap().pos = GridVec::new(57, 40);
     {
         let mut vs = app.world_mut().get_mut::<Viewshed>(npc).unwrap();
         vs.visible_tiles.insert(GridVec::new(57, 40));
@@ -4847,9 +4872,9 @@ fn ai_idle_does_not_chase_without_visibility() {
     }
 
     let _player = spawn_test_player(&mut app, 60, 40);
-    // Place NPC beyond the proximity override range (5 tiles) so that
+    // Place NPC beyond the proximity override range (10 tiles) so that
     // pure proximity alone doesn't force combat.
-    let npc = spawn_ai_npc(&mut app, 67, 40, "Outlaw", Faction::Outlaws);
+    let npc = spawn_ai_npc(&mut app, 71, 40, "Outlaw", Faction::Outlaws);
 
     // NPC viewshed does NOT contain the player position
     app.world_mut().get_mut::<Energy>(npc).unwrap().0 = ACTION_COST;
@@ -5063,7 +5088,7 @@ fn ai_cursor_initialised_at_npc_position() {
 
 #[test]
 fn ai_cursor_advances_one_step_per_turn() {
-    // Cursor advances exactly one king-step per turn (no dice roll).
+    // Cursor advances exactly one cardinal step per turn.
     let mut cursor = Cursor {
         pos: GridVec::new(10, 10),
     };
@@ -5072,11 +5097,16 @@ fn ai_cursor_advances_one_step_per_turn() {
     // Simulate 3 turns of cursor advancement (1 step each)
     for _ in 0..3 {
         if cursor.pos != target {
-            let step = (target - cursor.pos).king_step();
+            let delta = target - cursor.pos;
+            let step = if delta.x.abs() >= delta.y.abs() {
+                GridVec::new(delta.x.signum(), 0)
+            } else {
+                GridVec::new(0, delta.y.signum())
+            };
             cursor.pos = cursor.pos + step;
         }
     }
-    // After 3 king-steps east, cursor should be at (13, 10).
+    // After 3 cardinal steps east, cursor should be at (13, 10).
     assert_eq!(cursor.pos, GridVec::new(13, 10));
 }
 
@@ -5091,7 +5121,12 @@ fn ai_cursor_reaches_target_stops() {
     // Simulate 6 turns — cursor should stop at target after 2
     for _ in 0..6 {
         if cursor.pos != target {
-            let step = (target - cursor.pos).king_step();
+            let delta = target - cursor.pos;
+            let step = if delta.x.abs() >= delta.y.abs() {
+                GridVec::new(delta.x.signum(), 0)
+            } else {
+                GridVec::new(0, delta.y.signum())
+            };
             cursor.pos = cursor.pos + step;
         }
     }
@@ -5100,19 +5135,21 @@ fn ai_cursor_reaches_target_stops() {
 
 #[test]
 fn ai_cursor_one_step_per_turn() {
-    // Each turn the cursor advances exactly 1 king-step, matching player cursor speed.
+    // Each turn the cursor advances exactly 1 cardinal step.
     let mut cursor = Cursor {
         pos: GridVec::new(0, 0),
     };
     let target = GridVec::new(5, 3);
     let old_pos = cursor.pos;
-    let step = (target - cursor.pos).king_step();
+    let delta = target - cursor.pos;
+    let step = if delta.x.abs() >= delta.y.abs() {
+        GridVec::new(delta.x.signum(), 0)
+    } else {
+        GridVec::new(0, delta.y.signum())
+    };
     cursor.pos = cursor.pos + step;
-    let moved = cursor.pos.chebyshev_distance(old_pos);
-    assert_eq!(
-        moved, 1,
-        "Cursor should advance exactly 1 king-step per turn"
-    );
+    let moved = cursor.pos.manhattan_distance(old_pos);
+    assert_eq!(moved, 1, "Cursor should advance exactly 1 cardinal step per turn");
 }
 
 #[test]
@@ -5126,7 +5163,12 @@ fn ai_cursor_persists_between_shots() {
     // Simulate 2 turns of advancement
     for _ in 0..2 {
         if cursor.pos != target {
-            let step = (target - cursor.pos).king_step();
+            let delta = target - cursor.pos;
+            let step = if delta.x.abs() >= delta.y.abs() {
+                GridVec::new(delta.x.signum(), 0)
+            } else {
+                GridVec::new(0, delta.y.signum())
+            };
             cursor.pos = cursor.pos + step;
         }
     }

@@ -4,9 +4,9 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use bevy::prelude::*;
 
 use crate::components::{
-    AiLookDir, AiMemory, AiPersonality, AiPursuitBoost, AiState, AiTarget, AimingStyle,
-    BlocksMovement, Cursor, Energy, Faction, Health, Inventory, Item, ItemKind, PatrolOrigin,
-    PlayerControlled, Position, SPELL_STAMINA_COST, Speed, Stamina, Viewshed,
+    AiMemory, AiPersonality, AiPursuitBoost, AiState, AiTarget, AimingStyle, BlocksMovement,
+    Cursor, Energy, Faction, Health, Inventory, Item, ItemKind, PatrolOrigin, PlayerControlled,
+    Position, SPELL_STAMINA_COST, Speed, Stamina, Viewshed,
 };
 use crate::events::{
     AttackIntent, MolotovCastIntent, MoveIntent, PickupItemIntent, RangedAttackIntent,
@@ -29,17 +29,17 @@ mod cost {
 const MAX_A_STAR_NODES: usize = 640;
 const MAX_DIJKSTRA_NODES: usize = 640;
 
-const MEMORY_DURATION: u32 = 40;
-const TARGET_LOCK_TIMEOUT: u32 = 28;
-const PURSUIT_AWARENESS_BOOST: i32 = 12;
+const MEMORY_DURATION: u32 = 56;
+const TARGET_LOCK_TIMEOUT: u32 = 40;
+const PURSUIT_AWARENESS_BOOST: i32 = 18;
 const PURSUIT_BOOST_DECAY_TURNS: u32 = 4;
-const PROXIMITY_OVERRIDE_RANGE: i32 = 6;
-const ALLY_SHARE_RANGE: i32 = 24;
+const PROXIMITY_OVERRIDE_RANGE: i32 = 10;
+const ALLY_SHARE_RANGE: i32 = 32;
 const PATROL_RADIUS: i32 = 18;
-const LOOK_AROUND_BASE_INTERVAL: u32 = 10;
-const LOOK_AROUND_DICE_RANGE: u32 = 5;
-const MAX_SEARCH_SWEEPS: u8 = 2;
-const FULL_ROTATION_STEPS: u8 = 8;
+const LOOK_AROUND_BASE_INTERVAL: u32 = 6;
+const LOOK_AROUND_DICE_RANGE: u32 = 3;
+const MAX_SEARCH_SWEEPS: u8 = 3;
+const FULL_ROTATION_STEPS: u8 = GridVec::DIRECTIONS_4.len() as u8;
 const ROTATION_MOVE_INTERVAL: u8 = 2;
 const STUCK_FLANK_TURNS: u8 = 2;
 const ITEM_INTEREST_RANGE: i32 = 8;
@@ -47,6 +47,7 @@ const FLEE_RECOVERY_FRACTION: f64 = 0.75;
 const EXPLOSIVE_MIN_RANGE: i32 = 4;
 const EXPLOSIVE_MAX_RANGE: i32 = 8;
 const BOW_MAX_RANGE: i32 = 14;
+const SCAN_CURSOR_DISTANCE: i32 = 6;
 
 const HASH_KNUTH: u64 = 2_654_435_761;
 const HASH_MIX_A: u64 = 0xff51afd7ed558ccd;
@@ -128,6 +129,19 @@ fn turn_hash(entity: Entity, turn: u32, salt: u64) -> u64 {
 #[inline]
 fn look_interval(entity: Entity) -> u32 {
     LOOK_AROUND_BASE_INTERVAL + (entity.to_bits() as u32 % LOOK_AROUND_DICE_RANGE.max(1))
+}
+
+#[inline]
+fn cardinal_step_toward(delta: GridVec) -> GridVec {
+    if delta.x.abs() >= delta.y.abs() {
+        if delta.x != 0 {
+            GridVec::new(delta.x.signum(), 0)
+        } else {
+            GridVec::new(0, delta.y.signum())
+        }
+    } else {
+        GridVec::new(0, delta.y.signum())
+    }
 }
 
 #[inline]
@@ -265,7 +279,7 @@ fn a_star_first_step(
         return None;
     }
 
-    if start.chebyshev_distance(goal) == 1 && cost_fn(goal).is_some() {
+    if start.manhattan_distance(goal) == 1 && cost_fn(goal).is_some() {
         return Some(goal - start);
     }
 
@@ -274,7 +288,7 @@ fn a_star_first_step(
     let mut g_score: HashMap<GridVec, i32> = HashMap::new();
     let mut closed: HashSet<GridVec> = HashSet::new();
 
-    let start_h = start.chebyshev_distance(goal) * cost::BASE;
+    let start_h = start.manhattan_distance(goal) * cost::BASE;
     g_score.insert(start, 0);
     open.push(Reverse((start_h, start_h, start)));
 
@@ -303,7 +317,7 @@ fn a_star_first_step(
 
         let current_g = g_score[&current];
 
-        for dir in GridVec::DIRECTIONS_8 {
+        for dir in GridVec::DIRECTIONS_4 {
             let neighbor = current + dir;
             if closed.contains(&neighbor) {
                 continue;
@@ -322,7 +336,7 @@ fn a_star_first_step(
             if candidate_g < *g_score.get(&neighbor).unwrap_or(&i32::MAX) {
                 came_from.insert(neighbor, current);
                 g_score.insert(neighbor, candidate_g);
-                let h = neighbor.chebyshev_distance(goal) * cost::BASE;
+                let h = neighbor.manhattan_distance(goal) * cost::BASE;
                 open.push(Reverse((candidate_g + h, h, neighbor)));
             }
         }
@@ -369,7 +383,7 @@ fn dijkstra_map(
             break;
         }
 
-        for dir in GridVec::DIRECTIONS_8 {
+        for dir in GridVec::DIRECTIONS_4 {
             let neighbor = current + dir;
             let edge_cost = match cost_fn(neighbor) {
                 Some(cost) => cost,
@@ -396,14 +410,14 @@ fn gun_profile(name: &str, capacity: i32) -> WeaponProfile {
     if is_long_gun {
         WeaponProfile {
             min_range: 3,
-            preferred_range: 8,
-            max_range: 18,
+            preferred_range: 14,
+            max_range: 28,
         }
     } else {
         WeaponProfile {
             min_range: 2,
-            preferred_range: 5,
-            max_range: 12,
+            preferred_range: 8,
+            max_range: 18,
         }
     }
 }
@@ -553,11 +567,11 @@ fn effective_awareness_range(
         })
         .unwrap_or(0);
 
-    base_range + bonus + (personality.aggression * 6.0).round() as i32
+    base_range + bonus + (personality.aggression * 10.0).round() as i32
 }
 
 fn threat_score(distance: i32) -> i32 {
-    (24 - distance).max(0) * 2
+    (32 - distance).max(0) * 3
 }
 
 fn select_priority_target(hostiles: &[Threat]) -> Option<Threat> {
@@ -568,14 +582,14 @@ fn select_priority_target(hostiles: &[Threat]) -> Option<Threat> {
 }
 
 fn choose_aiming_style(entity: Entity, turn: u32, personality: AiPersonality) -> AimingStyle {
-    if personality.aggression >= 0.75 {
+    if personality.aggression >= 0.65 {
         return AimingStyle::SnapShot;
     }
 
     match turn_hash(entity, turn, HASH_KNUTH) % 4 {
         0 => AimingStyle::CarefulAim,
-        1 | 2 => AimingStyle::SnapShot,
-        _ => AimingStyle::Suppression,
+        1 => AimingStyle::Suppression,
+        _ => AimingStyle::SnapShot,
     }
 }
 
@@ -609,6 +623,34 @@ fn set_cursor(
     }
 }
 
+fn canonical_cursor_pos(origin: GridVec, desired: GridVec) -> GridVec {
+    if desired == origin {
+        origin + GridVec::NORTH
+    } else {
+        desired
+    }
+}
+
+fn ensure_cursor_origin(
+    commands: &mut Commands,
+    entity: Entity,
+    cursor: &mut Option<Mut<Cursor>>,
+    origin: GridVec,
+    reset: bool,
+) -> GridVec {
+    let default_pos = origin + GridVec::NORTH;
+    if let Some(cursor_ref) = cursor.as_deref_mut() {
+        let canonical = canonical_cursor_pos(origin, cursor_ref.pos);
+        if reset || cursor_ref.pos != canonical {
+            cursor_ref.pos = canonical;
+        }
+        canonical
+    } else {
+        set_cursor(commands, entity, cursor, default_pos);
+        default_pos
+    }
+}
+
 fn clear_engagement(commands: &mut Commands, entity: Entity) {
     commands.entity(entity).remove::<AiTarget>();
     commands.entity(entity).remove::<AimingStyle>();
@@ -616,85 +658,119 @@ fn clear_engagement(commands: &mut Commands, entity: Entity) {
     commands.entity(entity).remove::<AiPursuitBoost>();
 }
 
-fn update_look_dir(
-    dir: GridVec,
-    ai_look_dir: &mut Option<Mut<AiLookDir>>,
+fn orient_cursor(
+    commands: &mut Commands,
+    entity: Entity,
+    cursor: &mut Option<Mut<Cursor>>,
+    origin: GridVec,
+    desired: GridVec,
     viewshed: &mut Option<Mut<Viewshed>>,
 ) {
-    if dir.is_zero() {
-        return;
-    }
-
-    if let Some(look) = ai_look_dir.as_deref_mut() {
-        look.0 = dir.king_step();
-        look.1 = 0;
+    let next = canonical_cursor_pos(origin, desired);
+    let next_basis = (next - origin).king_step();
+    let changed = if let Some(cursor_ref) = cursor.as_deref() {
+        cursor_ref.pos != next && (cursor_ref.pos - origin).king_step() != next_basis
+    } else {
+        true
+    };
+    set_cursor(commands, entity, cursor, next);
+    if changed {
         if let Some(viewshed) = viewshed.as_deref_mut() {
             viewshed.dirty = true;
         }
     }
 }
 
-fn rotate_look_dir(ai_look_dir: &mut Option<Mut<AiLookDir>>, viewshed: &mut Option<Mut<Viewshed>>) {
-    if let Some(look) = ai_look_dir.as_deref_mut() {
-        let current = look.0.king_step();
-        let index = GridVec::DIRECTIONS_8
-            .iter()
-            .position(|&dir| dir == current)
-            .map(|idx| (idx + 1) % GridVec::DIRECTIONS_8.len())
-            .unwrap_or(0);
-        look.0 = GridVec::DIRECTIONS_8[index];
-        look.1 = look.1.saturating_sub(1);
-        if let Some(viewshed) = viewshed.as_deref_mut() {
-            viewshed.dirty = true;
-        }
-    }
+fn scan_cursor_target(origin: GridVec, interest: Option<GridVec>) -> GridVec {
+    let dir = interest
+        .map(|point| cardinal_step_toward(point - origin))
+        .filter(|dir| !dir.is_zero())
+        .unwrap_or(GridVec::NORTH);
+    origin + dir * SCAN_CURSOR_DISTANCE
 }
 
-fn look_dir_index(ai_look_dir: &Option<Mut<AiLookDir>>) -> usize {
-    ai_look_dir
+fn moving_scan_cursor_target(origin: GridVec, interest: GridVec, entity: Entity, turn: u32) -> GridVec {
+    let forward = cardinal_step_toward(interest - origin);
+    if forward.is_zero() {
+        return origin + GridVec::NORTH * SCAN_CURSOR_DISTANCE;
+    }
+
+    let phase = ((turn / 2) as u64 + entity.to_bits()) % 3;
+    let dir = match phase {
+        0 => forward.rotate_90_ccw(),
+        1 => forward,
+        _ => forward.rotate_90_cw(),
+    };
+    origin + dir * SCAN_CURSOR_DISTANCE
+}
+
+fn prime_scan_cursor(
+    commands: &mut Commands,
+    entity: Entity,
+    cursor: &mut Option<Mut<Cursor>>,
+    origin: GridVec,
+    interest: Option<GridVec>,
+    viewshed: &mut Option<Mut<Viewshed>>,
+) {
+    orient_cursor(
+        commands,
+        entity,
+        cursor,
+        origin,
+        scan_cursor_target(origin, interest),
+        viewshed,
+    );
+}
+
+fn cursor_direction_index(origin: GridVec, cursor: &Option<Mut<Cursor>>) -> usize {
+    cursor
         .as_ref()
-        .map(|look| look.0.king_step())
-        .and_then(|dir| GridVec::DIRECTIONS_8.iter().position(|&candidate| candidate == dir))
+        .map(|cursor| cardinal_step_toward(cursor.pos - origin))
+        .and_then(|dir| GridVec::DIRECTIONS_4.iter().position(|&candidate| candidate == dir))
         .unwrap_or(0)
 }
 
-fn begin_circular_rotation(
-    ai_look_dir: &mut Option<Mut<AiLookDir>>,
+fn rotate_cursor(
+    commands: &mut Commands,
+    entity: Entity,
+    cursor: &mut Option<Mut<Cursor>>,
+    origin: GridVec,
     viewshed: &mut Option<Mut<Viewshed>>,
+    remaining_steps: &mut u8,
 ) {
-    if let Some(look) = ai_look_dir.as_deref_mut() {
-        look.1 = FULL_ROTATION_STEPS;
-    }
-    rotate_look_dir(ai_look_dir, viewshed);
-}
-
-fn is_rotating(ai_look_dir: &Option<Mut<AiLookDir>>) -> bool {
-    ai_look_dir.as_ref().is_some_and(|look| look.1 > 0)
+    let current_index = cursor_direction_index(origin, cursor);
+    let next_dir = GridVec::DIRECTIONS_4[(current_index + 1) % GridVec::DIRECTIONS_4.len()];
+    orient_cursor(commands, entity, cursor, origin, origin + next_dir, viewshed);
+    *remaining_steps = remaining_steps.saturating_sub(1);
 }
 
 fn rotation_probe_step(
     my_pos: GridVec,
     entity: Entity,
-    ai_look_dir: &Option<Mut<AiLookDir>>,
+    cursor: &Option<Mut<Cursor>>,
+    remaining_rotation_steps: u8,
     game_map: &GameMapResource,
     spatial: &SpatialIndex,
     blockers: &Query<(), With<BlocksMovement>>,
 ) -> Option<GridVec> {
-    let remaining = ai_look_dir.as_ref().map(|look| look.1).unwrap_or(0);
-    if remaining == 0 || remaining % ROTATION_MOVE_INTERVAL != 0 {
+    if remaining_rotation_steps == 0 || remaining_rotation_steps % ROTATION_MOVE_INTERVAL != 0 {
         return None;
     }
 
-    let index = look_dir_index(ai_look_dir);
+    let index = cursor_direction_index(my_pos, cursor);
     let directions = [
-        GridVec::DIRECTIONS_8[index],
-        GridVec::DIRECTIONS_8[(index + 1) % GridVec::DIRECTIONS_8.len()],
-        GridVec::DIRECTIONS_8[(index + GridVec::DIRECTIONS_8.len() - 1) % GridVec::DIRECTIONS_8.len()],
+        GridVec::DIRECTIONS_4[index],
+        GridVec::DIRECTIONS_4[(index + 1) % GridVec::DIRECTIONS_4.len()],
+        GridVec::DIRECTIONS_4
+            [(index + GridVec::DIRECTIONS_4.len() - 1) % GridVec::DIRECTIONS_4.len()],
     ];
 
     directions.into_iter().find(|dir| {
-        let next = my_pos + *dir;
-        tile_cost_for_ai(next, entity, game_map, spatial, blockers).is_some()
+        !dir.is_zero()
+            && {
+                let next = my_pos + *dir;
+                tile_cost_for_ai(next, entity, game_map, spatial, blockers).is_some()
+            }
     })
 }
 
@@ -768,6 +844,22 @@ fn has_friendly_in_path(
     }
 
     false
+}
+
+fn cursor_aligned_with_target(aim_delta: GridVec, target_delta: GridVec) -> bool {
+    if aim_delta.is_zero() || target_delta.is_zero() {
+        return false;
+    }
+
+    let dot = (aim_delta.x * target_delta.x + aim_delta.y * target_delta.y) as f64;
+    if dot <= 0.0 {
+        return false;
+    }
+
+    let aim_len = ((aim_delta.x * aim_delta.x + aim_delta.y * aim_delta.y) as f64).sqrt();
+    let target_len = ((target_delta.x * target_delta.x + target_delta.y * target_delta.y) as f64).sqrt();
+    let cos_theta = dot / (aim_len * target_len);
+    cos_theta >= 0.8
 }
 
 fn count_hostiles_near(
@@ -891,7 +983,7 @@ fn flee_direction(
     let mut best_direction = None;
     let mut best_score = i32::MIN;
 
-    for dir in GridVec::DIRECTIONS_8 {
+    for dir in GridVec::DIRECTIONS_4 {
         let neighbor = my_pos + dir;
         let tile_cost = match tile_cost_for_ai(neighbor, entity, game_map, spatial, blockers) {
             Some(cost) => cost,
@@ -930,7 +1022,7 @@ fn retreat_direction(
     let mut best_direction = None;
     let mut best_score = i32::MIN;
 
-    for dir in GridVec::DIRECTIONS_8 {
+    for dir in GridVec::DIRECTIONS_4 {
         let candidate = my_pos + dir;
         let tile_cost = match tile_cost_for_ai(candidate, entity, game_map, spatial, blockers) {
             Some(cost) => cost,
@@ -960,6 +1052,19 @@ fn first_step_toward(
     blockers: &Query<(), With<BlocksMovement>>,
     aggressive: bool,
 ) -> Option<GridVec> {
+    let direct = cardinal_step_toward(goal - start);
+    if !direct.is_zero() {
+        let next = start + direct;
+        let direct_cost = if aggressive {
+            tile_cost_for_ai_chase(next, entity, game_map, spatial, blockers)
+        } else {
+            tile_cost_for_ai(next, entity, game_map, spatial, blockers)
+        };
+        if direct_cost.is_some() {
+            return Some(direct);
+        }
+    }
+
     let step = if aggressive {
         a_star_first_step(start, goal, |pos| {
             tile_cost_for_ai_chase(pos, entity, game_map, spatial, blockers)
@@ -971,7 +1076,6 @@ fn first_step_toward(
     };
 
     step.or_else(|| {
-        let direct = (goal - start).king_step();
         if direct.is_zero() {
             None
         } else {
@@ -987,7 +1091,7 @@ fn first_step_toward(
             } else {
                 let mut fallback = None;
                 let mut fallback_dist = i32::MAX;
-                for dir in GridVec::DIRECTIONS_8 {
+                for dir in GridVec::DIRECTIONS_4 {
                     let candidate_goal = goal + dir;
                     let step = if aggressive {
                         a_star_first_step(start, candidate_goal, |pos| {
@@ -1013,7 +1117,7 @@ fn first_step_toward(
 }
 
 fn flank_goal(entity: Entity, turn: u32, my_pos: GridVec, target_pos: GridVec) -> GridVec {
-    let bearing = (target_pos - my_pos).king_step();
+    let bearing = cardinal_step_toward(target_pos - my_pos);
     if bearing.is_zero() {
         return target_pos;
     }
@@ -1044,7 +1148,7 @@ fn patrol_direction(
     let mut best_direction = None;
     let mut best_score = i32::MIN;
 
-    for (index, dir) in GridVec::DIRECTIONS_8.iter().copied().enumerate() {
+    for (index, dir) in GridVec::DIRECTIONS_4.iter().copied().enumerate() {
         let candidate = my_pos + dir;
         let tile_cost = match tile_cost_for_ai(candidate, entity, game_map, spatial, blockers) {
             Some(cost) => cost,
@@ -1206,7 +1310,6 @@ pub fn ai_system(
                 Option<&mut Viewshed>,
                 &mut Energy,
                 Option<&Faction>,
-                Option<&mut AiLookDir>,
                 Option<&PatrolOrigin>,
             ),
             (
@@ -1276,7 +1379,7 @@ pub fn ai_system(
 
     let mut faction_alerts: HashMap<Faction, Vec<GridVec>> = HashMap::new();
     for (
-        (entity, _position, ai_state, _viewshed, _energy, faction, _look_dir, _origin),
+        (entity, _position, ai_state, _viewshed, _energy, faction, _origin),
         (_inventory, _health, _stamina, ai_memory, _personality, ai_target, _aiming_style, _cursor),
         _pursuit_boost,
     ) in &mut ai_query
@@ -1303,16 +1406,15 @@ pub fn ai_system(
     }
 
     for (
-        (
-            entity,
-            position,
-            mut ai_state,
-            mut viewshed,
-            mut energy,
-            faction,
-            mut ai_look_dir,
-            patrol_origin,
-        ),
+            (
+                entity,
+                position,
+                mut ai_state,
+                mut viewshed,
+                mut energy,
+                faction,
+                patrol_origin,
+            ),
         (
             inventory,
             health,
@@ -1333,7 +1435,6 @@ pub fn ai_system(
         let my_pos = position.as_grid_vec();
         let my_faction = faction.copied();
         let personality = personality.copied().unwrap_or_default();
-        let viewshed_ref = viewshed.as_deref();
 
         if let Some(memory) = ai_memory.as_deref_mut() {
             if memory.prev_pos == Some(my_pos) {
@@ -1365,14 +1466,15 @@ pub fn ai_system(
             my_pos,
             my_faction,
             current_target_entity,
-            viewshed_ref,
+            viewshed.as_deref(),
             player_info,
             &npc_overview,
         );
         let best_visible = select_priority_target(&visible_hostiles);
         let visible_threat_pos = best_visible.map(|threat| threat.pos);
 
-        let viewshed_range = viewshed_ref
+        let viewshed_range = viewshed
+            .as_deref()
             .map(|viewshed| viewshed.range as i32)
             .unwrap_or(8);
         let awareness =
@@ -1453,7 +1555,7 @@ pub fn ai_system(
                 personality,
                 target_changed,
             ));
-            set_cursor(&mut commands, entity, &mut cursor, target.pos);
+            let _ = ensure_cursor_origin(&mut commands, entity, &mut cursor, my_pos, target_changed);
 
             let last_seen = if target.visible {
                 current_turn
@@ -1484,7 +1586,15 @@ pub fn ai_system(
                 });
             }
         } else if let Some(goal) = objective {
-            set_cursor(&mut commands, entity, &mut cursor, goal);
+            let _ = ensure_cursor_origin(&mut commands, entity, &mut cursor, my_pos, false);
+            prime_scan_cursor(
+                &mut commands,
+                entity,
+                &mut cursor,
+                my_pos,
+                Some(goal),
+                &mut viewshed,
+            );
             commands.entity(entity).remove::<AiTarget>();
             commands.entity(entity).remove::<AiPursuitBoost>();
         } else {
@@ -1500,7 +1610,14 @@ pub fn ai_system(
                     dx: dir.x,
                     dy: dir.y,
                 });
-                update_look_dir(dir, &mut ai_look_dir, &mut viewshed);
+                orient_cursor(
+                    &mut commands,
+                    entity,
+                    &mut cursor,
+                    my_pos,
+                    my_pos + dir,
+                    &mut viewshed,
+                );
                 energy.spend_action();
                 continue;
             }
@@ -1548,7 +1665,7 @@ pub fn ai_system(
         match *ai_state {
             AiState::Fleeing => {
                 if let Some(goal) = visible_threat_pos.or(objective) {
-                    let direct_away = (my_pos - goal).king_step();
+                    let direct_away = cardinal_step_toward(my_pos - goal);
                     if !direct_away.is_zero()
                         && tile_cost_for_ai(my_pos + direct_away, entity, &game_map, &spatial, &blockers)
                             .is_some()
@@ -1558,7 +1675,14 @@ pub fn ai_system(
                             dx: direct_away.x,
                             dy: direct_away.y,
                         });
-                        update_look_dir(direct_away, &mut ai_look_dir, &mut viewshed);
+                        orient_cursor(
+                            &mut commands,
+                            entity,
+                            &mut cursor,
+                            my_pos,
+                            my_pos + direct_away,
+                            &mut viewshed,
+                        );
                         energy.spend_action();
                         continue;
                     }
@@ -1570,7 +1694,14 @@ pub fn ai_system(
                             dx: dir.x,
                             dy: dir.y,
                         });
-                        update_look_dir(dir, &mut ai_look_dir, &mut viewshed);
+                        orient_cursor(
+                            &mut commands,
+                            entity,
+                            &mut cursor,
+                            my_pos,
+                            my_pos + dir,
+                            &mut viewshed,
+                        );
                         energy.spend_action();
                         continue;
                     }
@@ -1584,12 +1715,7 @@ pub fn ai_system(
                     if target.visible {
                         target_pos = target.pos;
                     }
-                    let to_target = target_pos - my_pos;
                     let distance = my_pos.chebyshev_distance(target_pos);
-                    let facing = to_target.king_step();
-                    if !facing.is_zero() {
-                        update_look_dir(facing, &mut ai_look_dir, &mut viewshed);
-                    }
 
                     if distance <= 1 && target.visible {
                         attack_intents.write(AttackIntent {
@@ -1615,20 +1741,55 @@ pub fn ai_system(
                         attack: choice.attack,
                         profile: adjust_profile_for_style(choice.profile, style, personality),
                     });
-                    let has_los =
-                        has_clear_line_of_sight(my_pos, target_pos, &game_map, &sand_cloud_tiles);
-                    let friendly_blocked = has_friendly_in_path(
+
+                    let stamina_ok = stamina
+                        .as_deref()
+                        .is_some_and(|stamina| stamina.current >= SPELL_STAMINA_COST);
+                    let can_aim = gun.is_some()
+                        || bow.is_some()
+                        || (target.visible
+                            && stamina_ok
+                            && (tactics.grenade.is_some() || tactics.molotov.is_some()));
+                    let cursor_pos =
+                        ensure_cursor_origin(&mut commands, entity, &mut cursor, my_pos, false);
+                    let cursor_to_target = target_pos - cursor_pos;
+                    if can_aim && target.visible {
+                        orient_cursor(
+                            &mut commands,
+                            entity,
+                            &mut cursor,
+                            my_pos,
+                            target_pos,
+                            &mut viewshed,
+                        );
+                    }
+                    if let Some(memory) = ai_memory.as_deref_mut() {
+                        memory.cursor_steps = if can_aim && target.visible && !cursor_to_target.is_zero()
+                        {
+                            memory.cursor_steps.saturating_add(1)
+                        } else {
+                            0
+                        };
+                    }
+                    let aim_origin = cursor.as_deref().map(|cursor| cursor.pos).unwrap_or_else(|| {
+                        if can_aim && target.visible {
+                            target_pos
+                        } else {
+                            cursor_pos
+                        }
+                    });
+                    let aim_delta = aim_origin - my_pos;
+                    let aim_endpoint = if target.visible { target_pos } else { aim_origin };
+                    let aim_has_los =
+                        has_clear_line_of_sight(my_pos, aim_endpoint, &game_map, &sand_cloud_tiles);
+                    let aim_friendly_blocked = has_friendly_in_path(
                         my_pos,
-                        target_pos,
+                        aim_endpoint,
                         my_faction,
                         entity,
                         &spatial,
                         &npc_overview,
                     );
-
-                    let stamina_ok = stamina
-                        .as_deref()
-                        .is_some_and(|stamina| stamina.current >= SPELL_STAMINA_COST);
                     let cluster = count_hostiles_near(
                         target_pos,
                         tactics
@@ -1641,7 +1802,7 @@ pub fn ai_system(
                         &npc_overview,
                     );
 
-                    if target.visible && stamina_ok && has_los {
+                    if target.visible && stamina_ok && aim_has_los {
                         if let Some(grenade) = tactics.grenade {
                             if (EXPLOSIVE_MIN_RANGE..=EXPLOSIVE_MAX_RANGE).contains(&distance)
                                 && cluster >= 2
@@ -1709,18 +1870,20 @@ pub fn ai_system(
                             && ai_target.is_some_and(|current| {
                                 current.entity == target.entity
                                     && current.locked
-                                    && current_turn.saturating_sub(current.last_seen) <= 1
+                                    && current_turn.saturating_sub(current.last_seen) <= 4
                             });
+                        let blind_fire_aligned =
+                            can_blind_fire && cursor_aligned_with_target(aim_delta, target_pos - my_pos);
                         if in_range
-                            && has_los
-                            && !friendly_blocked
-                            && (target.visible || can_blind_fire)
+                            && aim_has_los
+                            && !aim_friendly_blocked
+                            && (target.visible || blind_fire_aligned)
                         {
                             ranged_intents.write(RangedAttackIntent {
                                 attacker: entity,
                                 range: gun.profile.max_range,
-                                dx: to_target.x,
-                                dy: to_target.y,
+                                dx: aim_delta.x,
+                                dy: aim_delta.y,
                                 gun_item: Some(gun.entity),
                             });
                             commands.entity(entity).insert(AiTarget {
@@ -1736,15 +1899,15 @@ pub fn ai_system(
 
                     if let Some(bow) = bow {
                         let in_range = target.visible
-                            && has_los
-                            && !friendly_blocked
+                            && aim_has_los
+                            && !aim_friendly_blocked
                             && distance >= bow.profile.min_range
                             && distance <= bow.profile.max_range;
                         if in_range {
-                            let max_component = to_target.x.abs().max(to_target.y.abs()).max(1);
+                            let max_component = aim_delta.x.abs().max(aim_delta.y.abs()).max(1);
                             let scale = bow.profile.max_range.div_euclid(max_component).max(1);
                             let endpoint =
-                                my_pos + GridVec::new(to_target.x * scale, to_target.y * scale);
+                                my_pos + GridVec::new(aim_delta.x * scale, aim_delta.y * scale);
                             crate::systems::projectile::spawn_arrow(
                                 &mut commands,
                                 my_pos,
@@ -1773,7 +1936,7 @@ pub fn ai_system(
                         continue;
                     }
 
-                    if personality.aggression < 0.8
+                    if personality.aggression < 0.55
                         && let Some(profile) = gun
                             .map(|gun| gun.profile)
                             .or_else(|| bow.map(|bow| bow.profile))
@@ -1794,7 +1957,15 @@ pub fn ai_system(
                                     dx: dir.x,
                                     dy: dir.y,
                                 });
-                                update_look_dir(dir, &mut ai_look_dir, &mut viewshed);
+                                let desired_cursor = if target.visible { target_pos } else { my_pos + dir };
+                                orient_cursor(
+                                    &mut commands,
+                                    entity,
+                                    &mut cursor,
+                                    my_pos,
+                                    desired_cursor,
+                                    &mut viewshed,
+                                );
                                 energy.spend_action();
                                 continue;
                             }
@@ -1804,8 +1975,10 @@ pub fn ai_system(
                     let flank_now = ai_memory
                         .as_deref()
                         .is_some_and(|memory| memory.stationary_turns >= STUCK_FLANK_TURNS + 1);
-                    let should_flank =
-                        friendly_blocked || (flank_now && (!target.visible || !has_los));
+                    let should_flank = aim_friendly_blocked
+                        || flank_now
+                        || (!target.visible && distance <= 12)
+                        || (!aim_has_los && distance <= 10);
                     let goal = if should_flank {
                         flank_goal(entity, current_turn, my_pos, target_pos)
                     } else {
@@ -1820,7 +1993,15 @@ pub fn ai_system(
                             dx: dir.x,
                             dy: dir.y,
                         });
-                        update_look_dir(dir, &mut ai_look_dir, &mut viewshed);
+                        let desired_cursor = if target.visible { target_pos } else { goal };
+                        orient_cursor(
+                            &mut commands,
+                            entity,
+                            &mut cursor,
+                            my_pos,
+                            desired_cursor,
+                            &mut viewshed,
+                        );
                         energy.spend_action();
                         continue;
                     }
@@ -1831,11 +2012,16 @@ pub fn ai_system(
 
                 if let Some(goal) = objective {
                     if my_pos == goal {
-                        if is_rotating(&ai_look_dir) {
+                        let search_rotation_steps = ai_memory
+                            .as_deref()
+                            .map(|memory| memory.search_rotation_steps)
+                            .unwrap_or(0);
+                        if search_rotation_steps > 0 {
                             if let Some(dir) = rotation_probe_step(
                                 my_pos,
                                 entity,
-                                &ai_look_dir,
+                                &cursor,
+                                search_rotation_steps,
                                 &game_map,
                                 &spatial,
                                 &blockers,
@@ -1846,7 +2032,16 @@ pub fn ai_system(
                                     dy: dir.y,
                                 });
                             }
-                            rotate_look_dir(&mut ai_look_dir, &mut viewshed);
+                            if let Some(memory) = ai_memory.as_deref_mut() {
+                                rotate_cursor(
+                                    &mut commands,
+                                    entity,
+                                    &mut cursor,
+                                    my_pos,
+                                    &mut viewshed,
+                                    &mut memory.search_rotation_steps,
+                                );
+                            }
                             energy.spend_action();
                             continue;
                         }
@@ -1854,7 +2049,23 @@ pub fn ai_system(
                         if let Some(memory) = ai_memory.as_deref_mut() {
                             if memory.search_attempts < MAX_SEARCH_SWEEPS {
                                 memory.search_attempts += 1;
-                                begin_circular_rotation(&mut ai_look_dir, &mut viewshed);
+                                memory.search_rotation_steps = FULL_ROTATION_STEPS;
+                                prime_scan_cursor(
+                                    &mut commands,
+                                    entity,
+                                    &mut cursor,
+                                    my_pos,
+                                    Some(goal),
+                                    &mut viewshed,
+                                );
+                                rotate_cursor(
+                                    &mut commands,
+                                    entity,
+                                    &mut cursor,
+                                    my_pos,
+                                    &mut viewshed,
+                                    &mut memory.search_rotation_steps,
+                                );
                                 energy.spend_action();
                                 continue;
                             }
@@ -1873,7 +2084,14 @@ pub fn ai_system(
                             dx: dir.x,
                             dy: dir.y,
                         });
-                        update_look_dir(dir, &mut ai_look_dir, &mut viewshed);
+                        orient_cursor(
+                            &mut commands,
+                            entity,
+                            &mut cursor,
+                            my_pos,
+                            moving_scan_cursor_target(my_pos, goal, entity, current_turn),
+                            &mut viewshed,
+                        );
                     }
 
                     energy.spend_action();
@@ -1897,7 +2115,7 @@ pub fn ai_system(
             if let Some(item_pos) = floor_items
                 .iter()
                 .map(|(_, position)| position.as_grid_vec())
-                .filter(|item_pos| has_visibility(viewshed_ref, *item_pos))
+                .filter(|item_pos| has_visibility(viewshed.as_deref(), *item_pos))
                 .filter(|item_pos| my_pos.chebyshev_distance(*item_pos) <= ITEM_INTEREST_RANGE)
                 .min_by_key(|item_pos| my_pos.chebyshev_distance(*item_pos))
             {
@@ -1911,18 +2129,30 @@ pub fn ai_system(
                         dx: dir.x,
                         dy: dir.y,
                     });
-                    update_look_dir(dir, &mut ai_look_dir, &mut viewshed);
+                    orient_cursor(
+                        &mut commands,
+                        entity,
+                        &mut cursor,
+                        my_pos,
+                        my_pos + dir,
+                        &mut viewshed,
+                    );
                 }
                 energy.spend_action();
                 continue;
             }
         }
 
-        if is_rotating(&ai_look_dir) {
+        let search_rotation_steps = ai_memory
+            .as_deref()
+            .map(|memory| memory.search_rotation_steps)
+            .unwrap_or(0);
+        if search_rotation_steps > 0 {
             if let Some(dir) = rotation_probe_step(
                 my_pos,
                 entity,
-                &ai_look_dir,
+                &cursor,
+                search_rotation_steps,
                 &game_map,
                 &spatial,
                 &blockers,
@@ -1933,13 +2163,53 @@ pub fn ai_system(
                     dy: dir.y,
                 });
             }
-            rotate_look_dir(&mut ai_look_dir, &mut viewshed);
+            if let Some(memory) = ai_memory.as_deref_mut() {
+                rotate_cursor(
+                    &mut commands,
+                    entity,
+                    &mut cursor,
+                    my_pos,
+                    &mut viewshed,
+                    &mut memory.search_rotation_steps,
+                );
+            }
             energy.spend_action();
             continue;
         }
 
         if current_turn != 0 && current_turn % look_interval(entity) == 0 {
-            rotate_look_dir(&mut ai_look_dir, &mut viewshed);
+            let _ = ensure_cursor_origin(&mut commands, entity, &mut cursor, my_pos, false);
+            let scan_interest = objective.or_else(|| patrol_origin.map(|origin| origin.0));
+            prime_scan_cursor(
+                &mut commands,
+                entity,
+                &mut cursor,
+                my_pos,
+                scan_interest,
+                &mut viewshed,
+            );
+            if let Some(memory) = ai_memory.as_deref_mut() {
+                let mut remaining_steps = 1;
+                rotate_cursor(
+                    &mut commands,
+                    entity,
+                    &mut cursor,
+                    my_pos,
+                    &mut viewshed,
+                    &mut remaining_steps,
+                );
+                memory.search_rotation_steps = 0;
+            } else {
+                let mut remaining_steps = 1;
+                rotate_cursor(
+                    &mut commands,
+                    entity,
+                    &mut cursor,
+                    my_pos,
+                    &mut viewshed,
+                    &mut remaining_steps,
+                );
+            }
             energy.spend_action();
             continue;
         }
@@ -1959,7 +2229,14 @@ pub fn ai_system(
                     dx: dir.x,
                     dy: dir.y,
                 });
-                update_look_dir(dir, &mut ai_look_dir, &mut viewshed);
+                orient_cursor(
+                    &mut commands,
+                    entity,
+                    &mut cursor,
+                    my_pos,
+                    my_pos + dir,
+                    &mut viewshed,
+                );
                 energy.spend_action();
                 continue;
             }
@@ -1989,7 +2266,7 @@ mod tests {
         let goal = GridVec::new(5, 5);
         assert_eq!(
             a_star_first_step_pub(start, goal, walkable),
-            Some(GridVec::new(1, 1))
+            Some(GridVec::new(0, 1))
         );
     }
 
@@ -1999,7 +2276,7 @@ mod tests {
         let goal = GridVec::new(3, 0);
         let walls = HashSet::from([GridVec::new(1, 0), GridVec::new(1, 1)]);
         let step = a_star_first_step_pub(start, goal, |pos| !walls.contains(&pos));
-        assert_eq!(step, Some(GridVec::new(1, -1)));
+        assert_eq!(step, Some(GridVec::new(0, -1)));
     }
 
     #[test]
@@ -2014,15 +2291,15 @@ mod tests {
         };
         assert_eq!(
             effective_awareness_range(12, Some(&boost), personality, 10),
-            27
+            29
         );
         assert_eq!(
             effective_awareness_range(12, Some(&boost), personality, 18),
-            25
+            27
         );
         assert_eq!(
             effective_awareness_range(12, Some(&boost), personality, 58),
-            15
+            17
         );
     }
 

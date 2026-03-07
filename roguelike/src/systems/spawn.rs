@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 
 use crate::components::{
-    AiLookDir, AiMemory, AiPersonality, AiState, BlocksMovement, Caliber, CombatStats, Energy,
+    AiMemory, AiPersonality, AiState, BlocksMovement, Caliber, CombatStats, Cursor, Energy,
     Faction, Health, Inventory, Item, ItemKind, LootTable, Name, PatrolOrigin, Position,
     Renderable, Speed, Stamina, Viewshed,
 };
@@ -655,7 +655,9 @@ pub fn spawn_monster(
         ))
         .insert((
             AiState::Idle,
-            AiLookDir(GridVec::new(0, -1), 0), // default: looking south
+            Cursor {
+                pos: GridVec::new(x, y) + GridVec::NORTH,
+            },
             PatrolOrigin(GridVec::new(x, y)),
             AiMemory::default(),
             AiPersonality {

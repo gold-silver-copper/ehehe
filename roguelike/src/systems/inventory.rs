@@ -67,6 +67,7 @@ pub fn use_item_system(
     mut inventory_query: Query<&mut Inventory>,
     mut health_query: Query<&mut Health>,
     mut item_kind_query: Query<(&mut ItemKind, Option<&Name>)>,
+    user_names: Query<Option<&Name>>,
     mut combat_log: ResMut<CombatLog>,
     mut collectibles: ResMut<Collectibles>,
 ) {
@@ -86,6 +87,12 @@ pub fn use_item_system(
         };
 
         let item_name = item_display_name(name);
+        let user_name = user_names
+            .get(intent.user)
+            .ok()
+            .flatten()
+            .map(|name| name.0.as_str())
+            .unwrap_or("Someone");
 
         // Dereference Bevy's `Mut<ItemKind>` wrapper to pattern match.
         // This borrows the inner value immutably first; if we need to mutate
@@ -100,7 +107,7 @@ pub fn use_item_system(
                 let heal = *heal;
                 if let Ok(mut hp) = health_query.get_mut(intent.user) {
                     let healed = hp.heal(heal);
-                    combat_log.push(format!("Used {item_name}, healed {healed} HP"));
+                    combat_log.push(format!("{user_name} used {item_name}, healed {healed} HP"));
                 }
                 inv.remove_at(intent.item_index);
                 commands.entity(item_entity).despawn();

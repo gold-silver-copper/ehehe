@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::{Dead, Health, PlayerControlled, Position, Stamina};
+use crate::components::{Dead, Health, PlayerControlled, Position, Stamina, Viewshed};
 use crate::grid_vec::GridVec;
 use crate::resources::{
     CombatLog, DynamicRng, ExtraWorldTicks, GameMapResource, MapSeed, SoundEvents,
@@ -80,7 +80,12 @@ pub fn fire_system(
     mut combat_log: ResMut<CombatLog>,
     dynamic_rng: Res<DynamicRng>,
     seed: Res<MapSeed>,
+    player_visibility_query: Query<(&Position, Option<&Viewshed>), With<PlayerControlled>>,
 ) {
+    let player_visibility = player_visibility_query
+        .single()
+        .ok()
+        .map(|(pos, viewshed)| (pos.as_grid_vec(), viewshed));
     let map_width = game_map.0.width;
     let map_height = game_map.0.height;
 
@@ -93,7 +98,11 @@ pub fn fire_system(
             && let Ok(mut hp) = health_query.get_mut(entity)
         {
             let actual = hp.apply_damage(FIRE_DAMAGE);
-            if actual > 0 {
+            if actual > 0
+                && player_visibility.is_some_and(|(player_pos, viewshed)| {
+                    p == player_pos || viewshed.is_some_and(|vs| vs.visible_tiles.contains(&p))
+                })
+            {
                 combat_log.push_at(
                     format!("{entity_name} is burned by fire for {actual} damage!"),
                     p,

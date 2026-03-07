@@ -444,6 +444,24 @@ impl CombatLog {
         let start = visible_msgs.len().saturating_sub(n);
         visible_msgs[start..].to_vec()
     }
+
+    /// Returns the most recent `n` messages tagged with positions inside `visible`.
+    /// Untagged/global messages are excluded.
+    pub fn recent_strictly_visible(
+        &self,
+        n: usize,
+        visible: &std::collections::HashSet<GridVec>,
+    ) -> Vec<&str> {
+        let visible_msgs: Vec<&str> = self
+            .messages
+            .iter()
+            .zip(self.positions.iter())
+            .filter(|(_, pos)| pos.is_some_and(|p| visible.contains(&p)))
+            .map(|(msg, _)| msg.as_str())
+            .collect();
+        let start = visible_msgs.len().saturating_sub(n);
+        visible_msgs[start..].to_vec()
+    }
 }
 
 /// Tracks blood splatters left by wounded entities when they move.

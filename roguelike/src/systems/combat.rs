@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::components::{
     AiMemory, AiPursuitBoost, AiState, AiTarget, Caliber, CollectibleKind, CombatStats, Dead,
     Faction, Health, Inventory, Item, ItemKind, LastDamageSource, LootTable, Name,
-    PlayerControlled, Position, Renderable, Stamina, display_name,
+    PlayerControlled, Position, Renderable, Stamina, Viewshed, display_name,
 };
 use crate::events::{
     AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, RangedAttackIntent,
@@ -37,6 +37,17 @@ const SMOKE_SCAN_RADIUS: i32 = 2;
 const SMOKE_BASE_RADIUS: f64 = 0.8;
 /// Additional radius in the firing direction (directional plume stretch).
 const SMOKE_DIRECTIONAL_SCALE: f64 = 2.0;
+
+#[inline]
+fn player_can_see_event(
+    pos: GridVec,
+    player_visibility: Option<(GridVec, Option<&Viewshed>)>,
+) -> bool {
+    let Some((player_pos, viewshed)) = player_visibility else {
+        return false;
+    };
+    pos == player_pos || viewshed.is_some_and(|vs| vs.visible_tiles.contains(&pos))
+}
 
 /// Maximum spread angle in radians (~1.5°). Very small — just enough to
 /// occasionally shift a bullet by one tile at long range.
@@ -127,11 +138,15 @@ pub fn combat_system(
     mut combat_log: ResMut<CombatLog>,
     faction_query: Query<(Option<&Faction>, Option<&Position>)>,
     npc_query: Query<(Entity, &Position, Option<&Faction>), Without<PlayerControlled>>,
-    player_query: Query<Entity, With<PlayerControlled>>,
+    player_query: Query<(&Position, Option<&Viewshed>), With<PlayerControlled>>,
     turn_counter: Res<TurnCounter>,
 ) {
     // Collect aggro events to apply after processing all intents
     let mut aggro_targets: Vec<(Entity, Entity, Option<GridVec>)> = Vec::new(); // (attacker, target, target_pos)
+    let player_visibility = player_query
+        .single()
+        .ok()
+        .map(|(pos, viewshed)| (pos.as_grid_vec(), viewshed));
 
     for intent in intents.read() {
         let Ok((attacker_stats, attacker_name, attacker_pos)) = stats_query.get(intent.attacker)
@@ -170,23 +185,29 @@ pub fn combat_system(
         let damage = base_damage + bonus;
 
         if damage > 0 {
-            if let Some(item_name) = bonus_item_name {
-                combat_log.push_opt(
-                    format!("{a_name} hits {t_name} with {item_name} for {damage} damage"),
-                    pos,
-                );
-            } else {
-                combat_log.push_opt(format!("{a_name} hits {t_name} for {damage} damage"), pos);
+            if let Some(event_pos) = pos.filter(|pos| player_can_see_event(*pos, player_visibility)) {
+                if let Some(item_name) = bonus_item_name {
+                    combat_log.push_at(
+                        format!("{a_name} hits {t_name} with {item_name} for {damage} damage"),
+                        event_pos,
+                    );
+                } else {
+                    combat_log.push_at(
+                        format!("{a_name} hits {t_name} for {damage} damage"),
+                        event_pos,
+                    );
+                }
             }
             damage_events.write(DamageEvent {
                 target: intent.target,
                 amount: damage,
                 source: Some(intent.attacker),
             });
-        } else {
-            combat_log.push_opt(
+        } else if let Some(event_pos) = pos.filter(|pos| player_can_see_event(*pos, player_visibility))
+        {
+            combat_log.push_at(
                 format!("{a_name} attacks {t_name} but deals no damage"),
-                pos,
+                event_pos,
             );
         }
 
@@ -200,7 +221,7 @@ pub fn combat_system(
     }
 
     // Apply aggro: nearby allies of the target should join the fight against the attacker.
-    let _player_entity = player_query.single().ok();
+    let _player_entity = player_visibility.map(|(pos, _)| pos);
     for (attacker, target, target_pos) in aggro_targets {
         // Get target's faction for propagation
         let target_faction = faction_query.get(target).ok().and_then(|(f, _)| f.copied());
@@ -327,8 +348,13 @@ pub fn death_system(
     _next_game_state: ResMut<NextState<GameState>>,
     seed: Res<MapSeed>,
     mut spectating: ResMut<crate::resources::SpectatingAfterDeath>,
+    player_visibility_query: Query<(&Position, Option<&Viewshed>), With<PlayerControlled>>,
 ) {
     let player_entity = player_entities.single().ok();
+    let player_visibility = player_visibility_query
+        .single()
+        .ok()
+        .map(|(pos, viewshed)| (pos.as_grid_vec(), viewshed));
 
     for (
         entity,
@@ -353,10 +379,12 @@ pub fn death_system(
         }
 
         let label = name.map_or("Something", |n| &n.0);
-        combat_log.push_opt(
-            format!("{label} has been slain!"),
-            pos.map(|p| p.as_grid_vec()),
-        );
+        if let Some(event_pos) = pos
+            .map(|p| p.as_grid_vec())
+            .filter(|pos| player_can_see_event(*pos, player_visibility))
+        {
+            combat_log.push_at(format!("{label} has been slain!"), event_pos);
+        }
 
         // If the player died, mark them dead and enable spectating so the
         // world keeps ticking. The input system blocks player actions when
@@ -390,14 +418,11 @@ pub fn death_system(
         let is_wildlife = faction.is_some_and(|f| matches!(f, Faction::Wildlife));
 
         // Drop entire NPC inventory on the ground (animals drop nothing).
-        if !is_wildlife && let (Some(inv), Some(p)) = (inventory, pos) {
+        if !is_wildlife && let (Some(inv), Some(_p)) = (inventory, pos) {
             for &item_entity in &inv.items {
                 commands
                     .entity(item_entity)
-                    .insert(Position { x: p.x, y: p.y });
-            }
-            if !inv.items.is_empty() {
-                combat_log.push_at(format!("{label} dropped their gear!"), p.as_grid_vec());
+                    .insert(Position { x: _p.x, y: _p.y });
             }
         }
 
@@ -529,7 +554,12 @@ pub fn ranged_attack_system(
     seed: Res<MapSeed>,
     mut game_map: ResMut<GameMapResource>,
     turn_counter: Res<TurnCounter>,
+    player_visibility_query: Query<(&Position, Option<&Viewshed>), With<PlayerControlled>>,
 ) {
+    let player_visibility = player_visibility_query
+        .single()
+        .ok()
+        .map(|(pos, viewshed)| (pos.as_grid_vec(), viewshed));
     for intent in intents.read() {
         let Ok((caster_pos, caster_name)) = caster_query.get_mut(intent.attacker) else {
             continue;
@@ -577,7 +607,9 @@ pub fn ranged_attack_system(
             (origin.x as u64) << 32 | (origin.y as u64 & 0xFFFFFFFF) ^ 0xDEAD,
         );
         if misfire_roll < MISFIRE_CHANCE {
-            combat_log.push(format!("{c_name}'s gun misfires! *click*"));
+            if player_can_see_event(origin, player_visibility) {
+                combat_log.push_at(format!("{c_name}'s gun misfires! *click*"), origin);
+            }
             sound_events.add(origin);
             continue;
         }
@@ -594,7 +626,6 @@ pub fn ranged_attack_system(
         let map_range = game_map.0.width.max(game_map.0.height);
         let endpoint = bullet_endpoint(origin, spread_dx, spread_dy, map_range);
 
-        combat_log.push(format!("{c_name} fires!"));
         sound_events.add(origin);
 
         // Spawn gun smoke at the firing position (persists and blocks sight).
@@ -619,7 +650,6 @@ pub fn ai_ranged_attack_system(
     attacker_query: Query<(&Position, &CombatStats, Option<&Name>, Option<&Inventory>)>,
     target_query: Query<&Position>,
     mut item_kind_query: Query<&mut ItemKind>,
-    mut combat_log: ResMut<CombatLog>,
     mut sound_events: ResMut<SoundEvents>,
     mut game_map: ResMut<GameMapResource>,
     turn_counter: Res<TurnCounter>,
@@ -636,7 +666,7 @@ pub fn ai_ranged_attack_system(
 
         let origin = attacker_pos.as_grid_vec();
         let target_vec = target_pos.as_grid_vec();
-        let a_name = display_name(attacker_name);
+        let _ = attacker_name;
 
         // Use the actual direction delta for accurate aiming (not just signum).
         let dx = target_vec.x - origin.x;
@@ -682,7 +712,6 @@ pub fn ai_ranged_attack_system(
         let map_range = game_map.0.width.max(game_map.0.height);
         let endpoint = bullet_endpoint(origin, spread_dx, spread_dy, map_range);
 
-        combat_log.push_at(format!("{a_name} fires!"), origin);
         sound_events.add(origin);
 
         // Spawn gun smoke at the firing position (persists and blocks sight).

@@ -92,11 +92,10 @@ pub fn spell_system(
             commands.entity(grenade_entity).despawn();
         }
 
+        let caster_gv = caster_pos.map(|p| p.as_grid_vec()).unwrap_or(intent.target);
         let c_name = display_name(caster_name);
         combat_log.push(format!("{c_name} throws dynamite!"));
-
         // Spawn a traveling explosive projectile toward the target.
-        let caster_gv = caster_pos.map(|p| p.as_grid_vec()).unwrap_or(intent.target);
         spawn_explosive_projectile(
             &mut commands,
             caster_gv,
@@ -148,11 +147,10 @@ pub fn molotov_system(
             commands.entity(molotov_entity).despawn();
         }
 
+        let caster_gv = caster_pos.map(|p| p.as_grid_vec()).unwrap_or(intent.target);
         let c_name = display_name(caster_name);
         combat_log.push(format!("{c_name} hurls a Molotov cocktail!"));
-
         // Spawn a traveling explosive projectile toward the target.
-        let caster_gv = caster_pos.map(|p| p.as_grid_vec()).unwrap_or(intent.target);
         spawn_explosive_projectile(
             &mut commands,
             caster_gv,
@@ -415,8 +413,6 @@ fn detonate_dynamite(
     radius: i32,
     source: Entity,
 ) {
-    combat_log.push("Dynamite explodes!".to_string());
-
     crate::systems::projectile::spawn_shrapnel(commands, origin, radius, damage, source);
 
     let mut destroyed_count = 0;
