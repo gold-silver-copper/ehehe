@@ -71,12 +71,7 @@ impl Plugin for RoguelikePlugin {
             .world()
             .get_resource::<MapSeed>()
             .map(|s| s.0)
-            .unwrap_or_else(|| {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(42)
-            });
+            .unwrap_or_else(|| fresh_seed(42));
 
         let game_map = GameMap::new(800, 560, seed);
         // Compute actual player spawn position so camera+cursor start centered on it.
@@ -87,7 +82,11 @@ impl Plugin for RoguelikePlugin {
             .or_else(|| game_map.find_spawnable_near(center, 20))
             .unwrap_or(GridVec::new(SPAWN_X, SPAWN_Y));
 
-        app.add_plugins(bevy::state::app::StatesPlugin)
+        if !app.is_plugin_added::<bevy::state::app::StatesPlugin>() {
+            app.add_plugins(bevy::state::app::StatesPlugin);
+        }
+
+        app
             // ── Messages ──
             .add_message::<MoveIntent>()
             .add_message::<AttackIntent>()
@@ -694,10 +693,7 @@ fn restart_system(
     }
 
     // Generate a new seed each restart so the map is different every time.
-    let new_seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(res.seed.0.wrapping_add(1));
+    let new_seed = fresh_seed(res.seed.0.wrapping_add(1));
     res.seed.0 = new_seed;
 
     res.combat_log.clear();
@@ -730,4 +726,22 @@ fn restart_system(
     let caliber = do_spawn_player(&mut commands, &mut res.game_map);
     *res.collectibles = Collectibles::for_starting_caliber(caliber);
     do_spawn_monsters(&mut commands, &res.game_map, res.seed.0);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn fresh_seed(fallback: u64) -> u64 {
+    let millis = js_sys::Date::now();
+    if millis.is_finite() {
+        (millis * 1_000.0) as u64
+    } else {
+        fallback
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn fresh_seed(fallback: u64) -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(fallback)
 }

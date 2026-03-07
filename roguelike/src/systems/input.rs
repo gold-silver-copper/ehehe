@@ -1,7 +1,8 @@
 use bevy::{ecs::system::SystemParam, prelude::*};
+#[cfg(not(feature = "windowed"))]
 use bevy_ratatui::event::KeyMessage;
+#[cfg(not(feature = "windowed"))]
 use ratatui::crossterm::event::KeyCode;
-
 use crate::components::{
     Dead, Faction, Health, Inventory, ItemKind, PlayerControlled, Position, SPELL_STAMINA_COST,
     Stamina, Viewshed,
@@ -10,11 +11,13 @@ use crate::events::{
     MeleeWideIntent, MolotovCastIntent, MoveIntent, RangedAttackIntent, SpellCastIntent,
     ThrowItemIntent, UseItemIntent,
 };
-use crate::grid_vec::GridVec;
 use crate::resources::{
     CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameState, InputMode, InputState,
     MapSeed, RestartRequested, SpectatingAfterDeath, TurnState,
 };
+
+#[cfg(feature = "windowed")]
+use bevy::input::keyboard::KeyCode;
 
 /// Bundles all intent MessageWriters to stay under Bevy's 16-param system limit.
 #[derive(SystemParam)]
@@ -134,6 +137,29 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
     },
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GameInput {
+    ToggleMenu,
+    CursorUp,
+    CursorDown,
+    CursorLeft,
+    CursorRight,
+    CenterCursor,
+    AutoAim,
+    MoveUp,
+    MoveDown,
+    MoveLeft,
+    MoveRight,
+    Wait,
+    ReloadOrRestart,
+    Roundhouse,
+    ThrowSand,
+    ThrowItem,
+    ToggleGodMode,
+    UseSlot(usize),
+}
+
+#[cfg_attr(feature = "windowed", allow(dead_code))]
 #[inline]
 fn inventory_slot_from_key(c: char) -> Option<usize> {
     match c {
@@ -149,6 +175,7 @@ fn inventory_slot_from_key(c: char) -> Option<usize> {
 /// resolved before the next input is accepted.
 ///
 /// When the game is in `GameState::Dead`, only quit (Q) and restart (R) work.
+#[cfg(not(feature = "windowed"))]
 pub fn input_system(
     mut messages: MessageReader<KeyMessage>,
     mut intents: IntentWriters,
@@ -176,7 +203,7 @@ pub fn input_system(
     mut input_state: ResMut<InputState>,
     mut restart_requested: ResMut<RestartRequested>,
     mut cursor: ResMut<CursorPosition>,
-    (mut extra_world_ticks, spectating, dynamic_rng, seed, _spatial): (
+    (mut extra_world_ticks, mut spectating, dynamic_rng, seed, _spatial): (
         ResMut<ExtraWorldTicks>,
         ResMut<SpectatingAfterDeath>,
         Res<DynamicRng>,
@@ -185,10 +212,128 @@ pub fn input_system(
     ),
     mut god_mode: ResMut<crate::resources::GodMode>,
 ) {
+    let commands: Vec<_> = messages
+        .read()
+        .filter_map(|message| map_terminal_input(message.code))
+        .collect();
+    process_inputs(
+        commands,
+        &mut intents,
+        player_query,
+        &mut player_viewshed,
+        item_kind_query,
+        hostiles_query,
+        game_state,
+        &mut next_game_state,
+        turn_state,
+        &mut next_turn_state,
+        &mut combat_log,
+        &mut input_state,
+        &mut restart_requested,
+        &mut cursor,
+        &mut extra_world_ticks,
+        &mut spectating,
+        dynamic_rng,
+        seed,
+        &mut god_mode,
+    );
+}
+
+#[cfg(feature = "windowed")]
+pub fn input_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut intents: IntentWriters,
+    player_query: Query<
+        (
+            Entity,
+            &Position,
+            Option<&Stamina>,
+            Option<&Inventory>,
+            Option<&Dead>,
+        ),
+        With<PlayerControlled>,
+    >,
+    mut player_viewshed: Query<&mut Viewshed, With<PlayerControlled>>,
+    item_kind_query: Query<&ItemKind>,
+    (hostiles_query, _health_query): (
+        Query<&Position, (With<Faction>, Without<PlayerControlled>)>,
+        Query<Entity, With<Health>>,
+    ),
+    game_state: Res<State<GameState>>,
+    mut next_game_state: ResMut<NextState<GameState>>,
+    turn_state: Option<Res<State<TurnState>>>,
+    mut next_turn_state: Option<ResMut<NextState<TurnState>>>,
+    mut combat_log: ResMut<CombatLog>,
+    mut input_state: ResMut<InputState>,
+    mut restart_requested: ResMut<RestartRequested>,
+    mut cursor: ResMut<CursorPosition>,
+    (mut extra_world_ticks, mut spectating, dynamic_rng, seed, _spatial): (
+        ResMut<ExtraWorldTicks>,
+        ResMut<SpectatingAfterDeath>,
+        Res<DynamicRng>,
+        Res<MapSeed>,
+        Res<crate::resources::SpatialIndex>,
+    ),
+    mut god_mode: ResMut<crate::resources::GodMode>,
+) {
+    let commands = collect_windowed_inputs(&keys);
+    process_inputs(
+        commands,
+        &mut intents,
+        player_query,
+        &mut player_viewshed,
+        item_kind_query,
+        hostiles_query,
+        game_state,
+        &mut next_game_state,
+        turn_state,
+        &mut next_turn_state,
+        &mut combat_log,
+        &mut input_state,
+        &mut restart_requested,
+        &mut cursor,
+        &mut extra_world_ticks,
+        &mut spectating,
+        dynamic_rng,
+        seed,
+        &mut god_mode,
+    );
+}
+
+fn process_inputs(
+    commands: Vec<GameInput>,
+    intents: &mut IntentWriters,
+    player_query: Query<
+        (
+            Entity,
+            &Position,
+            Option<&Stamina>,
+            Option<&Inventory>,
+            Option<&Dead>,
+        ),
+        With<PlayerControlled>,
+    >,
+    player_viewshed: &mut Query<&mut Viewshed, With<PlayerControlled>>,
+    item_kind_query: Query<&ItemKind>,
+    hostiles_query: Query<&Position, (With<Faction>, Without<PlayerControlled>)>,
+    game_state: Res<State<GameState>>,
+    next_game_state: &mut ResMut<NextState<GameState>>,
+    turn_state: Option<Res<State<TurnState>>>,
+    next_turn_state: &mut Option<ResMut<NextState<TurnState>>>,
+    combat_log: &mut ResMut<CombatLog>,
+    input_state: &mut ResMut<InputState>,
+    restart_requested: &mut ResMut<RestartRequested>,
+    cursor: &mut ResMut<CursorPosition>,
+    extra_world_ticks: &mut ResMut<ExtraWorldTicks>,
+    spectating: &mut ResMut<SpectatingAfterDeath>,
+    dynamic_rng: Res<DynamicRng>,
+    seed: Res<MapSeed>,
+    god_mode: &mut ResMut<crate::resources::GodMode>,
+) {
     // Handle Dead and Victory states: R to restart, auto-advance turns when dead.
     if *game_state.get() == GameState::Dead || *game_state.get() == GameState::Victory {
-        for message in messages.read() {
-            if let KeyCode::Char('r') = message.code {
+        for command in commands {
+            if command == GameInput::ReloadOrRestart {
                 restart_requested.0 = true;
             }
         }
@@ -199,14 +344,13 @@ pub fn input_system(
         player_query.single()
     else {
         // PlayerControlled entity is gone (should only happen transiently).
-        messages.read().for_each(|_| {});
         return;
     };
 
     // If the player is dead, only allow restart and auto-advance time.
     if player_dead.is_some() {
-        for message in messages.read() {
-            if let KeyCode::Char('r') = message.code {
+        for command in commands {
+            if command == GameInput::ReloadOrRestart {
                 restart_requested.0 = true;
             }
         }
@@ -216,7 +360,7 @@ pub fn input_system(
                 .as_ref()
                 .is_some_and(|s| *s.get() == TurnState::AwaitingInput);
             if awaiting {
-                if let Some(ref mut nts) = next_turn_state {
+                if let Some(nts) = next_turn_state {
                     nts.set(TurnState::PlayerTurn);
                 }
             }
@@ -232,17 +376,15 @@ pub fn input_system(
 
     // ── ESC menu input mode ─────────────────────────────────────
     if input_state.mode == InputMode::EscMenu {
-        for message in messages.read() {
-            match message.code {
-                KeyCode::Char('q') => {
-                    // Resume game (Q toggles ESC menu)
+        for command in commands {
+            match command {
+                GameInput::ToggleMenu => {
                     input_state.mode = InputMode::Game;
                     if *game_state.get() == GameState::Paused {
                         next_game_state.set(GameState::Playing);
                     }
                 }
-                KeyCode::Char('r') => {
-                    // Restart
+                GameInput::ReloadOrRestart => {
                     input_state.mode = InputMode::Game;
                     restart_requested.0 = true;
                 }
@@ -252,18 +394,17 @@ pub fn input_system(
         return;
     }
 
-    // ── Normal game input mode ──────────────────────────────────
-    for message in messages.read() {
-        // Dismiss the welcome screen on any key press.
-        if input_state.welcome_visible {
-            input_state.welcome_visible = false;
-            continue; // consume the key that dismissed the welcome
-        }
+    if input_state.welcome_visible && !commands.is_empty() {
+        input_state.welcome_visible = false;
+        return;
+    }
 
+    // ── Normal game input mode ──────────────────────────────────
+    for command in commands {
         // Exhaustive input handling — every arm here corresponds to a KEYBINDINGS entry.
-        match message.code {
+        match command {
             // ── Q key: toggle ESC menu ──────────────────────────
-            KeyCode::Char('q') => {
+            GameInput::ToggleMenu => {
                 // Open ESC menu and pause the game.
                 input_state.mode = InputMode::EscMenu;
                 if *game_state.get() == GameState::Playing {
@@ -271,50 +412,50 @@ pub fn input_system(
                 }
             }
             // ── Cursor movement (IJKL) — advances one tick ─────
-            KeyCode::Char('i') if awaiting_input => {
+            GameInput::CursorUp if awaiting_input => {
                 move_cursor(
-                    &mut cursor,
+                    cursor,
                     0,
                     1,
-                    &mut player_viewshed,
-                    &mut next_turn_state,
+                    player_viewshed,
+                    next_turn_state,
                 );
             }
-            KeyCode::Char('k') if awaiting_input => {
+            GameInput::CursorDown if awaiting_input => {
                 move_cursor(
-                    &mut cursor,
+                    cursor,
                     0,
                     -1,
-                    &mut player_viewshed,
-                    &mut next_turn_state,
+                    player_viewshed,
+                    next_turn_state,
                 );
             }
-            KeyCode::Char('j') if awaiting_input => {
+            GameInput::CursorLeft if awaiting_input => {
                 move_cursor(
-                    &mut cursor,
+                    cursor,
                     -1,
                     0,
-                    &mut player_viewshed,
-                    &mut next_turn_state,
+                    player_viewshed,
+                    next_turn_state,
                 );
             }
-            KeyCode::Char('l') if awaiting_input => {
+            GameInput::CursorRight if awaiting_input => {
                 move_cursor(
-                    &mut cursor,
+                    cursor,
                     1,
                     0,
-                    &mut player_viewshed,
-                    &mut next_turn_state,
+                    player_viewshed,
+                    next_turn_state,
                 );
             }
             // ── Center cursor on player (C) — advances one tick ──
-            KeyCode::Char('c') if awaiting_input => {
+            GameInput::CenterCursor if awaiting_input => {
                 cursor.pos = player_pos.as_grid_vec();
-                mark_viewshed_dirty(&mut player_viewshed);
-                advance_turn(&mut next_turn_state);
+                mark_viewshed_dirty(player_viewshed);
+                advance_turn(next_turn_state);
             }
             // ── Auto-aim (V): move cursor one step toward nearest hostile — advances one tick ──
-            KeyCode::Char('v') if awaiting_input => {
+            GameInput::AutoAim if awaiting_input => {
                 let player_vec = player_pos.as_grid_vec();
                 let mut best_dist = i32::MAX;
                 let mut best_pos = None;
@@ -329,71 +470,71 @@ pub fn input_system(
                 if let Some(target) = best_pos {
                     let step = (target - cursor.pos).king_step();
                     cursor.pos += step;
-                    mark_viewshed_dirty(&mut player_viewshed);
-                    advance_turn(&mut next_turn_state);
+                    mark_viewshed_dirty(player_viewshed);
+                    advance_turn(next_turn_state);
                 } else {
                     combat_log.push("No enemies visible.".into());
                 }
             }
             // ── Movement keys (only while awaiting input) ───────
             // Normal movement — costs 3 ticks (physical movement is slower) and 2 stamina
-            KeyCode::Char('w') | KeyCode::Up if awaiting_input => {
+            GameInput::MoveUp if awaiting_input => {
                 extra_world_ticks.0 = 2;
                 input_state.ability_stamina_pending = MOVE_STAMINA_COST;
                 emit_move(
                     &mut intents.move_intents,
-                    &mut next_turn_state,
+                    next_turn_state,
                     player_entity,
                     0,
                     1,
                 );
             }
-            KeyCode::Char('s') | KeyCode::Down if awaiting_input => {
+            GameInput::MoveDown if awaiting_input => {
                 extra_world_ticks.0 = 2;
                 input_state.ability_stamina_pending = MOVE_STAMINA_COST;
                 emit_move(
                     &mut intents.move_intents,
-                    &mut next_turn_state,
+                    next_turn_state,
                     player_entity,
                     0,
                     -1,
                 );
             }
-            KeyCode::Char('a') | KeyCode::Left if awaiting_input => {
+            GameInput::MoveLeft if awaiting_input => {
                 extra_world_ticks.0 = 2;
                 input_state.ability_stamina_pending = MOVE_STAMINA_COST;
                 emit_move(
                     &mut intents.move_intents,
-                    &mut next_turn_state,
+                    next_turn_state,
                     player_entity,
                     -1,
                     0,
                 );
             }
-            KeyCode::Char('d') | KeyCode::Right if awaiting_input => {
+            GameInput::MoveRight if awaiting_input => {
                 extra_world_ticks.0 = 2;
                 input_state.ability_stamina_pending = MOVE_STAMINA_COST;
                 emit_move(
                     &mut intents.move_intents,
-                    &mut next_turn_state,
+                    next_turn_state,
                     player_entity,
                     1,
                     0,
                 );
             }
             // ── Wait / skip turn (T) ────────────────────────────
-            KeyCode::Char('t') if awaiting_input => {
+            GameInput::Wait if awaiting_input => {
                 combat_log.push("You wait...".into());
-                advance_turn(&mut next_turn_state);
+                advance_turn(next_turn_state);
             }
             // ── Reload weapon from inventory magazine — costs 6 ticks ──
-            KeyCode::Char('r') if awaiting_input => {
+            GameInput::ReloadOrRestart if awaiting_input => {
                 extra_world_ticks.0 = 5;
                 input_state.reload_pending = true;
-                advance_turn(&mut next_turn_state);
+                advance_turn(next_turn_state);
             }
             // ── Melee wide (roundhouse) attack — costs 2 ticks + stamina (F key) ────
-            KeyCode::Char('f') if awaiting_input => {
+            GameInput::Roundhouse if awaiting_input => {
                 let has_stamina = player_stamina
                     .map(|m| m.current >= ROUNDHOUSE_STAMINA_COST)
                     .unwrap_or(false);
@@ -405,11 +546,11 @@ pub fn input_system(
                     intents.melee_wide_intents.write(MeleeWideIntent {
                         attacker: player_entity,
                     });
-                    advance_turn(&mut next_turn_state);
+                    advance_turn(next_turn_state);
                 }
             }
             // ── Throw sand (G key): create sand cloud blocking vision (costs stamina) ──
-            KeyCode::Char('g') if awaiting_input => {
+            GameInput::ThrowSand if awaiting_input => {
                 let has_stamina = player_stamina
                     .map(|m| m.current >= SAND_STAMINA_COST)
                     .unwrap_or(false);
@@ -432,12 +573,12 @@ pub fn input_system(
                         input_state.ability_stamina_pending = SAND_STAMINA_COST;
                         combat_log.push("You throw a handful of sand!".into());
                         extra_world_ticks.0 = 0;
-                        advance_turn(&mut next_turn_state);
+                        advance_turn(next_turn_state);
                     }
                 }
             }
             // ── Throw random item (E key): throw inventory item toward cursor (costs stamina) ──
-            KeyCode::Char('e') if awaiting_input => {
+            GameInput::ThrowItem if awaiting_input => {
                 let has_stamina = player_stamina
                     .map(|m| m.current >= THROW_ITEM_STAMINA_COST)
                     .unwrap_or(false);
@@ -450,18 +591,18 @@ pub fn input_system(
                         player_pos,
                         player_inv,
                         &item_kind_query,
-                        &cursor,
-                        &mut intents,
-                        &mut extra_world_ticks,
-                        &mut next_turn_state,
-                        &mut combat_log,
+                        cursor,
+                        intents,
+                        extra_world_ticks,
+                        next_turn_state,
+                        combat_log,
                         &dynamic_rng,
                         &seed,
                     );
                 }
             }
             // ── Toggle God Mode (Shift+G) ───────────────────────
-            KeyCode::Char('G') if awaiting_input => {
+            GameInput::ToggleGodMode if awaiting_input => {
                 god_mode.0 = !god_mode.0;
                 if god_mode.0 {
                     combat_log.push("God mode ENABLED — you are invincible.".into());
@@ -471,8 +612,7 @@ pub fn input_system(
             }
             // ── Use inventory item by slot (1-0) / Fire gun toward cursor / Throw / Grenade ──
             // Combat actions cost 2 ticks.
-            KeyCode::Char(c) if awaiting_input && inventory_slot_from_key(c).is_some() => {
-                let idx = inventory_slot_from_key(c).expect("guarded above");
+            GameInput::UseSlot(idx) if awaiting_input => {
                 let mut handled = false;
                 if let Some(inv) = player_inv
                     && let Some(&item_entity) = inv.items.get(idx)
@@ -491,7 +631,7 @@ pub fn input_system(
                                     dy: delta.y,
                                     gun_item: Some(item_entity),
                                 });
-                                advance_turn(&mut next_turn_state);
+                                advance_turn(next_turn_state);
                                 handled = true;
                             } else {
                                 combat_log.push("Cursor is on your position!".into());
@@ -516,7 +656,7 @@ pub fn input_system(
                                 range: crate::systems::projectile::THROWN_RANGE,
                                 damage: *attack,
                             });
-                            advance_turn(&mut next_turn_state);
+                            advance_turn(next_turn_state);
                             handled = true;
                         } else {
                             combat_log.push("Cursor is on your position!".into());
@@ -537,7 +677,7 @@ pub fn input_system(
                                 target: cursor.pos,
                                 grenade_index: idx,
                             });
-                            advance_turn(&mut next_turn_state);
+                            advance_turn(next_turn_state);
                         }
                         handled = true;
                     } else if let ItemKind::Molotov { damage, radius, .. } = kind {
@@ -556,7 +696,7 @@ pub fn input_system(
                                 target: cursor.pos,
                                 item_index: idx,
                             });
-                            advance_turn(&mut next_turn_state);
+                            advance_turn(next_turn_state);
                         }
                         handled = true;
                     }
@@ -567,12 +707,115 @@ pub fn input_system(
                         user: player_entity,
                         item_index: idx,
                     });
-                    advance_turn(&mut next_turn_state);
+                    advance_turn(next_turn_state);
                 }
             }
             _ => {}
         }
     }
+}
+
+#[cfg(not(feature = "windowed"))]
+fn map_terminal_input(key: KeyCode) -> Option<GameInput> {
+    match key {
+        KeyCode::Char('q') => Some(GameInput::ToggleMenu),
+        KeyCode::Char('i') => Some(GameInput::CursorUp),
+        KeyCode::Char('k') => Some(GameInput::CursorDown),
+        KeyCode::Char('j') => Some(GameInput::CursorLeft),
+        KeyCode::Char('l') => Some(GameInput::CursorRight),
+        KeyCode::Char('c') => Some(GameInput::CenterCursor),
+        KeyCode::Char('v') => Some(GameInput::AutoAim),
+        KeyCode::Char('w') | KeyCode::Up => Some(GameInput::MoveUp),
+        KeyCode::Char('s') | KeyCode::Down => Some(GameInput::MoveDown),
+        KeyCode::Char('a') | KeyCode::Left => Some(GameInput::MoveLeft),
+        KeyCode::Char('d') | KeyCode::Right => Some(GameInput::MoveRight),
+        KeyCode::Char('t') => Some(GameInput::Wait),
+        KeyCode::Char('r') => Some(GameInput::ReloadOrRestart),
+        KeyCode::Char('f') => Some(GameInput::Roundhouse),
+        KeyCode::Char('g') => Some(GameInput::ThrowSand),
+        KeyCode::Char('e') => Some(GameInput::ThrowItem),
+        KeyCode::Char('G') => Some(GameInput::ToggleGodMode),
+        KeyCode::Char(c) => inventory_slot_from_key(c).map(GameInput::UseSlot),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "windowed")]
+fn collect_windowed_inputs(keys: &ButtonInput<KeyCode>) -> Vec<GameInput> {
+    let mut commands = Vec::new();
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+
+    if keys.just_pressed(KeyCode::KeyQ) {
+        commands.push(GameInput::ToggleMenu);
+    }
+    if keys.just_pressed(KeyCode::KeyI) {
+        commands.push(GameInput::CursorUp);
+    }
+    if keys.just_pressed(KeyCode::KeyK) {
+        commands.push(GameInput::CursorDown);
+    }
+    if keys.just_pressed(KeyCode::KeyJ) {
+        commands.push(GameInput::CursorLeft);
+    }
+    if keys.just_pressed(KeyCode::KeyL) {
+        commands.push(GameInput::CursorRight);
+    }
+    if keys.just_pressed(KeyCode::KeyC) {
+        commands.push(GameInput::CenterCursor);
+    }
+    if keys.just_pressed(KeyCode::KeyV) {
+        commands.push(GameInput::AutoAim);
+    }
+    if keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp) {
+        commands.push(GameInput::MoveUp);
+    }
+    if keys.just_pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown) {
+        commands.push(GameInput::MoveDown);
+    }
+    if keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft) {
+        commands.push(GameInput::MoveLeft);
+    }
+    if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) {
+        commands.push(GameInput::MoveRight);
+    }
+    if keys.just_pressed(KeyCode::KeyT) {
+        commands.push(GameInput::Wait);
+    }
+    if keys.just_pressed(KeyCode::KeyR) {
+        commands.push(GameInput::ReloadOrRestart);
+    }
+    if keys.just_pressed(KeyCode::KeyF) {
+        commands.push(GameInput::Roundhouse);
+    }
+    if keys.just_pressed(KeyCode::KeyG) {
+        commands.push(if shift {
+            GameInput::ToggleGodMode
+        } else {
+            GameInput::ThrowSand
+        });
+    }
+    if keys.just_pressed(KeyCode::KeyE) {
+        commands.push(GameInput::ThrowItem);
+    }
+
+    for (key, slot) in [
+        (KeyCode::Digit1, 0),
+        (KeyCode::Digit2, 1),
+        (KeyCode::Digit3, 2),
+        (KeyCode::Digit4, 3),
+        (KeyCode::Digit5, 4),
+        (KeyCode::Digit6, 5),
+        (KeyCode::Digit7, 6),
+        (KeyCode::Digit8, 7),
+        (KeyCode::Digit9, 8),
+        (KeyCode::Digit0, 9),
+    ] {
+        if keys.just_pressed(key) {
+            commands.push(GameInput::UseSlot(slot));
+        }
+    }
+
+    commands
 }
 
 /// Special ability: Throw random inventory item toward cursor.
