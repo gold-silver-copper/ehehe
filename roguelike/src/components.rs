@@ -258,6 +258,10 @@ pub struct AiMemory {
     pub stationary_turns: u8,
     /// Previous position, used to detect stationarity.
     pub prev_pos: Option<GridVec>,
+    /// Last movement direction taken by the NPC.
+    pub last_move_dir: Option<GridVec>,
+    /// Turn when `last_move_dir` was recorded.
+    pub last_move_turn: u32,
 }
 
 impl Default for AiMemory {
@@ -270,6 +274,8 @@ impl Default for AiMemory {
             search_rotation_steps: 0,
             stationary_turns: 0,
             prev_pos: None,
+            last_move_dir: None,
+            last_move_turn: 0,
         }
     }
 }

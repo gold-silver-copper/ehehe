@@ -343,29 +343,41 @@ pub fn draw_system(
         // Collect visible entities for the info panel.
         let mut visible_entity_infos: Vec<(String, RatColor, RatColor, String)> = Vec::new();
 
+        let mut visible_renderables: Vec<(i32, GridVec, &Renderable, Option<&Name>)> = Vec::new();
         for (pos, renderable, name) in &renderables {
-            let screen = pos.as_grid_vec() - bottom_left;
+            let world = pos.as_grid_vec();
+            let screen = world - bottom_left;
 
-            if in_bounds(screen, render_width, render_height) {
-                // Only draw entities that are currently visible (not merely revealed)
-                let entity_visible = visible_tiles
-                    .map(|vt| vt.contains(&pos.as_grid_vec()))
-                    .unwrap_or(true);
-                if entity_visible {
-                    let bg = render_packet[screen.y as usize][screen.x as usize].2;
-                    render_packet[screen.y as usize][screen.x as usize] =
-                        (renderable.symbol.clone(), renderable.fg, bg);
-
-                    // Collect for visible entities panel.
-                    let full_name = display_name(name).to_string();
-                    visible_entity_infos.push((
-                        renderable.symbol.clone(),
-                        renderable.fg,
-                        renderable.bg,
-                        full_name,
-                    ));
-                }
+            if !in_bounds(screen, render_width, render_height) {
+                continue;
             }
+            // Only draw entities that are currently visible (not merely revealed)
+            let entity_visible = visible_tiles.map(|vt| vt.contains(&world)).unwrap_or(true);
+            if !entity_visible {
+                continue;
+            }
+
+            let draw_priority = match renderable.symbol.as_str() {
+                "@" => 2,
+                "X" => 1,
+                _ => 0,
+            };
+            visible_renderables.push((draw_priority, screen, renderable, name));
+
+            // Collect for visible entities panel.
+            let full_name = display_name(name).to_string();
+            visible_entity_infos.push((
+                renderable.symbol.clone(),
+                renderable.fg,
+                renderable.bg,
+                full_name,
+            ));
+        }
+        visible_renderables.sort_by_key(|(priority, _, _, _)| *priority);
+        for (_, screen, renderable, _) in visible_renderables {
+            let bg = render_packet[screen.y as usize][screen.x as usize].2;
+            render_packet[screen.y as usize][screen.x as usize] =
+                (renderable.symbol.clone(), renderable.fg, bg);
         }
 
         // Overlay combat particles on the render packet.
@@ -526,18 +538,29 @@ pub fn draw_system(
         // ── Final pass: re-draw entities OVER everything else ──
         // PlayerControlled and NPC symbols should always be drawn over every other symbol
         // (particles, projectiles, blood, etc.)
+        let mut final_pass_renderables: Vec<(i32, GridVec, &Renderable)> = Vec::new();
         for (pos, renderable, _) in &renderables {
-            let screen = pos.as_grid_vec() - bottom_left;
-            if in_bounds(screen, render_width, render_height) {
-                let entity_visible = visible_tiles
-                    .map(|vt| vt.contains(&pos.as_grid_vec()))
-                    .unwrap_or(true);
-                if entity_visible {
-                    let bg = render_packet[screen.y as usize][screen.x as usize].2;
-                    render_packet[screen.y as usize][screen.x as usize] =
-                        (renderable.symbol.clone(), renderable.fg, bg);
-                }
+            let world = pos.as_grid_vec();
+            let screen = world - bottom_left;
+            if !in_bounds(screen, render_width, render_height) {
+                continue;
             }
+            let entity_visible = visible_tiles.map(|vt| vt.contains(&world)).unwrap_or(true);
+            if !entity_visible {
+                continue;
+            }
+            let draw_priority = match renderable.symbol.as_str() {
+                "@" => 2,
+                "X" => 1,
+                _ => 0,
+            };
+            final_pass_renderables.push((draw_priority, screen, renderable));
+        }
+        final_pass_renderables.sort_by_key(|(priority, _, _)| *priority);
+        for (_, screen, renderable) in final_pass_renderables {
+            let bg = render_packet[screen.y as usize][screen.x as usize].2;
+            render_packet[screen.y as usize][screen.x as usize] =
+                (renderable.symbol.clone(), renderable.fg, bg);
         }
 
         // ── Apply per-tile color noise (final step before rendering) ──

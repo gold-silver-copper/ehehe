@@ -65,6 +65,10 @@ pub enum RoguelikeSet {
 /// systems, and adds all domain sub-plugins.
 pub struct RoguelikePlugin;
 
+const OFFSCREEN_REINFORCEMENT_INTERVAL: u32 = 100;
+const OFFSCREEN_REINFORCEMENT_MIN_DISTANCE: i32 = 28;
+const OFFSCREEN_REINFORCEMENT_MAX_DISTANCE: i32 = 52;
+
 impl Plugin for RoguelikePlugin {
     fn build(&self, app: &mut App) {
         // Use an existing MapSeed if the user inserted one, otherwise use a
@@ -223,6 +227,7 @@ impl Plugin for WorldPlugin {
                 ai::ai_system,
                 combat::ai_ranged_attack_system,
                 turn::fire_system,
+                spawn_offscreen_reinforcements_system,
             )
                 .chain()
                 .after(RoguelikeSet::Consequence)
@@ -231,7 +236,7 @@ impl Plugin for WorldPlugin {
         .add_systems(
             Update,
             turn::end_world_turn_system
-                .after(turn::fire_system)
+                .after(spawn_offscreen_reinforcements_system)
                 .run_if(in_state(TurnState::WorldTurn)),
         );
     }
@@ -629,6 +634,137 @@ fn resolve_player_spawn(map: &GameMap) -> GridVec {
         .unwrap_or(center)
 }
 
+fn spawn_gang_group(
+    commands: &mut Commands,
+    map: &GameMapResource,
+    player_spawn: GridVec,
+    anchor: GridVec,
+    templates: &[usize],
+    group_size: i32,
+    cluster_radius: i32,
+    min_spacing: i32,
+    max_spawn_dist_sq: i32,
+    visible_tiles: Option<&HashSet<GridVec>>,
+) -> i32 {
+    let min_spawn_dist_sq = crate::systems::spawn::PLAYER_SAFE_SPAWN_RADIUS
+        * crate::systems::spawn::PLAYER_SAFE_SPAWN_RADIUS;
+    let mut spawned = 0;
+    let mut occupied = Vec::new();
+
+    for ring in 0..=cluster_radius {
+        for dy in -ring..=ring {
+            for dx in -ring..=ring {
+                if ring > 0 && dx.abs() != ring && dy.abs() != ring {
+                    continue;
+                }
+                if spawned >= group_size {
+                    return spawned;
+                }
+                let pos = anchor + GridVec::new(dx, dy);
+                let local_dist = pos.chebyshev_distance(anchor);
+                if local_dist > cluster_radius || local_dist < 2 {
+                    continue;
+                }
+                if pos.distance_squared(player_spawn) < min_spawn_dist_sq
+                    || pos.distance_squared(player_spawn) > max_spawn_dist_sq
+                {
+                    continue;
+                }
+                if visible_tiles.is_some_and(|tiles| tiles.contains(&pos)) {
+                    continue;
+                }
+                if !map.0.is_spawnable(&pos) {
+                    continue;
+                }
+                if occupied
+                    .iter()
+                    .any(|other: &GridVec| other.chebyshev_distance(pos) < min_spacing)
+                {
+                    continue;
+                }
+
+                let template_idx = templates[(spawned as usize) % templates.len()];
+                let template = &MONSTER_TEMPLATES[template_idx];
+                spawn::spawn_monster(commands, template, pos.x, pos.y, 0, 0);
+                occupied.push(pos);
+                spawned += 1;
+            }
+        }
+    }
+
+    spawned
+}
+
+fn spawn_offscreen_reinforcement_group(
+    commands: &mut Commands,
+    map: &GameMapResource,
+    seed: u64,
+    turn: u32,
+    player_pos: GridVec,
+    camera_pos: GridVec,
+    visible_tiles: Option<&HashSet<GridVec>>,
+) -> bool {
+    let faction_configs: &[(&[usize], u64)] = &[
+        (&[2, 3], 10), // Apache
+        (&[0], 20),    // Vaqueros
+        (&[4, 5], 40), // Police
+        (&[6, 7], 50), // Outlaws
+        (&[8, 9], 60), // Lawmen
+    ];
+    let choice =
+        ((value_noise(turn as i32, 17, seed.wrapping_add(0xA11CE)) * faction_configs.len() as f64)
+            as usize)
+            % faction_configs.len();
+    let (templates, offset) = faction_configs[choice];
+
+    for attempt in 0..48 {
+        let key = seed
+            .wrapping_add(turn as u64 * 4099)
+            .wrapping_add(offset * 100)
+            .wrapping_add(attempt as u64);
+        let dx = ((value_noise(turn as i32, attempt, key) - 0.5)
+            * 2.0
+            * OFFSCREEN_REINFORCEMENT_MAX_DISTANCE as f64) as i32;
+        let dy = ((value_noise(attempt, turn as i32, key.wrapping_add(1)) - 0.5)
+            * 2.0
+            * OFFSCREEN_REINFORCEMENT_MAX_DISTANCE as f64) as i32;
+        let anchor = GridVec::new(
+            (camera_pos.x + dx).clamp(10, map.0.width - 10),
+            (camera_pos.y + dy).clamp(10, map.0.height - 10),
+        );
+        let camera_dist = anchor.chebyshev_distance(camera_pos);
+        if !(OFFSCREEN_REINFORCEMENT_MIN_DISTANCE..=OFFSCREEN_REINFORCEMENT_MAX_DISTANCE)
+            .contains(&camera_dist)
+        {
+            continue;
+        }
+        if anchor.chebyshev_distance(player_pos) < OFFSCREEN_REINFORCEMENT_MIN_DISTANCE - 4 {
+            continue;
+        }
+        if visible_tiles.is_some_and(|tiles| tiles.contains(&anchor)) {
+            continue;
+        }
+
+        let spawned = spawn_gang_group(
+            commands,
+            map,
+            player_pos,
+            anchor,
+            templates,
+            7,
+            18,
+            3,
+            OFFSCREEN_REINFORCEMENT_MAX_DISTANCE * OFFSCREEN_REINFORCEMENT_MAX_DISTANCE,
+            visible_tiles,
+        );
+        if spawned >= 4 {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Helper: spawns NPCs in faction groups distributed across the full map.
 /// Enemy gangs spawn all over roads and inside buildings within a 150-tile
 /// radius of the player, with many more groups than before.
@@ -732,6 +868,33 @@ fn do_spawn_monsters(commands: &mut Commands, map: &GameMapResource, seed: u64) 
             }
         }
     }
+}
+
+fn spawn_offscreen_reinforcements_system(
+    mut commands: Commands,
+    turn_counter: Res<TurnCounter>,
+    map: Res<GameMapResource>,
+    seed: Res<MapSeed>,
+    camera: Res<CameraPosition>,
+    player_query: Query<(&Position, &Viewshed), With<PlayerControlled>>,
+) {
+    if turn_counter.0 == 0 || !turn_counter.0.is_multiple_of(OFFSCREEN_REINFORCEMENT_INTERVAL) {
+        return;
+    }
+
+    let Ok((player_pos, viewshed)) = player_query.single() else {
+        return;
+    };
+
+    let _ = spawn_offscreen_reinforcement_group(
+        &mut commands,
+        &map,
+        seed.0,
+        turn_counter.0,
+        player_pos.as_grid_vec(),
+        camera.0,
+        Some(&viewshed.visible_tiles),
+    );
 }
 
 /// Bundles all mutable resources needed by `restart_system` into a single

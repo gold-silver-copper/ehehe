@@ -48,6 +48,7 @@ const EXPLOSIVE_MIN_RANGE: i32 = 4;
 const EXPLOSIVE_MAX_RANGE: i32 = 8;
 const BOW_MAX_RANGE: i32 = 14;
 const SCAN_CURSOR_DISTANCE: i32 = 6;
+const REVERSE_STEP_PENALTY: i32 = 160;
 
 const HASH_KNUTH: u64 = 2_654_435_761;
 const HASH_MIX_A: u64 = 0xff51afd7ed558ccd;
@@ -862,6 +863,32 @@ fn cursor_aligned_with_target(aim_delta: GridVec, target_delta: GridVec) -> bool
     cos_theta >= 0.8
 }
 
+#[inline]
+fn reverse_step_penalty(memory: Option<&AiMemory>, current_turn: u32, dir: GridVec) -> i32 {
+    let Some(memory) = memory else {
+        return 0;
+    };
+    if dir.is_zero() {
+        return 0;
+    }
+    if memory.last_move_turn + 1 == current_turn
+        && memory
+            .last_move_dir
+            .is_some_and(|last| last == GridVec::new(-dir.x, -dir.y))
+    {
+        REVERSE_STEP_PENALTY
+    } else {
+        0
+    }
+}
+
+fn record_move(memory: &mut Option<Mut<AiMemory>>, dir: GridVec, current_turn: u32) {
+    if let Some(memory) = memory.as_deref_mut() {
+        memory.last_move_dir = Some(dir);
+        memory.last_move_turn = current_turn;
+    }
+}
+
 fn count_hostiles_near(
     center: GridVec,
     radius: i32,
@@ -973,6 +1000,8 @@ fn flee_direction(
     game_map: &GameMapResource,
     spatial: &SpatialIndex,
     blockers: &Query<(), With<BlocksMovement>>,
+    memory: Option<&AiMemory>,
+    current_turn: u32,
 ) -> Option<GridVec> {
     let threat_map = dijkstra_map(&[threat_pos], |pos| {
         tile_cost_for_ai(pos, entity, game_map, spatial, blockers)
@@ -999,7 +1028,8 @@ fn flee_direction(
                 200
             } else {
                 0
-            };
+            }
+            - reverse_step_penalty(memory, current_turn, dir);
         if score > best_score {
             best_score = score;
             best_direction = Some(dir);
@@ -1018,6 +1048,8 @@ fn retreat_direction(
     blockers: &Query<(), With<BlocksMovement>>,
     sand_clouds: &HashSet<GridVec>,
     preserve_los: bool,
+    memory: Option<&AiMemory>,
+    current_turn: u32,
 ) -> Option<GridVec> {
     let mut best_direction = None;
     let mut best_score = i32::MIN;
@@ -1033,7 +1065,7 @@ fn retreat_direction(
         }
 
         let distance_score = candidate.chebyshev_distance(threat_pos) * 20;
-        let score = distance_score - tile_cost;
+        let score = distance_score - tile_cost - reverse_step_penalty(memory, current_turn, dir);
         if score > best_score {
             best_score = score;
             best_direction = Some(dir);
@@ -1051,69 +1083,63 @@ fn first_step_toward(
     spatial: &SpatialIndex,
     blockers: &Query<(), With<BlocksMovement>>,
     aggressive: bool,
+    memory: Option<&AiMemory>,
+    current_turn: u32,
 ) -> Option<GridVec> {
-    let direct = cardinal_step_toward(goal - start);
-    if !direct.is_zero() {
-        let next = start + direct;
-        let direct_cost = if aggressive {
+    let mut best = None;
+    let mut best_score = i32::MIN;
+
+    for dir in GridVec::DIRECTIONS_4 {
+        let next = start + dir;
+        let tile_cost = if aggressive {
             tile_cost_for_ai_chase(next, entity, game_map, spatial, blockers)
         } else {
             tile_cost_for_ai(next, entity, game_map, spatial, blockers)
         };
-        if direct_cost.is_some() {
-            return Some(direct);
+        let Some(tile_cost) = tile_cost else {
+            continue;
+        };
+        let distance_score = 240 - next.chebyshev_distance(goal) * 24;
+        let direct_bias = if dir == cardinal_step_toward(goal - start) {
+            28
+        } else {
+            0
+        };
+        let score = distance_score + direct_bias - tile_cost - reverse_step_penalty(memory, current_turn, dir);
+        if score > best_score {
+            best_score = score;
+            best = Some(dir);
         }
     }
 
-    let step = if aggressive {
-        a_star_first_step(start, goal, |pos| {
-            tile_cost_for_ai_chase(pos, entity, game_map, spatial, blockers)
-        })
-    } else {
-        a_star_first_step(start, goal, |pos| {
-            tile_cost_for_ai(pos, entity, game_map, spatial, blockers)
-        })
-    };
+    if let Some(step) = best {
+        return Some(step);
+    }
 
-    step.or_else(|| {
-        if direct.is_zero() {
-            None
-        } else {
-            let next = start + direct;
-            if (if aggressive {
-                tile_cost_for_ai_chase(next, entity, game_map, spatial, blockers)
-            } else {
-                tile_cost_for_ai(next, entity, game_map, spatial, blockers)
+    let mut best_fallback = None;
+    let mut best_fallback_score = i32::MIN;
+    for dir in GridVec::DIRECTIONS_4 {
+        let candidate_goal = goal + dir;
+        let step = if aggressive {
+            a_star_first_step(start, candidate_goal, |pos| {
+                tile_cost_for_ai_chase(pos, entity, game_map, spatial, blockers)
             })
-            .is_some()
-            {
-                Some(direct)
-            } else {
-                let mut fallback = None;
-                let mut fallback_dist = i32::MAX;
-                for dir in GridVec::DIRECTIONS_4 {
-                    let candidate_goal = goal + dir;
-                    let step = if aggressive {
-                        a_star_first_step(start, candidate_goal, |pos| {
-                            tile_cost_for_ai_chase(pos, entity, game_map, spatial, blockers)
-                        })
-                    } else {
-                        a_star_first_step(start, candidate_goal, |pos| {
-                            tile_cost_for_ai(pos, entity, game_map, spatial, blockers)
-                        })
-                    };
-                    if let Some(step) = step {
-                        let dist = (start + step).chebyshev_distance(goal);
-                        if dist < fallback_dist {
-                            fallback_dist = dist;
-                            fallback = Some(step);
-                        }
-                    }
-                }
-                fallback
-            }
+        } else {
+            a_star_first_step(start, candidate_goal, |pos| {
+                tile_cost_for_ai(pos, entity, game_map, spatial, blockers)
+            })
+        };
+        let Some(step) = step else {
+            continue;
+        };
+        let score = 200 - (start + step).chebyshev_distance(goal) * 20
+            - reverse_step_penalty(memory, current_turn, step);
+        if score > best_fallback_score {
+            best_fallback_score = score;
+            best_fallback = Some(step);
         }
-    })
+    }
+    best_fallback
 }
 
 fn flank_goal(entity: Entity, turn: u32, my_pos: GridVec, target_pos: GridVec) -> GridVec {
@@ -1133,16 +1159,27 @@ fn flank_goal(entity: Entity, turn: u32, my_pos: GridVec, target_pos: GridVec) -
 
 fn patrol_direction(
     entity: Entity,
-    turn: u32,
     my_pos: GridVec,
     origin: GridVec,
     game_map: &GameMapResource,
     spatial: &SpatialIndex,
     blockers: &Query<(), With<BlocksMovement>>,
+    memory: Option<&AiMemory>,
+    turn: u32,
 ) -> Option<GridVec> {
     let dist_from_origin = my_pos.chebyshev_distance(origin);
     if dist_from_origin > PATROL_RADIUS / 2 {
-        return first_step_toward(my_pos, origin, entity, game_map, spatial, blockers, false);
+        return first_step_toward(
+            my_pos,
+            origin,
+            entity,
+            game_map,
+            spatial,
+            blockers,
+            false,
+            memory,
+            turn,
+        );
     }
 
     let mut best_direction = None;
@@ -1159,7 +1196,8 @@ fn patrol_direction(
             continue;
         }
         let noise = (turn_hash(entity, turn, index as u64 + 0x9E37) % 13) as i32;
-        let score = noise * 3 - tile_cost - radius * 2;
+        let score =
+            noise * 3 - tile_cost - radius * 2 - reverse_step_penalty(memory, turn, dir);
         if score > best_score {
             best_score = score;
             best_direction = Some(dir);
@@ -1603,13 +1641,23 @@ pub fn ai_system(
 
         if let Some(fire_center) = nearest_fire_threat(my_pos, &game_map) {
             if let Some(dir) =
-                flee_direction(my_pos, fire_center, entity, &game_map, &spatial, &blockers)
+                flee_direction(
+                    my_pos,
+                    fire_center,
+                    entity,
+                    &game_map,
+                    &spatial,
+                    &blockers,
+                    ai_memory.as_deref(),
+                    current_turn,
+                )
             {
                 move_intents.write(MoveIntent {
                     entity,
                     dx: dir.x,
                     dy: dir.y,
                 });
+                record_move(&mut ai_memory, dir, current_turn);
                 orient_cursor(
                     &mut commands,
                     entity,
@@ -1687,13 +1735,23 @@ pub fn ai_system(
                         continue;
                     }
                     if let Some(dir) =
-                        flee_direction(my_pos, goal, entity, &game_map, &spatial, &blockers)
+                        flee_direction(
+                            my_pos,
+                            goal,
+                            entity,
+                            &game_map,
+                            &spatial,
+                            &blockers,
+                            ai_memory.as_deref(),
+                            current_turn,
+                        )
                     {
                         move_intents.write(MoveIntent {
                             entity,
                             dx: dir.x,
                             dy: dir.y,
                         });
+                        record_move(&mut ai_memory, dir, current_turn);
                         orient_cursor(
                             &mut commands,
                             entity,
@@ -1951,12 +2009,15 @@ pub fn ai_system(
                                 &blockers,
                                 &sand_cloud_tiles,
                                 target.visible,
+                                ai_memory.as_deref(),
+                                current_turn,
                             ) {
                                 move_intents.write(MoveIntent {
                                     entity,
                                     dx: dir.x,
                                     dy: dir.y,
                                 });
+                                record_move(&mut ai_memory, dir, current_turn);
                                 let desired_cursor = if target.visible { target_pos } else { my_pos + dir };
                                 orient_cursor(
                                     &mut commands,
@@ -1986,13 +2047,22 @@ pub fn ai_system(
                     };
 
                     if let Some(dir) = first_step_toward(
-                        my_pos, goal, entity, &game_map, &spatial, &blockers, true,
+                        my_pos,
+                        goal,
+                        entity,
+                        &game_map,
+                        &spatial,
+                        &blockers,
+                        true,
+                        ai_memory.as_deref(),
+                        current_turn,
                     ) {
                         move_intents.write(MoveIntent {
                             entity,
                             dx: dir.x,
                             dy: dir.y,
                         });
+                        record_move(&mut ai_memory, dir, current_turn);
                         let desired_cursor = if target.visible { target_pos } else { goal };
                         orient_cursor(
                             &mut commands,
@@ -2031,6 +2101,7 @@ pub fn ai_system(
                                     dx: dir.x,
                                     dy: dir.y,
                                 });
+                                record_move(&mut ai_memory, dir, current_turn);
                             }
                             if let Some(memory) = ai_memory.as_deref_mut() {
                                 rotate_cursor(
@@ -2077,13 +2148,22 @@ pub fn ai_system(
                         clear_engagement(&mut commands, entity);
                         *ai_state = AiState::Patrolling;
                     } else if let Some(dir) = first_step_toward(
-                        my_pos, goal, entity, &game_map, &spatial, &blockers, true,
+                        my_pos,
+                        goal,
+                        entity,
+                        &game_map,
+                        &spatial,
+                        &blockers,
+                        true,
+                        ai_memory.as_deref(),
+                        current_turn,
                     ) {
                         move_intents.write(MoveIntent {
                             entity,
                             dx: dir.x,
                             dy: dir.y,
                         });
+                        record_move(&mut ai_memory, dir, current_turn);
                         orient_cursor(
                             &mut commands,
                             entity,
@@ -2122,13 +2202,22 @@ pub fn ai_system(
                 if item_pos == my_pos {
                     pickup_intents.write(PickupItemIntent { picker: entity });
                 } else if let Some(dir) = first_step_toward(
-                    my_pos, item_pos, entity, &game_map, &spatial, &blockers, false,
+                    my_pos,
+                    item_pos,
+                    entity,
+                    &game_map,
+                    &spatial,
+                    &blockers,
+                    false,
+                    ai_memory.as_deref(),
+                    current_turn,
                 ) {
                     move_intents.write(MoveIntent {
                         entity,
                         dx: dir.x,
                         dy: dir.y,
                     });
+                    record_move(&mut ai_memory, dir, current_turn);
                     orient_cursor(
                         &mut commands,
                         entity,
@@ -2162,6 +2251,7 @@ pub fn ai_system(
                     dx: dir.x,
                     dy: dir.y,
                 });
+                record_move(&mut ai_memory, dir, current_turn);
             }
             if let Some(memory) = ai_memory.as_deref_mut() {
                 rotate_cursor(
@@ -2217,18 +2307,20 @@ pub fn ai_system(
         if let Some(origin) = patrol_origin.map(|origin| origin.0) {
             if let Some(dir) = patrol_direction(
                 entity,
-                current_turn,
                 my_pos,
                 origin,
                 &game_map,
                 &spatial,
                 &blockers,
+                ai_memory.as_deref(),
+                current_turn,
             ) {
                 move_intents.write(MoveIntent {
                     entity,
                     dx: dir.x,
                     dy: dir.y,
                 });
+                record_move(&mut ai_memory, dir, current_turn);
                 orient_cursor(
                     &mut commands,
                     entity,
