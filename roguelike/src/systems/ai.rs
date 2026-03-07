@@ -43,6 +43,7 @@ const FULL_ROTATION_STEPS: u8 = 8;
 const ROTATION_MOVE_INTERVAL: u8 = 2;
 const STUCK_FLANK_TURNS: u8 = 2;
 const ITEM_INTEREST_RANGE: i32 = 8;
+const FLEE_RECOVERY_FRACTION: f64 = 0.75;
 const EXPLOSIVE_MIN_RANGE: i32 = 4;
 const EXPLOSIVE_MAX_RANGE: i32 = 8;
 const BOW_MAX_RANGE: i32 = 14;
@@ -591,7 +592,7 @@ fn ensure_aiming_style(
         commands.entity(entity).insert(style);
         style
     } else {
-        current.expect("checked above")
+        current.unwrap_or_else(|| choose_aiming_style(entity, turn, personality))
     }
 }
 
@@ -886,6 +887,7 @@ fn flee_direction(
     });
 
     let my_distance = *threat_map.get(&my_pos).unwrap_or(&0);
+    let my_direct_distance = my_pos.chebyshev_distance(threat_pos);
     let mut best_direction = None;
     let mut best_score = i32::MIN;
 
@@ -898,7 +900,14 @@ fn flee_direction(
         let neighbor_distance = *threat_map
             .get(&neighbor)
             .unwrap_or(&(my_distance + cost::BASE * 4));
-        let score = neighbor_distance * 2 - tile_cost;
+        let direct_distance = neighbor.chebyshev_distance(threat_pos);
+        let score = neighbor_distance * 2 - tile_cost
+            + direct_distance * 20
+            + if direct_distance > my_direct_distance {
+                200
+            } else {
+                0
+            };
         if score > best_score {
             best_score = score;
             best_direction = Some(dir);
@@ -1027,7 +1036,8 @@ fn patrol_direction(
     spatial: &SpatialIndex,
     blockers: &Query<(), With<BlocksMovement>>,
 ) -> Option<GridVec> {
-    if my_pos.chebyshev_distance(origin) > PATROL_RADIUS {
+    let dist_from_origin = my_pos.chebyshev_distance(origin);
+    if dist_from_origin > PATROL_RADIUS / 2 {
         return first_step_toward(my_pos, origin, entity, game_map, spatial, blockers, false);
     }
 
@@ -1266,7 +1276,7 @@ pub fn ai_system(
 
     let mut faction_alerts: HashMap<Faction, Vec<GridVec>> = HashMap::new();
     for (
-        (entity, position, ai_state, _viewshed, _energy, faction, _look_dir, _origin),
+        (entity, _position, ai_state, _viewshed, _energy, faction, _look_dir, _origin),
         (_inventory, _health, _stamina, ai_memory, _personality, ai_target, _aiming_style, _cursor),
         _pursuit_boost,
     ) in &mut ai_query
@@ -1286,9 +1296,7 @@ pub fn ai_system(
             }
         });
         let target_from_memory = memory_goal(ai_memory.as_deref(), current_turn);
-        let fallback = Some(position.as_grid_vec());
-
-        if let Some(alert_pos) = target_from_component.or(target_from_memory).or(fallback) {
+        if let Some(alert_pos) = target_from_component.or(target_from_memory) {
             let _ = entity;
             faction_alerts.entry(faction).or_default().push(alert_pos);
         }
@@ -1362,6 +1370,7 @@ pub fn ai_system(
             &npc_overview,
         );
         let best_visible = select_priority_target(&visible_hostiles);
+        let visible_threat_pos = best_visible.map(|threat| threat.pos);
 
         let viewshed_range = viewshed_ref
             .map(|viewshed| viewshed.range as i32)
@@ -1511,10 +1520,15 @@ pub fn ai_system(
         }
 
         let should_retreat = should_flee(health_ref, has_heal, personality);
-        if should_retreat && objective.is_some() {
+        let keep_fleeing = matches!(*ai_state, AiState::Fleeing)
+            && objective.is_some()
+            && health_ref.is_some_and(|health| health.fraction() < FLEE_RECOVERY_FRACTION);
+        if (should_retreat || keep_fleeing) && objective.is_some() {
             *ai_state = AiState::Fleeing;
         } else if objective.is_some() {
             *ai_state = AiState::Chasing;
+        } else if matches!(*ai_state, AiState::Idle) {
+            *ai_state = AiState::Idle;
         } else {
             *ai_state = AiState::Patrolling;
         }
@@ -1533,7 +1547,21 @@ pub fn ai_system(
 
         match *ai_state {
             AiState::Fleeing => {
-                if let Some(goal) = objective {
+                if let Some(goal) = visible_threat_pos.or(objective) {
+                    let direct_away = (my_pos - goal).king_step();
+                    if !direct_away.is_zero()
+                        && tile_cost_for_ai(my_pos + direct_away, entity, &game_map, &spatial, &blockers)
+                            .is_some()
+                    {
+                        move_intents.write(MoveIntent {
+                            entity,
+                            dx: direct_away.x,
+                            dy: direct_away.y,
+                        });
+                        update_look_dir(direct_away, &mut ai_look_dir, &mut viewshed);
+                        energy.spend_action();
+                        continue;
+                    }
                     if let Some(dir) =
                         flee_direction(my_pos, goal, entity, &game_map, &spatial, &blockers)
                     {
@@ -1910,7 +1938,7 @@ pub fn ai_system(
             continue;
         }
 
-        if current_turn % look_interval(entity) == 0 {
+        if current_turn != 0 && current_turn % look_interval(entity) == 0 {
             rotate_look_dir(&mut ai_look_dir, &mut viewshed);
             energy.spend_action();
             continue;

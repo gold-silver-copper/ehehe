@@ -983,8 +983,10 @@ impl GameMap {
     /// After generation, structural verification checks are run. If any
     /// check fails, the map is regenerated with a modified seed (up to 10
     /// retries). In debug builds, panics if no valid map is produced.
+    #[allow(unused_assignments)]
     pub fn new(width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) -> Self {
         const MAX_RETRIES: u32 = 10;
+        #[allow(unused_variables)]
         let mut last_map = None;
         let mut last_reason = String::new();
         for attempt in 0..=MAX_RETRIES {
@@ -1018,7 +1020,7 @@ impl GameMap {
         );
         // In release builds, return the last attempt.
         #[allow(unreachable_code)]
-        last_map.unwrap()
+        last_map.unwrap_or_else(|| Self::generate_with_seed(width, height, seed).0)
     }
 
     /// Internal: run all generation phases with a specific seed.
@@ -1344,7 +1346,7 @@ impl GameMap {
                     && matches!(voxel.floor, Some(Floor::Bridge))
                 {
                     let dist = (x - target_x).abs();
-                    if best.is_none() || dist < best.unwrap().0 {
+                    if best.is_none_or(|(best_dist, _)| dist < best_dist) {
                         best = Some((dist, pos));
                     }
                 }
@@ -3979,10 +3981,18 @@ fn place_transition_zones(
     let trans_seed = seed.wrapping_add(121212);
 
     // Find the bounding box of the town
-    let town_min_x = buildings.iter().map(|b| b.x).min().unwrap();
-    let town_min_y = buildings.iter().map(|b| b.y).min().unwrap();
-    let town_max_x = buildings.iter().map(|b| b.x + b.w).max().unwrap();
-    let town_max_y = buildings.iter().map(|b| b.y + b.h).max().unwrap();
+    let Some(town_min_x) = buildings.iter().map(|b| b.x).min() else {
+        return;
+    };
+    let Some(town_min_y) = buildings.iter().map(|b| b.y).min() else {
+        return;
+    };
+    let Some(town_max_x) = buildings.iter().map(|b| b.x + b.w).max() else {
+        return;
+    };
+    let Some(town_max_y) = buildings.iter().map(|b| b.y + b.h).max() else {
+        return;
+    };
 
     let num_scatter = 12 + (value_noise(0, 0, trans_seed) * 8.0) as i32;
     for i in 0..num_scatter {
@@ -4428,7 +4438,7 @@ fn verify_world(
             let pos = GridVec::new(x, y);
             if let Some(v) = map.get_voxel_at(&pos) {
                 if v.props.is_some()
-                    && !v.props.as_ref().unwrap().is_wall()
+                    && v.props.as_ref().is_some_and(|prop| !prop.is_wall())
                     && matches!(v.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater))
                 {
                     return Err(format!("prop on water tile at ({},{})", x, y));

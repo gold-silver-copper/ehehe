@@ -1,11 +1,10 @@
 use bevy::prelude::*;
 
-use crate::components::{BlocksMovement, Health, PlayerControlled, Position, Stamina, Viewshed};
+use crate::components::{BlocksMovement, Health, PlayerControlled, Position, Viewshed};
 use crate::events::MoveIntent;
 use crate::grid_vec::GridVec;
 use crate::resources::{
-    BloodMap, CombatLog, CursorPosition, GameMapResource, GameState, InputState, SpatialIndex,
-    TurnCounter, TurnState,
+    BloodMap, CombatLog, CursorPosition, GameMapResource, GameState, SpatialIndex, TurnCounter,
 };
 /// Health threshold below which entities leave blood trails when moving.
 const BLOOD_DRIP_THRESHOLD: i32 = 40;

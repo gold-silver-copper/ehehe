@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    AiState, Caliber, CollectibleKind, CombatStats, Dead, Faction, Health, Inventory, Item,
-    ItemKind, LastDamageSource, LootTable, Name, PlayerControlled, Position, Renderable, Stamina,
-    display_name,
+    AiMemory, AiPursuitBoost, AiState, AiTarget, Caliber, CollectibleKind, CombatStats, Dead,
+    Faction, Health, Inventory, Item, ItemKind, LastDamageSource, LootTable, Name,
+    PlayerControlled, Position, Renderable, Stamina, display_name,
 };
 use crate::events::{
     AiRangedAttackIntent, AttackIntent, DamageEvent, MeleeWideIntent, RangedAttackIntent,
@@ -128,6 +128,7 @@ pub fn combat_system(
     faction_query: Query<(Option<&Faction>, Option<&Position>)>,
     npc_query: Query<(Entity, &Position, Option<&Faction>), Without<PlayerControlled>>,
     player_query: Query<Entity, With<PlayerControlled>>,
+    turn_counter: Res<TurnCounter>,
 ) {
     // Collect aggro events to apply after processing all intents
     let mut aggro_targets: Vec<(Entity, Entity, Option<GridVec>)> = Vec::new(); // (attacker, target, target_pos)
@@ -198,12 +199,15 @@ pub fn combat_system(
         aggro_targets.push((intent.attacker, intent.target, target_pos));
     }
 
-    // Apply aggro: propagate alert to nearby NPCs.
-    // Hostility is purely faction-based — no Hostile component needed.
+    // Apply aggro: nearby allies of the target should join the fight against the attacker.
     let _player_entity = player_query.single().ok();
     for (attacker, target, target_pos) in aggro_targets {
         // Get target's faction for propagation
         let target_faction = faction_query.get(target).ok().and_then(|(f, _)| f.copied());
+        let attacker_pos = faction_query
+            .get(attacker)
+            .ok()
+            .and_then(|(_, pos)| pos.map(|p| p.as_grid_vec()));
 
         if let Some(t_pos) = target_pos {
             const AGGRO_RADIUS: i32 = 8;
@@ -217,9 +221,26 @@ pub fn combat_system(
                 }
 
                 if let Some(&nf) = nearby_fac {
-                    if !target_faction.is_some_and(|tf| tf == nf) {
-                        // Different faction: start fleeing
-                        commands.entity(nearby_ent).insert(AiState::Fleeing);
+                    if target_faction.is_some_and(|tf| tf == nf) {
+                        let last_pos = attacker_pos.unwrap_or(t_pos);
+                        commands.entity(nearby_ent).insert((
+                            AiState::Chasing,
+                            AiTarget {
+                                entity: attacker,
+                                last_pos,
+                                last_seen: turn_counter.0,
+                                locked: false,
+                            },
+                            AiMemory {
+                                last_known_pos: Some(last_pos),
+                                last_seen_turn: turn_counter.0,
+                                ..Default::default()
+                            },
+                            AiPursuitBoost {
+                                extra_range: 8,
+                                last_spotted_turn: turn_counter.0,
+                            },
+                        ));
                     }
                 }
             }
@@ -242,15 +263,21 @@ pub fn apply_damage_system(
     seed: Res<crate::resources::MapSeed>,
 ) {
     let player_entity = player_query.single().ok();
-    for event in events.read() {
+    for (event_index, event) in events.read().enumerate() {
         // God mode: skip damage to the player.
         if god_mode.0 && player_entity == Some(event.target) {
             continue;
         }
         if let Ok(mut health) = health_query.get_mut(event.target) {
             // 1d3 variance: roll [0.0, 1.0), map to {-3,-2,-1,+1,+2,+3}
-            let roll =
-                dynamic_rng.roll(seed.0, event.target.to_bits() ^ event.amount as u64 ^ 0xDA3);
+            let source_bits = event.source.map(Entity::to_bits).unwrap_or(0);
+            let roll = dynamic_rng.roll(
+                seed.0,
+                event.target.to_bits()
+                    ^ source_bits.rotate_left(11)
+                    ^ (event.amount as u64).rotate_left(23)
+                    ^ (event_index as u64).wrapping_mul(0x9E37_79B9),
+            );
             let variance = if roll < 0.5 {
                 // Negative: map [0, 0.5) → {-3, -2, -1}
                 -((roll * 6.0) as i32 + 1).min(3)
@@ -258,7 +285,11 @@ pub fn apply_damage_system(
                 // Positive: map [0.5, 1.0) → {1, 2, 3}
                 (((roll - 0.5) * 6.0) as i32 + 1).min(3)
             };
-            let final_damage = (event.amount + variance).max(0);
+            let final_damage = if event.amount > 0 {
+                (event.amount + variance).max(1)
+            } else {
+                0
+            };
             health.apply_damage(final_damage);
             if let Some(source) = event.source {
                 commands

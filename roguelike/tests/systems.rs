@@ -36,7 +36,6 @@ fn test_app() -> App {
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
-    app.init_resource::<roguelike::resources::StarLevel>();
     app.init_resource::<roguelike::resources::PropHealth>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
@@ -647,7 +646,6 @@ fn test_app_with_spells() -> App {
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
-    app.init_resource::<roguelike::resources::StarLevel>();
     app.init_resource::<roguelike::resources::PropHealth>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
@@ -1162,7 +1160,6 @@ fn test_app_with_ranged() -> App {
     app.init_resource::<DynamicRng>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
-    app.init_resource::<roguelike::resources::StarLevel>();
     app.init_resource::<roguelike::resources::PropHealth>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_state::<GameState>();
@@ -1959,7 +1956,6 @@ fn test_app_with_ai() -> App {
     app.init_resource::<TurnCounter>();
     app.init_resource::<InputState>();
     app.init_resource::<GodMode>();
-    app.init_resource::<roguelike::resources::StarLevel>();
     app.init_resource::<roguelike::resources::PropHealth>();
     app.init_resource::<SpectatingAfterDeath>();
     app.init_resource::<DynamicRng>();
@@ -2894,10 +2890,10 @@ fn sand_throw_costs_less_stamina_than_grenade() {
     app.update();
 
     let stamina = app.world().get::<Stamina>(player).unwrap();
-    // Sand throw costs 5, grenade costs 10
+    // Sand throw costs 8, grenade costs 10
     assert_eq!(
-        stamina.current, 45,
-        "Sand throw should cost 5 stamina, current is {}",
+        stamina.current, 42,
+        "Sand throw should cost 8 stamina, current is {}",
         stamina.current
     );
 }
@@ -3341,7 +3337,7 @@ fn multiple_kills_increment_count() {
 
 #[test]
 fn collectibles_can_reload_with_supplies() {
-    let c = Collectibles::default();
+    let c = Collectibles::for_starting_caliber(Caliber::Cal31);
     assert!(
         c.can_reload(Caliber::Cal31),
         "Should be able to reload with starting supplies"
