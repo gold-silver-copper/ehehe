@@ -1281,6 +1281,57 @@ impl GameMap {
         None
     }
 
+    /// Finds an interior tile likely belonging to the jail near the town
+    /// center. Jail interiors are stone-floored, adjacent to stone walls, and
+    /// near both barrels and signage from the jail furnishing pass.
+    pub fn find_jail_interior(&self, center: GridVec, radius: i32) -> Option<GridVec> {
+        for r in 0..=radius {
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    if dx.abs() != r && dy.abs() != r {
+                        continue;
+                    }
+                    let pos = center + GridVec::new(dx, dy);
+                    let Some(voxel) = self.get_voxel_at(&pos) else {
+                        continue;
+                    };
+                    if voxel.props.is_some() || !matches!(voxel.floor, Some(Floor::StoneFloor)) {
+                        continue;
+                    }
+
+                    let has_stone_wall = pos.cardinal_neighbors().iter().any(|n| {
+                        self.get_voxel_at(n).is_some_and(|v| {
+                            matches!(v.props, Some(Props::StoneWall))
+                        })
+                    });
+                    if !has_stone_wall {
+                        continue;
+                    }
+
+                    let mut nearby_barrels = 0;
+                    let mut nearby_sign = false;
+                    for sy in -3..=3 {
+                        for sx in -3..=3 {
+                            let sample = pos + GridVec::new(sx, sy);
+                            if let Some(sample_voxel) = self.get_voxel_at(&sample) {
+                                match sample_voxel.props {
+                                    Some(Props::Barrel) => nearby_barrels += 1,
+                                    Some(Props::Sign) => nearby_sign = true,
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+
+                    if nearby_barrels >= 2 && nearby_sign {
+                        return Some(pos);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Finds a Bridge tile near the horizontal center of the map.
     /// Returns a point on the bridge closest to `width / 2`.
     pub fn find_bridge_center(&self) -> Option<GridVec> {
@@ -1772,6 +1823,41 @@ fn pre_place_landmark_anchors(
         h: 10,
         kind: 6,
     });
+
+    // Jail near the river and town center. This is the player's guaranteed
+    // starting prison, so keep it central and close to the river corridor.
+    let jail_w: CoordinateUnit = 14;
+    let jail_h: CoordinateUnit = 12;
+    let river_x = width / 2;
+    let jail_candidates = [
+        (
+            (river_x + 8).clamp(6, width - jail_w - 6),
+            (center_y - 6).clamp(8, height - jail_h - 8),
+        ),
+        (
+            (river_x - jail_w - 8).clamp(6, width - jail_w - 6),
+            (center_y - 4).clamp(8, height - jail_h - 8),
+        ),
+        (
+            (river_x + 10).clamp(6, width - jail_w - 6),
+            (center_y + 6).clamp(8, height - jail_h - 8),
+        ),
+    ];
+    for (jx, jy) in jail_candidates {
+        if anchors
+            .iter()
+            .all(|b| !rects_overlap(jx, jy, jail_w, jail_h, b.x, b.y, b.w, b.h))
+        {
+            anchors.push(Building {
+                x: jx,
+                y: jy,
+                w: jail_w,
+                h: jail_h,
+                kind: 9,
+            });
+            break;
+        }
+    }
 
     anchors
 }
@@ -5577,9 +5663,20 @@ fn place_gunpowder_barrels(
 /// Clears all props within a given radius of a point and replaces water
 /// floors with Dirt so the area is walkable.
 pub fn clear_around(map: &mut GameMap, center: GridVec, radius: CoordinateUnit) {
+    clear_around_collect_walls(map, center, radius);
+}
+
+/// Clears all props within a given radius and returns any wall tiles that were
+/// removed in the process. Used to drive the player's opening breach effect.
+pub fn clear_around_collect_walls(
+    map: &mut GameMap,
+    center: GridVec,
+    radius: CoordinateUnit,
+) -> Vec<GridVec> {
     let radius_sq = radius * radius;
     let map_width = map.width;
     let map_height = map.height;
+    let mut removed_walls = Vec::new();
     for dy in -radius..=radius {
         for dx in -radius..=radius {
             let pos = center + GridVec::new(dx, dy);
@@ -5590,6 +5687,9 @@ pub fn clear_around(map: &mut GameMap, center: GridVec, radius: CoordinateUnit) 
                 let is_border =
                     pos.x == 0 || pos.y == 0 || pos.x == map_width - 1 || pos.y == map_height - 1;
                 if !is_border {
+                    if matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall)) {
+                        removed_walls.push(pos);
+                    }
                     voxel.props = None;
                     // Replace water/beach with dirt so the area is walkable
                     if matches!(
@@ -5605,6 +5705,7 @@ pub fn clear_around(map: &mut GameMap, center: GridVec, radius: CoordinateUnit) 
             }
         }
     }
+    removed_walls
 }
 
 impl Default for GameMap {

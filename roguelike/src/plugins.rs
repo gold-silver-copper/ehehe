@@ -19,7 +19,8 @@ use crate::noise::value_noise;
 use crate::resources::{
     BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks,
     GameMapResource, GameState, InputState, KillCount, MapSeed, RestartRequested, SoundEvents,
-    SpatialIndex, SpectatingAfterDeath, SpellParticles, TurnCounter, TurnState,
+    SpatialIndex, SpectatingAfterDeath, SpellParticles, StartupExplosionPending, TurnCounter,
+    TurnState,
     WindowedKeyRepeat,
 };
 use crate::systems::spawn::MONSTER_TEMPLATES;
@@ -79,7 +80,8 @@ impl Plugin for RoguelikePlugin {
         // Must match the spawn logic in do_spawn_player().
         let center = GridVec::new(game_map.width / 2, game_map.height / 2);
         let player_spawn = game_map
-            .find_building_interior(center, 40)
+            .find_jail_interior(center, 48)
+            .or_else(|| game_map.find_building_interior(center, 40))
             .or_else(|| game_map.find_spawnable_near(center, 20))
             .unwrap_or(GridVec::new(SPAWN_X, SPAWN_Y));
 
@@ -111,6 +113,7 @@ impl Plugin for RoguelikePlugin {
             .init_resource::<SpellParticles>()
             .init_resource::<InputState>()
             .init_resource::<RestartRequested>()
+            .init_resource::<StartupExplosionPending>()
             .init_resource::<WindowedKeyRepeat>()
             .insert_resource(CursorPosition::at(player_spawn))
             .init_resource::<Collectibles>()
@@ -151,6 +154,7 @@ struct InputPlugin;
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(PreUpdate, input::input_system)
+            .add_systems(PreUpdate, play_startup_explosion_smoke.after(input::input_system))
             .add_systems(PreUpdate, restart_system);
     }
 }
@@ -268,9 +272,11 @@ fn spawn_player(
     mut commands: Commands,
     mut map: ResMut<GameMapResource>,
     mut collectibles: ResMut<Collectibles>,
+    mut startup_explosion_pending: ResMut<StartupExplosionPending>,
 ) {
-    let caliber = do_spawn_player(&mut commands, &mut map);
+    let (caliber, _spawn_pos, breach_tiles) = do_spawn_player(&mut commands, &mut map);
     *collectibles = Collectibles::for_starting_caliber(caliber);
+    startup_explosion_pending.breach_tiles = breach_tiles;
 }
 
 /// Spawns monsters on passable tiles using deterministic noise placement.
@@ -283,17 +289,21 @@ fn spawn_monsters(mut commands: Commands, map: Res<GameMapResource>, seed: Res<M
 /// Helper: spawns the player entity.
 /// Returns the caliber of the player's starting gun so collectibles can be
 /// initialized with matching ammo.
-fn do_spawn_player(commands: &mut Commands, map: &mut GameMapResource) -> Caliber {
+fn do_spawn_player(
+    commands: &mut Commands,
+    map: &mut GameMapResource,
+) -> (Caliber, GridVec, Vec<GridVec>) {
     // Spawn the player inside a building near the center of the map.
     let center = GridVec::new(map.0.width / 2, map.0.height / 2);
     let spawn_pos = map
         .0
-        .find_building_interior(center, 40)
+        .find_jail_interior(center, 48)
+        .or_else(|| map.0.find_building_interior(center, 40))
         .or_else(|| map.0.find_spawnable_near(center, 20))
         .unwrap_or(center);
 
     // Clear props directly around the player spawn so they don't start blocked.
-    crate::gamemap::clear_around(&mut map.0, spawn_pos, 3);
+    let breach_tiles = crate::gamemap::clear_around_collect_walls(&mut map.0, spawn_pos, 3);
 
     // Use spawn position as seed for deterministic randomization.
     let rng_seed = (spawn_pos.x.wrapping_mul(7919) ^ spawn_pos.y.wrapping_mul(6271)) as u32;
@@ -566,7 +576,48 @@ fn do_spawn_player(commands: &mut Commands, map: &mut GameMapResource) -> Calibe
         "Starting ammo caliber must match the player's starting gun caliber"
     );
 
-    caliber
+    (caliber, spawn_pos, breach_tiles)
+}
+
+fn add_start_breach_effect(spell_particles: &mut SpellParticles, breach_tiles: &[GridVec]) {
+    for &origin in breach_tiles {
+        for &(dx, dy, life, delay, vx, vy, is_smoke) in &[
+            (0, 0, 7, 0, 0, 0, false),
+            (-1, 0, 6, 0, -1, 0, false),
+            (1, 0, 6, 0, 1, 0, false),
+            (0, 1, 6, 1, 0, 1, false),
+            (0, -1, 5, 1, 0, -1, false),
+            (-1, 1, 22, 0, -1, 1, true),
+            (0, 1, 28, 0, 0, 1, true),
+            (1, 1, 22, 0, 1, 1, true),
+            (-2, 1, 26, 1, -1, 1, true),
+            (2, 1, 26, 1, 1, 1, true),
+            (-1, 2, 30, 2, -1, 1, true),
+            (0, 2, 34, 3, 0, 1, true),
+            (1, 2, 30, 2, 1, 1, true),
+            (-2, 2, 24, 4, -1, 1, true),
+            (2, 2, 24, 4, 1, 1, true),
+            (-1, 0, 20, 1, -1, 0, true),
+            (1, 0, 20, 1, 1, 0, true),
+        ] {
+            spell_particles
+                .particles
+                .push((origin + GridVec::new(dx, dy), life, delay, is_smoke, vx, vy));
+        }
+    }
+}
+
+fn play_startup_explosion_smoke(
+    input_state: Res<InputState>,
+    mut pending: ResMut<StartupExplosionPending>,
+    mut spell_particles: ResMut<SpellParticles>,
+) {
+    if pending.breach_tiles.is_empty() || input_state.welcome_visible {
+        return;
+    }
+
+    add_start_breach_effect(&mut spell_particles, &pending.breach_tiles);
+    pending.breach_tiles.clear();
 }
 
 /// Helper: spawns NPCs in faction groups distributed across the full map.
@@ -661,6 +712,7 @@ struct RestartResources<'w> {
     kill_count: ResMut<'w, KillCount>,
     turn_counter: ResMut<'w, TurnCounter>,
     spell_particles: ResMut<'w, SpellParticles>,
+    startup_explosion_pending: ResMut<'w, StartupExplosionPending>,
     input_state: ResMut<'w, InputState>,
     next_game_state: ResMut<'w, NextState<GameState>>,
     seed: ResMut<'w, MapSeed>,
@@ -709,7 +761,8 @@ fn restart_system(
     let player_spawn = res
         .game_map
         .0
-        .find_building_interior(center, 40)
+        .find_jail_interior(center, 48)
+        .or_else(|| res.game_map.0.find_building_interior(center, 40))
         .or_else(|| res.game_map.0.find_spawnable_near(center, 20))
         .unwrap_or(GridVec::new(SPAWN_X, SPAWN_Y));
     res.camera.0 = player_spawn;
@@ -724,12 +777,14 @@ fn restart_system(
     res.prop_health.hp.clear();
     res.death_fade.frames = 0;
     res.next_game_state.set(GameState::Playing);
+    res.startup_explosion_pending.breach_tiles.clear();
 
     #[cfg(feature = "windowed")]
     res.key_repeat.held.clear();
 
-    let caliber = do_spawn_player(&mut commands, &mut res.game_map);
+    let (caliber, _spawn_pos, breach_tiles) = do_spawn_player(&mut commands, &mut res.game_map);
     *res.collectibles = Collectibles::for_starting_caliber(caliber);
+    res.startup_explosion_pending.breach_tiles = breach_tiles;
     do_spawn_monsters(&mut commands, &res.game_map, res.seed.0);
 }
 

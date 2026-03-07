@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::components::{
     AiState, Caliber, CollectibleKind, CombatStats, Dead, Faction, Health, Inventory, Item,
-    ItemKind, LastDamageSource, LootTable, Name, PlayerControlled, Position, Renderable,
+    ItemKind, LastDamageSource, LootTable, Name, PlayerControlled, Position, Renderable, Stamina,
     display_name,
 };
 use crate::events::{
@@ -676,11 +676,15 @@ pub fn ai_ranged_attack_system(
 ///
 /// Minimum prop damage per kick to ensure weak kicks still damage props.
 const MIN_PROP_DAMAGE: i32 = 5;
+const ROUNDHOUSE_STAMINA_COST: i32 = 10;
 pub fn melee_wide_system(
     _commands: Commands,
     mut intents: MessageReader<MeleeWideIntent>,
     mut damage_events: MessageWriter<DamageEvent>,
-    attacker_query: Query<(&Position, &CombatStats, Option<&Name>), With<PlayerControlled>>,
+    mut attacker_query: Query<
+        (&Position, &CombatStats, Option<&Name>, Option<&mut Stamina>),
+        With<PlayerControlled>,
+    >,
     mut targets: Query<
         (Entity, &mut Position, Option<&Name>, Option<&Health>),
         Without<PlayerControlled>,
@@ -693,10 +697,17 @@ pub fn melee_wide_system(
     turn_counter: Res<TurnCounter>,
 ) {
     for intent in intents.read() {
-        let Ok((attacker_pos, attacker_stats, attacker_name)) = attacker_query.get(intent.attacker)
+        let Ok((attacker_pos, attacker_stats, attacker_name, attacker_stamina)) =
+            attacker_query.get_mut(intent.attacker)
         else {
             continue;
         };
+        if let Some(mut stamina) = attacker_stamina
+            && !stamina.spend(ROUNDHOUSE_STAMINA_COST)
+        {
+            combat_log.push("Not enough stamina for roundhouse!".into());
+            continue;
+        }
         let origin = attacker_pos.as_grid_vec();
         let a_name = display_name(attacker_name);
         let damage = attacker_stats.damage_against();

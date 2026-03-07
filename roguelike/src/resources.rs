@@ -469,6 +469,21 @@ impl BloodMap {
 #[derive(Resource, Debug, Default)]
 pub struct RestartRequested(pub bool);
 
+/// Wall tiles destroyed to create the player's starting breach. The opening
+/// effect is deferred until the welcome overlay is dismissed.
+#[derive(Resource, Debug)]
+pub struct StartupExplosionPending {
+    pub breach_tiles: Vec<GridVec>,
+}
+
+impl Default for StartupExplosionPending {
+    fn default() -> Self {
+        Self {
+            breach_tiles: Vec::new(),
+        }
+    }
+}
+
 /// Tracks held keys in windowed mode so repeated input can emulate terminal
 /// autorepeat: immediate first press, short delay, then steady repeats.
 #[derive(Resource, Debug)]

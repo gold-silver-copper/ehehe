@@ -2,11 +2,12 @@ use bevy::prelude::*;
 
 use crate::components::{
     CollectibleKind, Dead, Health, Inventory, Item, ItemKind, Name, PlayerControlled, Position,
-    item_display_name,
+    Stamina, item_display_name,
 };
 use crate::events::{PickupItemIntent, ThrowItemIntent, UseItemIntent};
 use crate::grid_vec::GridVec;
 use crate::resources::{Collectibles, CombatLog, InputState, SpatialIndex};
+use crate::systems::input::THROW_ITEM_STAMINA_COST;
 
 /// Maximum inventory capacity (unified for players and NPCs).
 pub const MAX_INVENTORY_SLOTS: usize = 9;
@@ -285,14 +286,21 @@ pub fn auto_pickup_system(
 pub fn throw_system(
     mut intents: MessageReader<ThrowItemIntent>,
     mut commands: Commands,
-    mut inventory_query: Query<(&mut Inventory, &Position), With<PlayerControlled>>,
+    mut inventory_query: Query<(&mut Inventory, &Position, Option<&mut Stamina>), With<PlayerControlled>>,
     mut combat_log: ResMut<CombatLog>,
     name_query: Query<Option<&Name>>,
 ) {
     for intent in intents.read() {
-        let Ok((mut inv, player_pos)) = inventory_query.single_mut() else {
+        let Ok((mut inv, player_pos, stamina)) = inventory_query.single_mut() else {
             continue;
         };
+
+        if let Some(mut stamina) = stamina
+            && !stamina.spend(THROW_ITEM_STAMINA_COST)
+        {
+            combat_log.push("Not enough stamina to throw!".into());
+            continue;
+        }
 
         // Remove from inventory
         if let Some(idx) = inv.items.iter().position(|&e| e == intent.item_entity) {

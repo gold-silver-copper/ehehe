@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 use bevy_ratatui::RatatuiContext;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
@@ -20,12 +21,14 @@ use crate::systems::input::KEYBINDINGS;
 use crate::systems::visibility::NPC_PROXIMITY_RADIUS;
 use crate::typedefs::{CoordinateUnit, MyPoint, RatColor};
 
+const UI_BG: Color = Color::Black;
+
 /// Lifetime (in frames) for combat particle animations.
 /// Must match the lifetime used in spell.rs when creating particles.
 const PARTICLE_LIFETIME: f32 = 8.0;
 
 /// Maximum expected lifetime for smoke particles, used to normalize intensity.
-const SMOKE_PARTICLE_MAX_LIFETIME: f32 = 10.0;
+const SMOKE_PARTICLE_MAX_LIFETIME: f32 = 34.0;
 
 /// Minimum intensity for explosion particles so they remain visible.
 const MIN_EXPLOSION_INTENSITY: f32 = 0.15;
@@ -385,30 +388,38 @@ pub fn draw_system(
                 if visible {
                     let bg = render_packet[screen.y as usize][screen.x as usize].2;
                     if *is_sand {
-                        // Smoke plume: particles fade through different symbols
-                        // as they drift and dissipate, creating a visible plume effect.
+                        // Smoke plume: gray billows that linger longer than the
+                        // opening flash so a breached wall reads as smoke, not
+                        // just a brief spark burst.
                         let intensity =
                             (*lifetime as f32 / SMOKE_PARTICLE_MAX_LIFETIME).clamp(0.2, 1.0);
-                        let (symbol, r, g, b) = if *lifetime > 6 {
+                        let (symbol, r, g, b) = if *lifetime > 18 {
                             (
-                                "*",
-                                (220.0 * intensity) as u8,
+                                "@",
                                 (190.0 * intensity) as u8,
-                                (130.0 * intensity) as u8,
+                                (190.0 * intensity) as u8,
+                                (190.0 * intensity) as u8,
                             )
-                        } else if *lifetime > 3 {
+                        } else if *lifetime > 10 {
+                            (
+                                "o",
+                                (160.0 * intensity) as u8,
+                                (160.0 * intensity) as u8,
+                                (165.0 * intensity) as u8,
+                            )
+                        } else if *lifetime > 5 {
                             (
                                 "*",
-                                (180.0 * intensity) as u8,
-                                (150.0 * intensity) as u8,
-                                (100.0 * intensity) as u8,
+                                (125.0 * intensity) as u8,
+                                (125.0 * intensity) as u8,
+                                (130.0 * intensity) as u8,
                             )
                         } else {
                             (
-                                "*",
-                                (120.0 * intensity) as u8,
-                                (100.0 * intensity) as u8,
-                                (70.0 * intensity) as u8,
+                                ".",
+                                (90.0 * intensity) as u8,
+                                (90.0 * intensity) as u8,
+                                (95.0 * intensity) as u8,
                             )
                         };
                         render_packet[screen.y as usize][screen.x as usize] =
@@ -549,15 +560,13 @@ pub fn draw_system(
             }
         }
 
-        // ── Death darkening effect ─────────────────────────────────
-        // When the player is dead, tint the entire map background dark
-        // red and darken tiles in a circle around the player — the further
-        // a tile is from the player, the darker it becomes.
-        // The effect fades in gradually over ~120 frames (~2 seconds at 60 FPS).
+        // ── Death tint effect ──────────────────────────────────────
+        // When the player dies, apply a restrained red wash instead of
+        // a heavy blackout so the player can still watch the map.
         let player_is_dead = player_hp.is_some_and(|hp| hp.is_dead());
         if player_is_dead {
             death_fade.frames = death_fade.frames.saturating_add(1);
-            let fade = (death_fade.frames as f32 / DEATH_FADE_FRAMES as f32).min(1.0);
+            let fade = (death_fade.frames as f32 / DEATH_FADE_FRAMES as f32).min(1.0) * 0.35;
 
             let player_screen = player_world_pos.map(|pw| pw - bottom_left);
             for (screen_y, row) in render_packet.iter_mut().enumerate() {
@@ -572,24 +581,21 @@ pub fn draw_system(
                         40
                     };
 
-                    // Darkening factor: 1.0 at player, 0.0 at ≥ DEATH_DARK_RADIUS.
-                    const DEATH_DARK_RADIUS: i32 = 20;
-                    let factor = 1.0 - (dist as f32 / DEATH_DARK_RADIUS as f32).min(1.0);
+                    // Strongest near the player, but never fades to black.
+                    const DEATH_TINT_RADIUS: i32 = 18;
+                    let focus = 1.0 - (dist as f32 / DEATH_TINT_RADIUS as f32).min(1.0);
+                    let tint = fade * (0.65 + focus * 0.35);
 
-                    // Tint both fg and bg toward dark red, scaled by fade.
-                    // Dark red base: (80, 0, 0).
                     if let RatColor::Rgb(r, g, b) = cell.1 {
-                        let nr = ((r as f32 * (1.0 - fade + fade * factor)) as u8)
-                            .max((80.0 * fade * (1.0 - factor)) as u8);
-                        let ng = (g as f32 * (1.0 - fade + fade * factor * 0.3)) as u8;
-                        let nb = (b as f32 * (1.0 - fade + fade * factor * 0.3)) as u8;
+                        let nr = ((r as f32 * (1.0 - tint * 0.08)) + 36.0 * tint) as u8;
+                        let ng = (g as f32 * (1.0 - tint * 0.22)) as u8;
+                        let nb = (b as f32 * (1.0 - tint * 0.18)) as u8;
                         cell.1 = RatColor::Rgb(nr, ng, nb);
                     }
                     if let RatColor::Rgb(r, g, b) = cell.2 {
-                        let nr = ((r as f32 * (1.0 - fade + fade * factor)) as u8)
-                            .max((80.0 * fade * (1.0 - factor)) as u8);
-                        let ng = (g as f32 * (1.0 - fade + fade * factor * 0.3)) as u8;
-                        let nb = (b as f32 * (1.0 - fade + fade * factor * 0.3)) as u8;
+                        let nr = ((r as f32 * (1.0 - tint * 0.10)) + 28.0 * tint) as u8;
+                        let ng = (g as f32 * (1.0 - tint * 0.28)) as u8;
+                        let nb = (b as f32 * (1.0 - tint * 0.24)) as u8;
                         cell.2 = RatColor::Rgb(nr, ng, nb);
                     }
                 }
@@ -614,9 +620,8 @@ pub fn draw_system(
         render_lines.reverse();
 
         let game_bg = if player_is_dead {
-            let fade = (death_fade.frames as f32 / DEATH_FADE_FRAMES as f32).min(1.0);
-            let r = (80.0 * fade) as u8;
-            RatColor::Rgb(r, 0, 0) // gradually darken to dark red when dead
+            let fade = (death_fade.frames as f32 / DEATH_FADE_FRAMES as f32).min(1.0) * 0.25;
+            RatColor::Rgb((18.0 * fade) as u8, 0, 0)
         } else {
             RatColor::Black
         };
@@ -865,7 +870,13 @@ fn render_bottom_panel(
         } else {
             log_lines
         })
-        .block(Block::default().borders(Borders::ALL).title(title))
+        .style(Style::default().bg(UI_BG))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .style(Style::default().bg(UI_BG)),
+        )
         .wrap(Wrap { trim: true }),
         log_area,
     );
@@ -908,49 +919,48 @@ fn render_stats_column(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Stats")
+                .style(Style::default().bg(UI_BG))
                 .inner(area),
         );
 
-    frame.render_widget(Block::default().borders(Borders::ALL).title("Stats"), area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Stats")
+            .style(Style::default().bg(UI_BG)),
+        area,
+    );
 
     // HP
     if let Some(hp) = player_hp {
-        let ratio = if hp.max > 0 {
-            (hp.current as f64 / hp.max as f64).clamp(0.0, 1.0)
+        let percent = if hp.max > 0 {
+            ((hp.current.max(0) as f64 / hp.max as f64) * 100.0).round() as u16
         } else {
-            0.0
+            0
         };
         let gauge = Gauge::default()
-            .gauge_style(
-                ratatui::style::Style::default()
-                    .fg(ratatui::style::Color::Red)
-                    .bg(ratatui::style::Color::DarkGray),
-            )
-            .ratio(ratio)
+            .gauge_style(Style::default().fg(Color::Red).bg(Color::DarkGray))
+            .percent(percent.min(100))
             .label(
                 Span::from(format!("HP {}/{}", hp.current, hp.max))
-                    .style(ratatui::style::Style::default().fg(ratatui::style::Color::White)),
+                    .style(Style::default().fg(Color::White)),
             );
         frame.render_widget(gauge, chunks[0]);
     }
 
     // Stamina
     if let Some(stamina) = player_stamina {
-        let ratio = if stamina.max > 0 {
-            (stamina.current as f64 / stamina.max as f64).clamp(0.0, 1.0)
+        let percent = if stamina.max > 0 {
+            ((stamina.current.max(0) as f64 / stamina.max as f64) * 100.0).round() as u16
         } else {
-            0.0
+            0
         };
         let gauge = Gauge::default()
-            .gauge_style(
-                ratatui::style::Style::default()
-                    .fg(ratatui::style::Color::Blue)
-                    .bg(ratatui::style::Color::DarkGray),
-            )
-            .ratio(ratio)
+            .gauge_style(Style::default().fg(Color::Blue).bg(Color::DarkGray))
+            .percent(percent.min(100))
             .label(
                 Span::from(format!("STA {}/{}", stamina.current, stamina.max))
-                    .style(ratatui::style::Style::default().fg(ratatui::style::Color::White)),
+                    .style(Style::default().fg(Color::White)),
             );
         frame.render_widget(gauge, chunks[1]);
     }
@@ -968,9 +978,18 @@ fn render_stats_column(
         ".58:{} .577:{} .69:{}",
         collectibles.bullets_58, collectibles.bullets_577, collectibles.bullets_69,
     );
-    frame.render_widget(Paragraph::new(Line::from(row1).dark_gray()), chunks[2]);
-    frame.render_widget(Paragraph::new(Line::from(row2).dark_gray()), chunks[3]);
-    frame.render_widget(Paragraph::new(Line::from(row3).dark_gray()), chunks[4]);
+    frame.render_widget(
+        Paragraph::new(Line::from(row1).white()).style(Style::default().bg(UI_BG)),
+        chunks[2],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(row2).white()).style(Style::default().bg(UI_BG)),
+        chunks[3],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(row3).white()).style(Style::default().bg(UI_BG)),
+        chunks[4],
+    );
 }
 
 /// Renders the cursor info panel as a two-column display.
@@ -991,8 +1010,15 @@ fn render_cursor_info(
     let inner = Block::default()
         .borders(Borders::ALL)
         .title("Cursor")
+        .style(Style::default().bg(UI_BG))
         .inner(area);
-    frame.render_widget(Block::default().borders(Borders::ALL).title("Cursor"), area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Cursor")
+            .style(Style::default().bg(UI_BG)),
+        area,
+    );
 
     // Split into two columns
     let cols = Layout::default()
@@ -1038,7 +1064,10 @@ fn render_cursor_info(
         }
     }
     left_lines.truncate(max_lines);
-    frame.render_widget(Paragraph::new(left_lines), cols[0]);
+    frame.render_widget(
+        Paragraph::new(left_lines).style(Style::default().bg(UI_BG)),
+        cols[0],
+    );
 
     // ── Right column: Ground items, effects ──
     let mut right_lines: Vec<Line> = Vec::new();
@@ -1061,7 +1090,10 @@ fn render_cursor_info(
         right_lines.push(Line::from(" (empty)").dark_gray());
     }
     right_lines.truncate(max_lines);
-    frame.render_widget(Paragraph::new(right_lines), cols[1]);
+    frame.render_widget(
+        Paragraph::new(right_lines).style(Style::default().bg(UI_BG)),
+        cols[1],
+    );
 }
 
 /// Renders the inventory bar as a wide horizontal bar showing usable items.
@@ -1087,11 +1119,14 @@ fn render_inventory_bar(
     }
     let line = Line::from(spans);
     frame.render_widget(
-        Paragraph::new(line).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Inventory 1-0:Use"),
-        ),
+        Paragraph::new(line)
+            .style(Style::default().bg(UI_BG))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Inventory 1-0:Use")
+                    .style(Style::default().bg(UI_BG)),
+            ),
         area,
     );
 }
@@ -1148,22 +1183,29 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
         Line::from(""),
         Line::from("  -*-  DEAD MAN'S HAND  -*-").bold().yellow(),
         Line::from(""),
-        Line::from("  Welcome to a peaceful frontier town.").white(),
-        Line::from("  Walk around, talk to folks, visit the").white(),
-        Line::from("  saloon for a drink. Everyone minds").white(),
-        Line::from("  their own business... unless you start").white(),
-        Line::from("  trouble.").white(),
+        Line::from("  You were in a riverfront cell when the").white(),
+        Line::from("  wall came apart in fire and smoke.").white(),
+        Line::from("  Somebody broke you out, but that does").white(),
+        Line::from("  not make them allies. Four gangs are").white(),
+        Line::from("  already tearing the city to pieces.").white(),
         Line::from(""),
-        Line::from("  Kick (F) or Throw sand (G) to start").yellow(),
-        Line::from("  a brawl! Their faction will aggro.").yellow(),
-        Line::from("  Cause too much chaos and sheriffs will").yellow(),
-        Line::from("  come after you (star level).").yellow(),
+        Line::from("  Stay moving, pick your fights, take what").yellow(),
+        Line::from("  you need, and get out before the whole").yellow(),
+        Line::from("  town turns into a killbox. Make enough").yellow(),
+        Line::from("  noise and the sheriffs will hunt you too.").yellow(),
+        Line::from("  Roundhouse (F) also smashes props around").yellow(),
+        Line::from("  you, opening space when a room gets tight.").yellow(),
         Line::from(""),
     ];
     for binding in KEYBINDINGS {
+        let desc = if binding.name == "Roundhouse" {
+            "Roundhouse (breaks nearby props)"
+        } else {
+            binding.name
+        };
         lines.push(Line::from(vec![
             Span::from(format!("  {:<16}", binding.key)).bold().yellow(),
-            Span::from(binding.name.to_string()).white(),
+            Span::from(desc.to_string()).white(),
         ]));
     }
     lines.push(Line::from(""));
@@ -1207,7 +1249,12 @@ fn render_esc_menu_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
         }
         lines.push(Line::from(format!("  {cat}")).bold().dark_gray());
         for binding in &group {
-            lines.push(Line::from(format!("    [{}]  {}", binding.key, binding.name)).white());
+            let label = if binding.name == "Roundhouse" {
+                format!("    [{}]  {}", binding.key, binding.docs)
+            } else {
+                format!("    [{}]  {}", binding.key, binding.name)
+            };
+            lines.push(Line::from(label).white());
         }
     }
     lines.push(Line::from(""));

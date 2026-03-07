@@ -9,7 +9,7 @@ use crate::resources::{
 use crate::typeenums::Floor;
 
 /// Stamina regenerated per world turn.
-const STAMINA_REGEN_PER_TURN: i32 = 2;
+const STAMINA_REGEN_PER_TURN: i32 = 1;
 
 /// Fire spreads every N world turns.
 const FIRE_SPREAD_INTERVAL: u32 = 8;

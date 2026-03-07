@@ -131,7 +131,8 @@ impl Props {
     /// Returns the maximum health for this prop. Indestructible props return i32::MAX.
     pub fn max_health(&self) -> i32 {
         match self {
-            Props::Wall | Props::Rock | Props::Well | Props::StoneWall => i32::MAX, // indestructible
+            Props::Rock | Props::Well | Props::StoneWall => i32::MAX, // indestructible
+            Props::Wall => 45,
             Props::Tree
             | Props::DeadTree
             | Props::Gallows

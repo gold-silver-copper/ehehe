@@ -65,10 +65,10 @@ const RANGED_ATTACK_RANGE: i32 = 100;
 pub const MAX_INVENTORY_SIZE: usize = 6;
 
 /// Stamina cost for the Throw Sand ability (G key).
-const SAND_STAMINA_COST: i32 = 5;
+pub(crate) const SAND_STAMINA_COST: i32 = 8;
 
 /// Stamina cost for the Throw Item ability (E key).
-const THROW_ITEM_STAMINA_COST: i32 = 10;
+pub(crate) const THROW_ITEM_STAMINA_COST: i32 = 15;
 
 /// Stamina cost for the Roundhouse ability (F key).
 const ROUNDHOUSE_STAMINA_COST: i32 = 10;
@@ -132,7 +132,7 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
     CommandBinding {
         key: "F",
         name: "Roundhouse",
-        docs: "Roundhouse kick all adjacent enemies. Costs stamina.",
+        docs: "Roundhouse kicks adjacent enemies and smashes nearby props. Costs stamina.",
         category: "Combat",
     },
     CommandBinding {
@@ -143,13 +143,13 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
     },
     CommandBinding {
         key: "G",
-        name: "Throw sand (5 sta)",
+        name: "Throw sand (8 sta)",
         docs: "Create sand cloud blocking vision toward cursor.",
         category: "Combat",
     },
     CommandBinding {
         key: "E",
-        name: "Throw item (10 sta)",
+        name: "Throw item (15 sta)",
         docs: "Throw a random inventory item toward cursor.",
         category: "Inventory",
     },

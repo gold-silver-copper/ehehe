@@ -7,6 +7,7 @@ use crate::components::{
 use crate::events::{MolotovCastIntent, SpellCastIntent};
 use crate::grid_vec::GridVec;
 use crate::resources::{CombatLog, GameMapResource, MapSeed, SpellParticles, TurnCounter};
+use crate::systems::input::SAND_STAMINA_COST;
 use crate::typedefs::RatColor;
 use crate::typeenums::{Floor, Props};
 
@@ -45,7 +46,7 @@ pub fn spell_system(
         // direction (plume shape away from the caster).
         if intent.grenade_index == usize::MAX {
             if let Some(mut stamina) = stamina {
-                stamina.spend(5); // Sand throw costs 5 stamina
+                stamina.spend(SAND_STAMINA_COST);
             }
             let origin = intent.target;
             let radius_f = intent.radius as f64;
