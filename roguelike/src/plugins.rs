@@ -20,6 +20,7 @@ use crate::resources::{
     BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks,
     GameMapResource, GameState, InputState, KillCount, MapSeed, RestartRequested, SoundEvents,
     SpatialIndex, SpectatingAfterDeath, SpellParticles, TurnCounter, TurnState,
+    WindowedKeyRepeat,
 };
 use crate::systems::spawn::MONSTER_TEMPLATES;
 use crate::systems::{
@@ -110,6 +111,7 @@ impl Plugin for RoguelikePlugin {
             .init_resource::<SpellParticles>()
             .init_resource::<InputState>()
             .init_resource::<RestartRequested>()
+            .init_resource::<WindowedKeyRepeat>()
             .insert_resource(CursorPosition::at(player_spawn))
             .init_resource::<Collectibles>()
             .init_resource::<ExtraWorldTicks>()
@@ -670,6 +672,7 @@ struct RestartResources<'w> {
     blood_map: ResMut<'w, BloodMap>,
     spectating: ResMut<'w, SpectatingAfterDeath>,
     dynamic_rng: ResMut<'w, DynamicRng>,
+    key_repeat: ResMut<'w, WindowedKeyRepeat>,
     god_mode: ResMut<'w, crate::resources::GodMode>,
     star_level: ResMut<'w, crate::resources::StarLevel>,
     prop_health: ResMut<'w, crate::resources::PropHealth>,
@@ -680,7 +683,7 @@ struct RestartResources<'w> {
 fn restart_system(
     mut commands: Commands,
     mut restart: ResMut<RestartRequested>,
-    all_entities: Query<Entity>,
+    game_entities: Query<Entity, With<Position>>,
     mut res: RestartResources,
 ) {
     if !restart.0 {
@@ -688,7 +691,7 @@ fn restart_system(
     }
     restart.0 = false;
 
-    for entity in &all_entities {
+    for entity in &game_entities {
         commands.entity(entity).despawn();
     }
 
@@ -720,8 +723,10 @@ fn restart_system(
     *res.star_level = crate::resources::StarLevel::default();
     res.prop_health.hp.clear();
     res.death_fade.frames = 0;
-
     res.next_game_state.set(GameState::Playing);
+
+    #[cfg(feature = "windowed")]
+    res.key_repeat.held.clear();
 
     let caliber = do_spawn_player(&mut commands, &mut res.game_map);
     *res.collectibles = Collectibles::for_starting_caliber(caliber);

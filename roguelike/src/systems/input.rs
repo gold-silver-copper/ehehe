@@ -13,7 +13,7 @@ use crate::events::{
 };
 use crate::resources::{
     CombatLog, CursorPosition, DynamicRng, ExtraWorldTicks, GameState, InputMode, InputState,
-    MapSeed, RestartRequested, SpectatingAfterDeath, TurnState,
+    MapSeed, RestartRequested, SpectatingAfterDeath, TurnState, WindowedKeyRepeat,
 };
 
 #[cfg(feature = "windowed")]
@@ -29,6 +29,30 @@ pub struct IntentWriters<'w> {
     ranged_intents: MessageWriter<'w, RangedAttackIntent>,
     melee_wide_intents: MessageWriter<'w, MeleeWideIntent>,
     throw_item_intents: MessageWriter<'w, ThrowItemIntent>,
+}
+
+#[derive(SystemParam)]
+pub(crate) struct InputResources<'w> {
+    game_state: Res<'w, State<GameState>>,
+    next_game_state: ResMut<'w, NextState<GameState>>,
+    turn_state: Option<Res<'w, State<TurnState>>>,
+    next_turn_state: Option<ResMut<'w, NextState<TurnState>>>,
+    combat_log: ResMut<'w, CombatLog>,
+    input_state: ResMut<'w, InputState>,
+    restart_requested: ResMut<'w, RestartRequested>,
+    cursor: ResMut<'w, CursorPosition>,
+    extra_world_ticks: ResMut<'w, ExtraWorldTicks>,
+    spectating: ResMut<'w, SpectatingAfterDeath>,
+    dynamic_rng: Res<'w, DynamicRng>,
+    seed: Res<'w, MapSeed>,
+    god_mode: ResMut<'w, crate::resources::GodMode>,
+}
+
+#[cfg(feature = "windowed")]
+#[derive(SystemParam)]
+pub(crate) struct WindowedInputRepeat<'w> {
+    time: Res<'w, Time>,
+    key_repeat: ResMut<'w, WindowedKeyRepeat>,
 }
 
 /// Default radius for the player's grenade blast.
@@ -51,6 +75,12 @@ const ROUNDHOUSE_STAMINA_COST: i32 = 10;
 
 /// Stamina cost per tile of movement (WASD / arrows).
 const MOVE_STAMINA_COST: i32 = 2;
+
+#[cfg(feature = "windowed")]
+const WINDOWED_REPEAT_DELAY: f32 = 0.22;
+
+#[cfg(feature = "windowed")]
+const WINDOWED_REPEAT_INTERVAL: f32 = 0.045;
 
 /// A single command binding entry: the key(s) that trigger it, a short name, documentation,
 /// and a category for UI grouping.
@@ -176,7 +206,7 @@ fn inventory_slot_from_key(c: char) -> Option<usize> {
 ///
 /// When the game is in `GameState::Dead`, only quit (Q) and restart (R) work.
 #[cfg(not(feature = "windowed"))]
-pub fn input_system(
+pub(crate) fn input_system(
     mut messages: MessageReader<KeyMessage>,
     mut intents: IntentWriters,
     player_query: Query<
@@ -195,22 +225,7 @@ pub fn input_system(
         Query<&Position, (With<Faction>, Without<PlayerControlled>)>,
         Query<Entity, With<Health>>,
     ),
-    game_state: Res<State<GameState>>,
-    mut next_game_state: ResMut<NextState<GameState>>,
-    turn_state: Option<Res<State<TurnState>>>,
-    mut next_turn_state: Option<ResMut<NextState<TurnState>>>,
-    mut combat_log: ResMut<CombatLog>,
-    mut input_state: ResMut<InputState>,
-    mut restart_requested: ResMut<RestartRequested>,
-    mut cursor: ResMut<CursorPosition>,
-    (mut extra_world_ticks, mut spectating, dynamic_rng, seed, _spatial): (
-        ResMut<ExtraWorldTicks>,
-        ResMut<SpectatingAfterDeath>,
-        Res<DynamicRng>,
-        Res<MapSeed>,
-        Res<crate::resources::SpatialIndex>,
-    ),
-    mut god_mode: ResMut<crate::resources::GodMode>,
+    mut resources: InputResources,
 ) {
     let commands: Vec<_> = messages
         .read()
@@ -223,25 +238,26 @@ pub fn input_system(
         &mut player_viewshed,
         item_kind_query,
         hostiles_query,
-        game_state,
-        &mut next_game_state,
-        turn_state,
-        &mut next_turn_state,
-        &mut combat_log,
-        &mut input_state,
-        &mut restart_requested,
-        &mut cursor,
-        &mut extra_world_ticks,
-        &mut spectating,
-        dynamic_rng,
-        seed,
-        &mut god_mode,
+        resources.game_state,
+        &mut resources.next_game_state,
+        resources.turn_state,
+        &mut resources.next_turn_state,
+        &mut resources.combat_log,
+        &mut resources.input_state,
+        &mut resources.restart_requested,
+        &mut resources.cursor,
+        &mut resources.extra_world_ticks,
+        &mut resources.spectating,
+        resources.dynamic_rng,
+        resources.seed,
+        &mut resources.god_mode,
     );
 }
 
 #[cfg(feature = "windowed")]
-pub fn input_system(
+pub(crate) fn input_system(
     keys: Res<ButtonInput<KeyCode>>,
+    mut repeat: WindowedInputRepeat,
     mut intents: IntentWriters,
     player_query: Query<
         (
@@ -259,24 +275,9 @@ pub fn input_system(
         Query<&Position, (With<Faction>, Without<PlayerControlled>)>,
         Query<Entity, With<Health>>,
     ),
-    game_state: Res<State<GameState>>,
-    mut next_game_state: ResMut<NextState<GameState>>,
-    turn_state: Option<Res<State<TurnState>>>,
-    mut next_turn_state: Option<ResMut<NextState<TurnState>>>,
-    mut combat_log: ResMut<CombatLog>,
-    mut input_state: ResMut<InputState>,
-    mut restart_requested: ResMut<RestartRequested>,
-    mut cursor: ResMut<CursorPosition>,
-    (mut extra_world_ticks, mut spectating, dynamic_rng, seed, _spatial): (
-        ResMut<ExtraWorldTicks>,
-        ResMut<SpectatingAfterDeath>,
-        Res<DynamicRng>,
-        Res<MapSeed>,
-        Res<crate::resources::SpatialIndex>,
-    ),
-    mut god_mode: ResMut<crate::resources::GodMode>,
+    mut resources: InputResources,
 ) {
-    let commands = collect_windowed_inputs(&keys);
+    let commands = collect_windowed_inputs(&keys, &repeat.time, &mut repeat.key_repeat);
     process_inputs(
         commands,
         &mut intents,
@@ -284,19 +285,19 @@ pub fn input_system(
         &mut player_viewshed,
         item_kind_query,
         hostiles_query,
-        game_state,
-        &mut next_game_state,
-        turn_state,
-        &mut next_turn_state,
-        &mut combat_log,
-        &mut input_state,
-        &mut restart_requested,
-        &mut cursor,
-        &mut extra_world_ticks,
-        &mut spectating,
-        dynamic_rng,
-        seed,
-        &mut god_mode,
+        resources.game_state,
+        &mut resources.next_game_state,
+        resources.turn_state,
+        &mut resources.next_turn_state,
+        &mut resources.combat_log,
+        &mut resources.input_state,
+        &mut resources.restart_requested,
+        &mut resources.cursor,
+        &mut resources.extra_world_ticks,
+        &mut resources.spectating,
+        resources.dynamic_rng,
+        resources.seed,
+        &mut resources.god_mode,
     );
 }
 
@@ -741,62 +742,173 @@ fn map_terminal_input(key: KeyCode) -> Option<GameInput> {
 }
 
 #[cfg(feature = "windowed")]
-fn collect_windowed_inputs(keys: &ButtonInput<KeyCode>) -> Vec<GameInput> {
+fn collect_windowed_inputs(
+    keys: &ButtonInput<KeyCode>,
+    time: &Time,
+    key_repeat: &mut WindowedKeyRepeat,
+) -> Vec<GameInput> {
     let mut commands = Vec::new();
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
-    if keys.just_pressed(KeyCode::KeyQ) {
-        commands.push(GameInput::ToggleMenu);
-    }
-    if keys.just_pressed(KeyCode::KeyI) {
-        commands.push(GameInput::CursorUp);
-    }
-    if keys.just_pressed(KeyCode::KeyK) {
-        commands.push(GameInput::CursorDown);
-    }
-    if keys.just_pressed(KeyCode::KeyJ) {
-        commands.push(GameInput::CursorLeft);
-    }
-    if keys.just_pressed(KeyCode::KeyL) {
-        commands.push(GameInput::CursorRight);
-    }
-    if keys.just_pressed(KeyCode::KeyC) {
-        commands.push(GameInput::CenterCursor);
-    }
-    if keys.just_pressed(KeyCode::KeyV) {
-        commands.push(GameInput::AutoAim);
-    }
-    if keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp) {
-        commands.push(GameInput::MoveUp);
-    }
-    if keys.just_pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown) {
-        commands.push(GameInput::MoveDown);
-    }
-    if keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft) {
-        commands.push(GameInput::MoveLeft);
-    }
-    if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) {
-        commands.push(GameInput::MoveRight);
-    }
-    if keys.just_pressed(KeyCode::KeyT) {
-        commands.push(GameInput::Wait);
-    }
-    if keys.just_pressed(KeyCode::KeyR) {
-        commands.push(GameInput::ReloadOrRestart);
-    }
-    if keys.just_pressed(KeyCode::KeyF) {
-        commands.push(GameInput::Roundhouse);
-    }
-    if keys.just_pressed(KeyCode::KeyG) {
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyQ,
+        GameInput::ToggleMenu,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyI,
+        GameInput::CursorUp,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyK,
+        GameInput::CursorDown,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyJ,
+        GameInput::CursorLeft,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyL,
+        GameInput::CursorRight,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyC,
+        GameInput::CenterCursor,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyV,
+        GameInput::AutoAim,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyW,
+        GameInput::MoveUp,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::ArrowUp,
+        GameInput::MoveUp,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyS,
+        GameInput::MoveDown,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::ArrowDown,
+        GameInput::MoveDown,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyA,
+        GameInput::MoveLeft,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::ArrowLeft,
+        GameInput::MoveLeft,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyD,
+        GameInput::MoveRight,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::ArrowRight,
+        GameInput::MoveRight,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyT,
+        GameInput::Wait,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyR,
+        GameInput::ReloadOrRestart,
+    );
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyF,
+        GameInput::Roundhouse,
+    );
+    if consume_windowed_repeat(keys, time, key_repeat, KeyCode::KeyG) {
         commands.push(if shift {
             GameInput::ToggleGodMode
         } else {
             GameInput::ThrowSand
         });
     }
-    if keys.just_pressed(KeyCode::KeyE) {
-        commands.push(GameInput::ThrowItem);
-    }
+    update_windowed_repeat(
+        &mut commands,
+        keys,
+        time,
+        key_repeat,
+        KeyCode::KeyE,
+        GameInput::ThrowItem,
+    );
 
     for (key, slot) in [
         (KeyCode::Digit1, 0),
@@ -810,12 +922,74 @@ fn collect_windowed_inputs(keys: &ButtonInput<KeyCode>) -> Vec<GameInput> {
         (KeyCode::Digit9, 8),
         (KeyCode::Digit0, 9),
     ] {
-        if keys.just_pressed(key) {
+        if consume_windowed_repeat(keys, time, key_repeat, key) {
             commands.push(GameInput::UseSlot(slot));
         }
     }
 
     commands
+}
+
+#[cfg(feature = "windowed")]
+fn update_windowed_repeat(
+    commands: &mut Vec<GameInput>,
+    keys: &ButtonInput<KeyCode>,
+    time: &Time,
+    key_repeat: &mut WindowedKeyRepeat,
+    key: KeyCode,
+    command: GameInput,
+) {
+    if consume_windowed_repeat(keys, time, key_repeat, key) {
+        commands.push(command);
+    }
+}
+
+#[cfg(feature = "windowed")]
+fn consume_windowed_repeat(
+    keys: &ButtonInput<KeyCode>,
+    time: &Time,
+    key_repeat: &mut WindowedKeyRepeat,
+    key: KeyCode,
+) -> bool {
+    if keys.just_pressed(key) {
+        key_repeat
+            .held
+            .insert(key, std::time::Duration::from_secs_f32(WINDOWED_REPEAT_DELAY));
+        return true;
+    }
+
+    if !keys.pressed(key) {
+        key_repeat.held.remove(&key);
+        return false;
+    }
+
+    let Some(remaining) = key_repeat.held.get_mut(&key) else {
+        key_repeat
+            .held
+            .insert(key, std::time::Duration::from_secs_f32(WINDOWED_REPEAT_DELAY));
+        return false;
+    };
+
+    let delta = time.delta();
+    if *remaining > delta {
+        *remaining -= delta;
+        return false;
+    }
+
+    let overshoot = delta.saturating_sub(*remaining).as_secs_f32();
+    let interval = WINDOWED_REPEAT_INTERVAL;
+    let next_remaining = if overshoot <= 0.0 {
+        interval
+    } else {
+        let remainder = overshoot % interval;
+        if remainder == 0.0 {
+            interval
+        } else {
+            interval - remainder
+        }
+    };
+    *remaining = std::time::Duration::from_secs_f32(next_remaining);
+    true
 }
 
 /// Special ability: Throw random inventory item toward cursor.

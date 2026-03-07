@@ -1,4 +1,8 @@
 use std::collections::{HashMap, VecDeque};
+#[cfg(not(feature = "windowed"))]
+use std::collections::HashSet;
+#[cfg(feature = "windowed")]
+use std::time::Duration;
 
 use bevy::prelude::*;
 
@@ -464,6 +468,27 @@ impl BloodMap {
 /// Marker resource indicating a restart has been requested.
 #[derive(Resource, Debug, Default)]
 pub struct RestartRequested(pub bool);
+
+/// Tracks held keys in windowed mode so repeated input can emulate terminal
+/// autorepeat: immediate first press, short delay, then steady repeats.
+#[derive(Resource, Debug)]
+pub struct WindowedKeyRepeat {
+    #[cfg(feature = "windowed")]
+    pub held: HashMap<bevy::input::keyboard::KeyCode, Duration>,
+    #[cfg(not(feature = "windowed"))]
+    pub held: HashSet<()>,
+}
+
+impl Default for WindowedKeyRepeat {
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "windowed")]
+            held: HashMap::default(),
+            #[cfg(not(feature = "windowed"))]
+            held: HashSet::default(),
+        }
+    }
+}
 
 /// When true, the player is dead but watching the game continue.
 /// Set by pressing "." on the death screen. The `end_world_turn_system` system
