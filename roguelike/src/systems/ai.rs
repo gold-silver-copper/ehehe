@@ -752,6 +752,27 @@ fn orient_cursor(
     }
 }
 
+fn orient_cursor_to_move(
+    commands: &mut Commands,
+    entity: Entity,
+    cursor: &mut Option<Mut<Cursor>>,
+    origin: GridVec,
+    move_dir: GridVec,
+    viewshed: &mut Option<Mut<Viewshed>>,
+) {
+    if move_dir.is_zero() {
+        return;
+    }
+    orient_cursor(
+        commands,
+        entity,
+        cursor,
+        origin,
+        origin + move_dir * SCAN_CURSOR_DISTANCE,
+        viewshed,
+    );
+}
+
 fn scan_cursor_target(origin: GridVec, interest: Option<GridVec>) -> GridVec {
     let dir = interest
         .map(|point| cardinal_step_toward(point - origin))
@@ -1940,11 +1961,6 @@ pub fn ai_system(
             AiState::Fleeing => {
                 if let Some(goal) = visible_threat_pos.or(objective) {
                     let direct_away = cardinal_step_toward(my_pos - goal);
-                    let desired_cursor = if visible_threat_pos.is_some() {
-                        goal
-                    } else {
-                        moving_scan_cursor_target(my_pos, goal, entity, current_turn)
-                    };
                     if !direct_away.is_zero()
                         && tile_cost_for_ai(
                             my_pos + direct_away,
@@ -1963,12 +1979,12 @@ pub fn ai_system(
                             dy: direct_away.y,
                         });
                         record_move(&mut ai_memory, direct_away, current_turn);
-                        orient_cursor(
+                        orient_cursor_to_move(
                             &mut commands,
                             entity,
                             &mut cursor,
                             my_pos,
-                            desired_cursor,
+                            direct_away,
                             &mut viewshed,
                         );
                         energy.spend_action();
@@ -1994,12 +2010,12 @@ pub fn ai_system(
                             dy: dir.y,
                         });
                         record_move(&mut ai_memory, dir, current_turn);
-                        orient_cursor(
+                        orient_cursor_to_move(
                             &mut commands,
                             entity,
                             &mut cursor,
                             my_pos,
-                            desired_cursor,
+                            dir,
                             &mut viewshed,
                         );
                         energy.spend_action();
@@ -2272,22 +2288,12 @@ pub fn ai_system(
                                     dy: dir.y,
                                 });
                                 record_move(&mut ai_memory, dir, current_turn);
-                                let desired_cursor = if target.visible { target_pos } else { my_pos + dir };
-                                orient_cursor(
+                                orient_cursor_to_move(
                                     &mut commands,
                                     entity,
                                     &mut cursor,
                                     my_pos,
-                                    if target.visible {
-                                        desired_cursor
-                                    } else {
-                                        moving_scan_cursor_target(
-                                            my_pos,
-                                            target_pos,
-                                            entity,
-                                            current_turn,
-                                        )
-                                    },
+                                    dir,
                                     &mut viewshed,
                                 );
                                 energy.spend_action();
@@ -2328,22 +2334,12 @@ pub fn ai_system(
                             dy: dir.y,
                         });
                         record_move(&mut ai_memory, dir, current_turn);
-                        let desired_cursor = if target.visible { target_pos } else { goal };
-                        orient_cursor(
+                        orient_cursor_to_move(
                             &mut commands,
                             entity,
                             &mut cursor,
                             my_pos,
-                            if target.visible {
-                                desired_cursor
-                            } else {
-                                moving_scan_cursor_target(
-                                    my_pos,
-                                    target_pos,
-                                    entity,
-                                    current_turn,
-                                )
-                            },
+                            dir,
                             &mut viewshed,
                         );
                         energy.spend_action();
@@ -2444,12 +2440,12 @@ pub fn ai_system(
                             dy: dir.y,
                         });
                         record_move(&mut ai_memory, dir, current_turn);
-                        orient_cursor(
+                        orient_cursor_to_move(
                             &mut commands,
                             entity,
                             &mut cursor,
                             my_pos,
-                            moving_scan_cursor_target(my_pos, goal, entity, current_turn),
+                            dir,
                             &mut viewshed,
                         );
                     }

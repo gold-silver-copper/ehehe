@@ -112,7 +112,7 @@ pub fn victory_check_system(
     let gv = player_pos.as_grid_vec();
     // Win by reaching any edge of the map (escape the town)
     if gv.x <= 1 || gv.y <= 1 || gv.x >= game_map.0.width - 2 || gv.y >= game_map.0.height - 2 {
-        combat_log.push("You escaped the town! YOU WIN!".into());
+        combat_log.push("You escaped Yerba Buena! YOU WIN!".into());
         next_state.set(GameState::Victory);
     }
 }

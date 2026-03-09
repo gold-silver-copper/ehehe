@@ -112,6 +112,12 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
         category: "Other",
     },
     CommandBinding {
+        key: "1-0",
+        name: "Fire/Use",
+        docs: "Primary action: fire, drink, throw, or use the item in that slot toward the cursor.",
+        category: "Inventory",
+    },
+    CommandBinding {
         key: "C",
         name: "Center cursor",
         docs: "Snap cursor onto your position.",
@@ -151,12 +157,6 @@ pub const KEYBINDINGS: &[CommandBinding] = &[
         key: "E",
         name: "Throw item (15 sta)",
         docs: "Throw a random inventory item toward cursor.",
-        category: "Inventory",
-    },
-    CommandBinding {
-        key: "1-0",
-        name: "Fire/Use",
-        docs: "Use item by slot. Guns and grenades fire toward the cursor.",
         category: "Inventory",
     },
     CommandBinding {

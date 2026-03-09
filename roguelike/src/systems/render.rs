@@ -792,7 +792,7 @@ pub fn draw_system(
 
         // Show "VICTORY" overlay centered on game area when the gate is destroyed
         if *state.get() == GameState::Victory {
-            let label = " VICTORY! You escaped the town! Press R to restart. ";
+            let label = " VICTORY! You escaped Yerba Buena! Press R to restart. ";
             let label_width = label.len() as u16;
             if render_width >= label_width && render_height >= 1 {
                 let cx = game_area.x + (render_width - label_width) / 2;
@@ -1194,8 +1194,7 @@ fn render_command_bar(frame: &mut ratatui::Frame, area: Rect, input_state: &Inpu
 fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
     let binding_count = KEYBINDINGS.len() as u16;
     let w = 62u16.min(game_area.width.saturating_sub(4));
-    // Extra lines: alliances(7) + roundhouse(3) = 10 more lines
-    let h = (binding_count + 23).min(game_area.height.saturating_sub(4));
+    let h = (binding_count + 29).min(game_area.height.saturating_sub(4));
 
     if w < 20 || h < 10 {
         return;
@@ -1214,13 +1213,20 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
 
     let mut lines = vec![
         Line::from(""),
-        Line::from("  -*-  DEAD MAN'S HAND  -*-").bold().yellow(),
+        Line::from("  -*-  ESCAPE FROM YERBA BUENA  -*-").bold().yellow(),
         Line::from(""),
         Line::from("  You were in a riverfront cell when the").white(),
         Line::from("  wall came apart in fire and smoke.").white(),
         Line::from("  Somebody broke you out, but that does").white(),
         Line::from("  not make them allies. Four gangs are").white(),
         Line::from("  already tearing the city to pieces.").white(),
+        Line::from(""),
+        Line::from("  HOW TO PLAY").bold().yellow(),
+        Line::from("  Reach any edge of Yerba Buena alive to escape.").white(),
+        Line::from("  Aim with IJKL, then press 1-0 to use the").white(),
+        Line::from("  matching item slot in the inventory bar.").white(),
+        Line::from("  Guns need the right bullets, caps, and powder.").white(),
+        Line::from("  Booze heals. Grenades and molotovs clear rooms.").white(),
         Line::from(""),
         Line::from("  Stay moving, pick your fights, take what").yellow(),
         Line::from("  you need, and get out before the whole").yellow(),
@@ -1262,38 +1268,33 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
 
 /// Renders the ESC menu overlay with Resume and Restart options.
 fn render_esc_menu_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
-    // Build keybinding reference grouped by category from the live binding map.
-    let categories = ["Movement", "Combat", "Inventory", "Other"];
     let mut lines: Vec<Line> = Vec::new();
 
-    // Prominent restart line at the top
     lines.push(Line::from(""));
     lines.push(Line::from("  R — Restart").bold().yellow());
     lines.push(Line::from(""));
     lines.push(Line::from("  Q — Resume").white());
     lines.push(Line::from(""));
+    lines.push(Line::from("  HOW TO PLAY").bold().yellow());
+    lines.push(Line::from("  Escape by reaching any edge of Yerba Buena alive.").white());
+    lines.push(Line::from("  Aim with IJKL, then press 1-0 to use that slot.").white());
+    lines.push(Line::from("  Reload with R. Roundhouse with F breaks nearby props.").white());
+    lines.push(Line::from("  Pick up gear, manage stamina, and let gangs fight each other.").white());
+    lines.push(Line::from(""));
+    lines.push(Line::from("  CONTROLS").bold().dark_gray());
 
-    // Full keybinding reference derived from the live binding map.
-    for cat in &categories {
-        let group: Vec<&crate::systems::input::CommandBinding> =
-            KEYBINDINGS.iter().filter(|b| b.category == *cat).collect();
-        if group.is_empty() {
-            continue;
-        }
-        lines.push(Line::from(format!("  {cat}")).bold().dark_gray());
-        for binding in &group {
-            let label = if binding.name == "Roundhouse" {
-                format!("    [{}]  {}", binding.key, binding.docs)
-            } else {
-                format!("    [{}]  {}", binding.key, binding.name)
-            };
-            lines.push(Line::from(label).white());
-        }
+    for binding in KEYBINDINGS {
+        let label = if binding.name == "Roundhouse" {
+            format!("    [{}]  {}", binding.key, binding.docs)
+        } else {
+            format!("    [{}]  {}", binding.key, binding.docs)
+        };
+        lines.push(Line::from(label).white());
     }
     lines.push(Line::from(""));
 
     let content_height = lines.len() as u16 + 2; // +2 for border
-    let w = 44u16.min(game_area.width.saturating_sub(4));
+    let w = 72u16.min(game_area.width.saturating_sub(4));
     let h = content_height.min(game_area.height.saturating_sub(4));
 
     if w < 20 || h < 5 {

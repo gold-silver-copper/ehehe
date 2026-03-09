@@ -6,10 +6,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_DIR="${TARGET_DIR:-$ROOT_DIR/target}"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist/itchio}"
 OUT_NAME="roguelike"
+ZIP_BASENAME="escape-from-yerba-buena"
 WASM_TARGET="wasm32-unknown-unknown"
 WASM_FILE="$TARGET_DIR/$WASM_TARGET/release/$OUT_NAME.wasm"
 PACKAGE_DIR="$DIST_DIR/web"
-ZIP_PATH="$DIST_DIR/${OUT_NAME}-itchio.zip"
+ZIP_PATH="$DIST_DIR/${ZIP_BASENAME}-itchio.zip"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
