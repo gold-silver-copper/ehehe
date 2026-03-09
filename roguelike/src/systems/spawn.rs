@@ -3,11 +3,15 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 
 use crate::components::{
-    AiLookDir, AiMemory, AiPersonality, AiState, BlocksMovement, Caliber, CombatStats, Energy, Faction, Health,
-    Inventory, Item, ItemKind, LootTable, Name, PatrolOrigin, Position, Renderable, Speed, Stamina, Viewshed,
+    AiMemory, AiPersonality, AiState, BlocksMovement, Caliber, CombatStats, Cursor, Energy,
+    Faction, Health, Inventory, Item, ItemKind, LootTable, Name, PatrolOrigin, Position,
+    Renderable, Speed, Stamina, Viewshed,
 };
 use crate::grid_vec::GridVec;
 use crate::typedefs::RatColor;
+
+/// Radius around the player spawn where hostile NPCs may not appear.
+pub const PLAYER_SAFE_SPAWN_RADIUS: i32 = 40;
 
 // ───────────────────────── Procedural NPC Names ───────────────────
 //
@@ -16,70 +20,179 @@ use crate::typedefs::RatColor;
 //   - Cowboys (Outlaws/Lawmen): Western first names and surnames
 //   - Apache: Compound nature names (e.g., Eaglefoot, SittingBear)
 //   - Vaqueros: Spanish names
-//   - Police: Famous lawman surnames
+//   - Police: frontier officer surnames
 //   - Civilians: Nicknames (e.g., Dusty, Slim, Maverick)
 
 /// Cowboy names — used by Outlaws and Lawmen factions.
 const COWBOY_NAMES: &[&str] = &[
-    "Wyatt", "Morgan", "Hank", "Earl", "Jasper",
-    "Clayton", "Emmett", "Levi", "Abel", "Jesse",
-    "Silas", "Caleb", "Josiah", "Amos", "Enoch",
-    "Rufus", "Virgil", "Cyrus", "Hector", "Magnus",
-    "Colt", "Boone", "Clint", "Deacon", "Flint",
-    "Gideon", "Harlan", "Knox", "Nash", "Quinn",
-    "Redford", "Briggs", "Dalton", "Graves", "Hollis",
-    "Larkin", "Mcgraw", "Pickett", "Slade", "Tucker",
+    "Wyatt", "Morgan", "Hank", "Earl", "Jasper", "Clayton", "Emmett", "Levi", "Abel", "Jesse",
+    "Silas", "Caleb", "Josiah", "Amos", "Enoch", "Rufus", "Virgil", "Cyrus", "Hector", "Magnus",
+    "Colt", "Boone", "Clint", "Deacon", "Flint", "Gideon", "Harlan", "Knox", "Nash", "Quinn",
+    "Redford", "Briggs", "Dalton", "Graves", "Hollis", "Larkin", "Mcgraw", "Pickett", "Slade",
+    "Tucker",
 ];
 
 /// Apache compound names — nature-inspired single words.
 const APACHE_NAMES: &[&str] = &[
-    "Eaglefoot", "SittingBear", "RedCloud", "IronHawk", "TallElk",
-    "SwiftWolf", "RunningDeer", "LoneBull", "ThunderSky", "SilentArrow",
-    "PaintedMoon", "BrokenFeather", "RisingFire", "BurningWind", "HighStar",
-    "Chayton", "Takoda", "Nashoba", "Akecheta", "Wahkan",
-    "DarkCrow", "WildHorse", "StrongBear", "GreyWolf", "WhiteEagle",
-    "Kohana", "Kuruk", "Mato", "Ohanzee", "Hototo",
-    "StillWater", "StoneFox", "Blackwind", "Sunhawk", "Crowfoot",
-    "Ironbow", "Dustwolf", "Ashfeather", "Deepsky", "Fireheart",
+    "Eaglefoot",
+    "SittingBear",
+    "RedCloud",
+    "IronHawk",
+    "TallElk",
+    "SwiftWolf",
+    "RunningDeer",
+    "LoneBull",
+    "ThunderSky",
+    "SilentArrow",
+    "PaintedMoon",
+    "BrokenFeather",
+    "RisingFire",
+    "BurningWind",
+    "HighStar",
+    "Chayton",
+    "Takoda",
+    "Nashoba",
+    "Akecheta",
+    "Wahkan",
+    "DarkCrow",
+    "WildHorse",
+    "StrongBear",
+    "GreyWolf",
+    "WhiteEagle",
+    "Kohana",
+    "Kuruk",
+    "Mato",
+    "Ohanzee",
+    "Hototo",
+    "StillWater",
+    "StoneFox",
+    "Blackwind",
+    "Sunhawk",
+    "Crowfoot",
+    "Ironbow",
+    "Dustwolf",
+    "Ashfeather",
+    "Deepsky",
+    "Fireheart",
 ];
 
 /// Vaquero names — used by Vaqueros faction.
 const VAQUERO_NAMES: &[&str] = &[
-    "Carlos", "Miguel", "Diego", "Rafael", "Alejandro",
-    "Fernando", "Santiago", "Joaquin", "Esteban", "Mateo",
-    "Rodrigo", "Emilio", "Ignacio", "Salvador", "Teodoro",
-    "Montoya", "Vega", "Salazar", "Guerrero", "Delgado",
-    "Reyes", "Espinoza", "Castillo", "Navarro", "Fuentes",
-    "Herrera", "Rojas", "Mendoza", "Coronado", "Cortez",
-    "Pancho", "Cisco", "Lobo", "Cruz", "Rico",
-    "Bravo", "Diablo", "Fuego", "Oro", "Toro",
+    "Carlos",
+    "Miguel",
+    "Diego",
+    "Rafael",
+    "Alejandro",
+    "Fernando",
+    "Santiago",
+    "Joaquin",
+    "Esteban",
+    "Mateo",
+    "Rodrigo",
+    "Emilio",
+    "Ignacio",
+    "Salvador",
+    "Teodoro",
+    "Montoya",
+    "Vega",
+    "Salazar",
+    "Guerrero",
+    "Delgado",
+    "Reyes",
+    "Espinoza",
+    "Castillo",
+    "Navarro",
+    "Fuentes",
+    "Herrera",
+    "Rojas",
+    "Mendoza",
+    "Coronado",
+    "Cortez",
+    "Pancho",
+    "Cisco",
+    "Lobo",
+    "Cruz",
+    "Rico",
+    "Bravo",
+    "Diablo",
+    "Fuego",
+    "Oro",
+    "Toro",
 ];
 
-/// Police names — famous lawman surnames.
+/// Police names — frontier officer surnames.
 const POLICE_NAMES: &[&str] = &[
-    "Bassett", "Tilghman", "Hickok", "Wallace", "Masterson",
-    "Garrett", "Heck", "Reeves", "Selman", "Canton",
-    "Plummer", "Allison", "Earp", "Holiday", "Bullock",
-    "Horn", "Hardin", "Holliday", "Ringo", "Dillon",
-    "Mather", "Stoudenmire", "Courtright", "Breckinridge", "Bridges",
+    "Bassett",
+    "Tilghman",
+    "Hickok",
+    "Wallace",
+    "Masterson",
+    "Garrett",
+    "Heck",
+    "Reeves",
+    "Selman",
+    "Canton",
+    "Plummer",
+    "Allison",
+    "Earp",
+    "Holiday",
+    "Bullock",
+    "Horn",
+    "Hardin",
+    "Holliday",
+    "Ringo",
+    "Dillon",
+    "Mather",
+    "Stoudenmire",
+    "Courtright",
+    "Breckinridge",
+    "Bridges",
 ];
 
 /// Civilian nicknames — colorful Wild West nicknames.
 const CIVILIAN_NAMES: &[&str] = &[
-    "Dusty", "Slim", "Rattlesnake", "Two-Gun", "One-Eye",
-    "Whiskey", "Ironjaw", "Red", "Trigger", "Sidewinder",
-    "Buckshot", "Tombstone", "Cactus", "Copperhead", "Dynamite",
-    "Grizzly", "Hawk", "Longshot", "Maverick", "Sundown",
-    "Tex", "Lucky", "Bones", "Doc", "Shorty",
-    "Patches", "Rusty", "Ace", "Preacher", "Dutch",
-    "Smiley", "Pops", "Gopher", "Yank", "Pepper",
+    "Dusty",
+    "Slim",
+    "Rattlesnake",
+    "Two-Gun",
+    "One-Eye",
+    "Whiskey",
+    "Ironjaw",
+    "Red",
+    "Trigger",
+    "Sidewinder",
+    "Buckshot",
+    "Tombstone",
+    "Cactus",
+    "Copperhead",
+    "Dynamite",
+    "Grizzly",
+    "Hawk",
+    "Longshot",
+    "Maverick",
+    "Sundown",
+    "Tex",
+    "Lucky",
+    "Bones",
+    "Doc",
+    "Shorty",
+    "Patches",
+    "Rusty",
+    "Ace",
+    "Preacher",
+    "Dutch",
+    "Smiley",
+    "Pops",
+    "Gopher",
+    "Yank",
+    "Pepper",
 ];
 
 /// Generates a single-word faction-appropriate name from position hash.
 /// Each faction has its own distinct pool:
 ///   - Apache: Compound nature names (Eaglefoot, SittingBear)
 ///   - Vaqueros: Spanish first names or surnames
-///   - Police: Famous lawman surnames
+///   - Police: frontier officer surnames
 ///   - Civilians: Wild West nicknames
 ///   - Outlaws/Lawmen/default: Cowboy first names or surnames
 fn generate_npc_name(x: i32, y: i32, faction: &Faction) -> String {
@@ -120,21 +233,121 @@ pub struct MonsterTemplate {
 /// - Police Officer: 32, Deputy: 30
 pub const MONSTER_TEMPLATES: &[MonsterTemplate] = &[
     // Index 0: Vaqueros — faction color: lime green
-    MonsterTemplate { name: "Vaquero", symbol: "@", fg: RatColor::Rgb(140, 220, 60), health: 100, attack: 5, speed: 32, sight_range: 10, faction: Faction::Vaqueros, has_gun: false },
+    MonsterTemplate {
+        name: "Vaquero",
+        symbol: "@",
+        fg: RatColor::Rgb(140, 220, 60),
+        health: 100,
+        attack: 5,
+        speed: 32,
+        sight_range: 10,
+        faction: Faction::Vaqueros,
+        has_gun: false,
+    },
     // Index 1: Civilians — faction color: off-white/off-gray (player is pure white)
-    MonsterTemplate { name: "Civilian", symbol: "@", fg: RatColor::Rgb(200, 195, 185), health: 60, attack: 2, speed: 28, sight_range: 8, faction: Faction::Civilians, has_gun: false },
+    MonsterTemplate {
+        name: "Civilian",
+        symbol: "@",
+        fg: RatColor::Rgb(200, 195, 185),
+        health: 60,
+        attack: 2,
+        speed: 28,
+        sight_range: 8,
+        faction: Faction::Civilians,
+        has_gun: false,
+    },
     // Index 2–3: Apache — faction color: warm brown
-    MonsterTemplate { name: "Apache Brave", symbol: "@", fg: RatColor::Rgb(200, 120, 60), health: 120, attack: 5, speed: 40, sight_range: 12, faction: Faction::Apache, has_gun: false },
-    MonsterTemplate { name: "Apache Scout", symbol: "@", fg: RatColor::Rgb(200, 120, 60), health: 80, attack: 4, speed: 45, sight_range: 14, faction: Faction::Apache, has_gun: false },
+    MonsterTemplate {
+        name: "Apache Brave",
+        symbol: "@",
+        fg: RatColor::Rgb(200, 120, 60),
+        health: 120,
+        attack: 5,
+        speed: 40,
+        sight_range: 12,
+        faction: Faction::Apache,
+        has_gun: false,
+    },
+    MonsterTemplate {
+        name: "Apache Scout",
+        symbol: "@",
+        fg: RatColor::Rgb(200, 120, 60),
+        health: 80,
+        attack: 4,
+        speed: 45,
+        sight_range: 14,
+        faction: Faction::Apache,
+        has_gun: false,
+    },
     // Index 4–5: Police and deputies — faction color: gold
-    MonsterTemplate { name: "Police Officer", symbol: "@", fg: RatColor::Rgb(255, 215, 0), health: 150, attack: 8, speed: 32, sight_range: 14, faction: Faction::Police, has_gun: true },
-    MonsterTemplate { name: "Deputy", symbol: "@", fg: RatColor::Rgb(255, 215, 0), health: 100, attack: 6, speed: 30, sight_range: 12, faction: Faction::Police, has_gun: true },
+    MonsterTemplate {
+        name: "Police Officer",
+        symbol: "@",
+        fg: RatColor::Rgb(255, 215, 0),
+        health: 150,
+        attack: 8,
+        speed: 32,
+        sight_range: 14,
+        faction: Faction::Police,
+        has_gun: true,
+    },
+    MonsterTemplate {
+        name: "Deputy",
+        symbol: "@",
+        fg: RatColor::Rgb(255, 215, 0),
+        health: 100,
+        attack: 6,
+        speed: 30,
+        sight_range: 12,
+        faction: Faction::Police,
+        has_gun: true,
+    },
     // Index 6–7: Outlaws — faction color: dark red
-    MonsterTemplate { name: "Outlaw", symbol: "@", fg: RatColor::Rgb(200, 50, 50), health: 110, attack: 6, speed: 34, sight_range: 11, faction: Faction::Outlaws, has_gun: true },
-    MonsterTemplate { name: "Bandit", symbol: "@", fg: RatColor::Rgb(180, 40, 40), health: 90, attack: 5, speed: 36, sight_range: 10, faction: Faction::Outlaws, has_gun: true },
+    MonsterTemplate {
+        name: "Outlaw",
+        symbol: "@",
+        fg: RatColor::Rgb(200, 50, 50),
+        health: 110,
+        attack: 6,
+        speed: 34,
+        sight_range: 11,
+        faction: Faction::Outlaws,
+        has_gun: true,
+    },
+    MonsterTemplate {
+        name: "Bandit",
+        symbol: "@",
+        fg: RatColor::Rgb(180, 40, 40),
+        health: 90,
+        attack: 5,
+        speed: 36,
+        sight_range: 10,
+        faction: Faction::Outlaws,
+        has_gun: true,
+    },
     // Index 8–9: Lawmen — faction color: steel blue
-    MonsterTemplate { name: "Marshal", symbol: "@", fg: RatColor::Rgb(100, 140, 200), health: 130, attack: 7, speed: 30, sight_range: 13, faction: Faction::Lawmen, has_gun: true },
-    MonsterTemplate { name: "Ranger", symbol: "@", fg: RatColor::Rgb(100, 140, 200), health: 100, attack: 6, speed: 32, sight_range: 12, faction: Faction::Lawmen, has_gun: true },
+    MonsterTemplate {
+        name: "Marshal",
+        symbol: "@",
+        fg: RatColor::Rgb(100, 140, 200),
+        health: 130,
+        attack: 7,
+        speed: 30,
+        sight_range: 13,
+        faction: Faction::Lawmen,
+        has_gun: true,
+    },
+    MonsterTemplate {
+        name: "Ranger",
+        symbol: "@",
+        fg: RatColor::Rgb(100, 140, 200),
+        health: 100,
+        attack: 6,
+        speed: 32,
+        sight_range: 12,
+        faction: Faction::Lawmen,
+        has_gun: true,
+    },
 ];
 
 /// Spawns a hostile entity from a `MonsterTemplate` at the given position,
@@ -185,38 +398,45 @@ pub fn spawn_monster(
         ];
         let weapon_idx = (item_hash as usize) % weapon_pool.len();
         let (gun_name, caliber, capacity, symbol) = weapon_pool[weapon_idx];
-        let gun = commands.spawn((
-            Item,
-            Name(String::from(gun_name)),
-            Renderable {
-                symbol: String::from(symbol),
-                fg: RatColor::Rgb(140, 140, 160),
-                bg: RatColor::Black,
-            },
-            ItemKind::Gun {
-                loaded: capacity,
-                capacity,
-                caliber,
-                attack: caliber.damage(),
-                name: String::from(gun_name),
-                blunt_damage: 5,
-            },
-        )).id();
+        let gun = commands
+            .spawn((
+                Item,
+                Name(String::from(gun_name)),
+                Renderable {
+                    symbol: String::from(symbol),
+                    fg: RatColor::Rgb(140, 140, 160),
+                    bg: RatColor::Black,
+                },
+                ItemKind::Gun {
+                    loaded: capacity,
+                    capacity,
+                    caliber,
+                    attack: caliber.damage(),
+                    name: String::from(gun_name),
+                    blunt_damage: 5,
+                },
+            ))
+            .id();
         inv_items.push(gun);
     }
 
     // Apache get a bow instead of a gun.
     if matches!(template.faction, Faction::Apache) {
-        let bow = commands.spawn((
-            Item,
-            Name("Bow".into()),
-            Renderable {
-                symbol: ")".into(),
-                fg: RatColor::Rgb(139, 90, 43),
-                bg: RatColor::Black,
-            },
-            ItemKind::Bow { attack: scaled_attack, blunt_damage: 3 },
-        )).id();
+        let bow = commands
+            .spawn((
+                Item,
+                Name("Bow".into()),
+                Renderable {
+                    symbol: ")".into(),
+                    fg: RatColor::Rgb(139, 90, 43),
+                    bg: RatColor::Black,
+                },
+                ItemKind::Bow {
+                    attack: (scaled_attack * 5).max(24),
+                    blunt_damage: 3,
+                },
+            ))
+            .id();
         inv_items.push(bow);
     }
 
@@ -224,52 +444,115 @@ pub fn spawn_monster(
     // Some humanoid NPCs carry throwable items (dynamite or molotovs).
     if !matches!(template.faction, Faction::Wildlife) {
         if item_hash.is_multiple_of(5) {
-            let dynamite = commands.spawn((
-                Item,
-                Name("Dynamite".into()),
-                Renderable {
-                    symbol: "*".into(),
-                    fg: RatColor::Rgb(255, 165, 0),
-                    bg: RatColor::Black,
-                },
-                ItemKind::Grenade { damage: 8, radius: 2, blunt_damage: 3 },
-            )).id();
+            let dynamite = commands
+                .spawn((
+                    Item,
+                    Name("Dynamite".into()),
+                    Renderable {
+                        symbol: "*".into(),
+                        fg: RatColor::Rgb(255, 165, 0),
+                        bg: RatColor::Black,
+                    },
+                    ItemKind::Grenade {
+                        damage: 8,
+                        radius: 2,
+                        blunt_damage: 3,
+                    },
+                ))
+                .id();
             inv_items.push(dynamite);
         } else if item_hash.is_multiple_of(7) {
-            let molotov = commands.spawn((
-                Item,
-                Name("Molotov".into()),
-                Renderable {
-                    symbol: "m".into(),
-                    fg: RatColor::Rgb(255, 100, 0),
-                    bg: RatColor::Black,
-                },
-                ItemKind::Molotov { damage: 6, radius: 4, blunt_damage: 4 },
-            )).id();
+            let molotov = commands
+                .spawn((
+                    Item,
+                    Name("Molotov".into()),
+                    Renderable {
+                        symbol: "m".into(),
+                        fg: RatColor::Rgb(255, 100, 0),
+                        bg: RatColor::Black,
+                    },
+                    ItemKind::Molotov {
+                        damage: 6,
+                        radius: 4,
+                        blunt_damage: 4,
+                    },
+                ))
+                .id();
             inv_items.push(molotov);
         }
 
         // Humanoid NPCs randomly carry alcohol that heals when used.
         let alcohol_hash = (x.wrapping_mul(47) ^ y.wrapping_mul(83)).unsigned_abs();
         let alcohol_idx = alcohol_hash % 6;
-        let (alc_name, alc_symbol, alc_kind, alc_fg): (&str, &str, ItemKind, RatColor) = match alcohol_idx {
-            0 => ("Whiskey", "w", ItemKind::Whiskey { heal: 10, blunt_damage: 4 }, RatColor::Rgb(180, 120, 60)),
-            1 => ("Beer", "b", ItemKind::Beer { heal: 5, blunt_damage: 3 }, RatColor::Rgb(200, 180, 80)),
-            2 => ("Ale", "a", ItemKind::Ale { heal: 7, blunt_damage: 3 }, RatColor::Rgb(190, 150, 70)),
-            3 => ("Stout", "s", ItemKind::Stout { heal: 12, blunt_damage: 4 }, RatColor::Rgb(80, 50, 30)),
-            4 => ("Wine", "v", ItemKind::Wine { heal: 8, blunt_damage: 3 }, RatColor::Rgb(140, 30, 60)),
-            _ => ("Rum", "r", ItemKind::Rum { heal: 15, blunt_damage: 4 }, RatColor::Rgb(160, 100, 40)),
-        };
-        let alcohol = commands.spawn((
-            Item,
-            Name(alc_name.into()),
-            Renderable {
-                symbol: alc_symbol.into(),
-                fg: alc_fg,
-                bg: RatColor::Black,
-            },
-            alc_kind,
-        )).id();
+        let (alc_name, alc_symbol, alc_kind, alc_fg): (&str, &str, ItemKind, RatColor) =
+            match alcohol_idx {
+                0 => (
+                    "Whiskey",
+                    "w",
+                    ItemKind::Whiskey {
+                        heal: 10,
+                        blunt_damage: 4,
+                    },
+                    RatColor::Rgb(180, 120, 60),
+                ),
+                1 => (
+                    "Beer",
+                    "b",
+                    ItemKind::Beer {
+                        heal: 5,
+                        blunt_damage: 3,
+                    },
+                    RatColor::Rgb(200, 180, 80),
+                ),
+                2 => (
+                    "Ale",
+                    "a",
+                    ItemKind::Ale {
+                        heal: 7,
+                        blunt_damage: 3,
+                    },
+                    RatColor::Rgb(190, 150, 70),
+                ),
+                3 => (
+                    "Stout",
+                    "s",
+                    ItemKind::Stout {
+                        heal: 12,
+                        blunt_damage: 4,
+                    },
+                    RatColor::Rgb(80, 50, 30),
+                ),
+                4 => (
+                    "Wine",
+                    "v",
+                    ItemKind::Wine {
+                        heal: 8,
+                        blunt_damage: 3,
+                    },
+                    RatColor::Rgb(140, 30, 60),
+                ),
+                _ => (
+                    "Rum",
+                    "r",
+                    ItemKind::Rum {
+                        heal: 15,
+                        blunt_damage: 4,
+                    },
+                    RatColor::Rgb(160, 100, 40),
+                ),
+            };
+        let alcohol = commands
+            .spawn((
+                Item,
+                Name(alc_name.into()),
+                Renderable {
+                    symbol: alc_symbol.into(),
+                    fg: alc_fg,
+                    bg: RatColor::Black,
+                },
+                alc_kind,
+            ))
+            .id();
         inv_items.push(alcohol);
     }
 
@@ -285,21 +568,30 @@ pub fn spawn_monster(
         let prefix: Option<&str> = match template.faction {
             Faction::Civilians => {
                 if prefix_roll < 30 {
-                    let prefixes = ["Dr.", "Barman", "Sailor", "Cowboy", "Farmer", "Miner", "Preacher", "Rancher", "Baker", "Tailor"];
+                    let prefixes = [
+                        "Dr.", "Barman", "Sailor", "Cowboy", "Farmer", "Miner", "Preacher",
+                        "Rancher", "Baker", "Tailor",
+                    ];
                     Some(prefixes[prefix_hash / 100 % prefixes.len()])
-                } else { None }
+                } else {
+                    None
+                }
             }
             Faction::Apache => {
                 if prefix_roll < 15 {
                     let prefixes = ["Chief", "Brave", "Shaman", "Elder"];
                     Some(prefixes[prefix_hash / 100 % prefixes.len()])
-                } else { None }
+                } else {
+                    None
+                }
             }
             Faction::Vaqueros => {
                 if prefix_roll < 15 {
                     let prefixes = ["Capitan", "Bandido", "Vaquero", "Don"];
                     Some(prefixes[prefix_hash / 100 % prefixes.len()])
-                } else { None }
+                } else {
+                    None
+                }
             }
             Faction::Police => {
                 if template.name.contains("Police") {
@@ -312,7 +604,9 @@ pub fn spawn_monster(
                 if prefix_roll < 10 {
                     let prefixes = ["Outlaw", "Gunslinger", "Drifter"];
                     Some(prefixes[prefix_hash / 100 % prefixes.len()])
-                } else { None }
+                } else {
+                    None
+                }
             }
         };
         match prefix {
@@ -338,45 +632,50 @@ pub fn spawn_monster(
         20 + (scaled_health / 3)
     };
 
-    commands.spawn((
-        Position { x, y },
-        Name(npc_name),
-        Renderable {
-            symbol: template.symbol.into(),
-            fg: template.fg,
-            bg: RatColor::Black,
-        },
-        BlocksMovement,
-        template.faction,
-        Health {
-            current: scaled_health,
-            max: scaled_health,
-        },
-        CombatStats {
-            attack: scaled_attack,
-        },
-        Speed(template.speed),
-        Energy(0),
-    )).insert((
-        AiState::Idle,
-        AiLookDir(GridVec::new(0, -1), 0), // default: looking south
-        PatrolOrigin(GridVec::new(x, y)),
-        AiMemory::default(),
-        AiPersonality {
-            aggression,
-            courage,
-        },
-        LootTable,
-        Viewshed {
-            range: template.sight_range,
-            visible_tiles: HashSet::new(),
-            revealed_tiles: HashSet::new(),
-            dirty: true,
-        },
-        Inventory { items: inv_items },
-        Stamina {
-            current: npc_stamina,
-            max: npc_stamina,
-        },
-    )).id()
+    commands
+        .spawn((
+            Position { x, y },
+            Name(npc_name),
+            Renderable {
+                symbol: template.symbol.into(),
+                fg: template.fg,
+                bg: RatColor::Black,
+            },
+            BlocksMovement,
+            template.faction,
+            Health {
+                current: scaled_health,
+                max: scaled_health,
+            },
+            CombatStats {
+                attack: scaled_attack,
+            },
+            Speed(template.speed),
+            Energy(0),
+        ))
+        .insert((
+            AiState::Idle,
+            Cursor {
+                pos: GridVec::new(x, y) + GridVec::NORTH,
+            },
+            PatrolOrigin(GridVec::new(x, y)),
+            AiMemory::default(),
+            AiPersonality {
+                aggression,
+                courage,
+            },
+            LootTable,
+            Viewshed {
+                range: template.sight_range,
+                visible_tiles: HashSet::new(),
+                revealed_tiles: HashSet::new(),
+                dirty: true,
+            },
+            Inventory { items: inv_items },
+            Stamina {
+                current: npc_stamina,
+                max: npc_stamina,
+            },
+        ))
+        .id()
 }

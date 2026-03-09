@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use bevy::prelude::*;
 
-use crate::components::{AiLookDir, Faction, PlayerControlled, Position, Viewshed};
+use crate::components::{Cursor, Faction, PlayerControlled, Position, Viewshed};
 use crate::grid_vec::GridVec;
 use crate::resources::{CursorPosition, GameMapResource};
 use crate::typedefs::{CoordinateUnit, MyPoint};
@@ -12,10 +12,7 @@ pub const FOV_MIN_RADIUS: CoordinateUnit = 80;
 
 /// Maximum FOV range when cursor is far from the player.
 pub const FOV_MAX_RANGE: CoordinateUnit = 120;
-
-/// Radius (Euclidean) of the circular awareness zone around NPCs.
-/// Tiles within this radius are always visible regardless of cone direction.
-pub const NPC_PROXIMITY_RADIUS: CoordinateUnit = 3;
+const NPC_RAY_COUNT: usize = 9;
 
 /// Recomputes the `visible_tiles` set for every entity whose `Viewshed` is
 /// dirty (e.g., because the entity moved). Uses recursive symmetric
@@ -33,7 +30,13 @@ pub const NPC_PROXIMITY_RADIUS: CoordinateUnit = 3;
 /// Reference: Albert Ford, "Symmetric Shadowcasting" (2017).
 pub fn visibility_system(
     game_map: Res<GameMapResource>,
-    mut query: Query<(Entity, &Position, &mut Viewshed, Option<&AiLookDir>, Option<&Faction>)>,
+    mut query: Query<(
+        Entity,
+        &Position,
+        &mut Viewshed,
+        Option<&Cursor>,
+        Option<&Faction>,
+    )>,
     player_query: Query<Entity, With<PlayerControlled>>,
     cursor: Res<CursorPosition>,
     spell_particles: Res<crate::resources::SpellParticles>,
@@ -41,12 +44,14 @@ pub fn visibility_system(
     let player_entity = player_query.single().ok();
 
     // Collect sand cloud positions (particles with lifetime > 0 and delay == 0).
-    let sand_cloud_tiles: HashSet<MyPoint> = spell_particles.particles.iter()
+    let sand_cloud_tiles: HashSet<MyPoint> = spell_particles
+        .particles
+        .iter()
         .filter(|(_, life, delay, _, _, _)| *delay == 0 && *life > 0)
         .map(|(pos, _, _, _, _, _)| *pos)
         .collect();
 
-    for (entity, pos, mut viewshed, ai_look_dir, faction) in &mut query {
+    for (entity, pos, mut viewshed, cursor_component, faction) in &mut query {
         let is_player = player_entity == Some(entity);
         // Always recalculate player FOV every tick so newly placed smoke/sand
         // clouds block vision immediately, not just after the player moves.
@@ -58,15 +63,17 @@ pub fn visibility_system(
         let origin = pos.as_grid_vec();
 
         let is_wildlife = faction.is_some_and(|f| matches!(f, Faction::Wildlife));
-        let is_npc = !is_player && ai_look_dir.is_some();
+        let is_npc = !is_player && cursor_component.is_some();
 
         // Determine the aiming direction.
         let cone_dir = if is_player {
             let d = cursor.pos - origin;
             if d.is_zero() { None } else { Some(d) }
         } else {
-            // NPCs always use their look direction (never circle FOV).
-            ai_look_dir.map(|look| look.0).filter(|d| !d.is_zero())
+            cursor_component.and_then(|cursor| {
+                let delta = (cursor.pos - origin).king_step();
+                if delta.is_zero() { None } else { Some(delta) }
+            })
         };
 
         // Compute dynamic FOV range and cone width.
@@ -76,70 +83,76 @@ pub fn visibility_system(
             let cos_t = if cone_dir.is_some() { 0.6 } else { -1.0 };
             (range, cos_t)
         } else if is_npc {
-            // Human NPCs: 60-tile sight range with a narrow cone.
+            // Human NPCs: moderate sight range with a practical cone.
             if let Some(_dir) = cone_dir {
-                let range = 60;
-                // Extremely narrow cone: cos ≈ 0.97 (roughly ~14° full cone).
-                let cos_t = 0.97;
+                let range = 150;
+                // Slightly tighter cone than before, but with longer useful range.
+                let cos_t = 0.92;
                 (range, cos_t)
             } else {
-                // NPC has no look direction set — use narrow forward cone.
-                (60, 0.97)
+                (150, 0.92)
             }
         } else {
             // PlayerControlled: use the original formula.
             compute_fov_params(cone_dir)
         };
 
-        // The origin is always visible.
         viewshed.visible_tiles.insert(origin);
 
-        // Cast shadows in all 8 octants via the cardinal/diagonal transform.
-        for octant in 0..8u8 {
-            shadowcast_octant(
-                &game_map,
-                &mut viewshed.visible_tiles,
-                origin,
-                effective_range,
-                octant,
-                1,
-                Slope { y: 1, x: 1 }, // start slope = 1/1
-                Slope { y: 0, x: 1 }, // end slope   = 0/1
-                &sand_cloud_tiles,
-            );
-        }
+        if is_npc {
+            if let Some(dir) = cone_dir {
+                cast_npc_cone(
+                    &game_map,
+                    &mut viewshed.visible_tiles,
+                    origin,
+                    dir,
+                    effective_range,
+                    cos_threshold,
+                    &sand_cloud_tiles,
+                );
+            }
+        } else {
+            // Cast shadows in all 8 octants via the cardinal/diagonal transform.
+            for octant in 0..8u8 {
+                shadowcast_octant(
+                    &game_map,
+                    &mut viewshed.visible_tiles,
+                    origin,
+                    effective_range,
+                    octant,
+                    1,
+                    Slope { y: 1, x: 1 }, // start slope = 1/1
+                    Slope { y: 0, x: 1 }, // end slope   = 0/1
+                    &sand_cloud_tiles,
+                );
+            }
 
-        // Directional FOV: filter visible tiles to a cone when aiming.
-        // When the cursor is off-center, the player can no longer see behind
-        // themselves — only tiles within the computed cone are kept.
-        // NPCs also keep a 3-tile circular awareness radius around them.
-        if let Some(dir) = cone_dir {
-            let (cdx, cdy) = (dir.x as f64, dir.y as f64);
-            let cursor_len = (cdx * cdx + cdy * cdy).sqrt();
+            // Directional FOV: filter visible tiles to a cone when aiming.
+            // When the cursor is off-center, the player can no longer see behind
+            // themselves — only tiles within the computed cone are kept.
+            if let Some(dir) = cone_dir {
+                let (cdx, cdy) = (dir.x as f64, dir.y as f64);
+                let cursor_len = (cdx * cdx + cdy * cdy).sqrt();
 
-            let prox_sq = (NPC_PROXIMITY_RADIUS as i64) * (NPC_PROXIMITY_RADIUS as i64);
-
-            viewshed.visible_tiles.retain(|&tile| {
-                let diff = tile - origin;
-                if diff == GridVec::ZERO {
-                    return true; // always see own tile
-                }
-                // Keyhole effect: tiles directly adjacent (Chebyshev ≤ 1)
-                // are always visible for the player.
-                if is_player && diff.x.abs() <= 1 && diff.y.abs() <= 1 {
-                    return true;
-                }
-                // NPC circular proximity awareness: always see within NPC_PROXIMITY_RADIUS tiles.
-                if is_npc {
-                    let dist_sq = (diff.x as i64) * (diff.x as i64) + (diff.y as i64) * (diff.y as i64);
-                    if dist_sq <= prox_sq {
+                viewshed.visible_tiles.retain(|&tile| {
+                    let diff = tile - origin;
+                    if diff == GridVec::ZERO {
+                        return true; // always see own tile
+                    }
+                    // Keyhole effect: tiles directly adjacent (Chebyshev ≤ 1)
+                    // are always visible for the player.
+                    if is_player && diff.x.abs() <= 1 && diff.y.abs() <= 1 {
                         return true;
                     }
-                }
-                let (dx, dy) = (diff.x as f64, diff.y as f64);
-                let len = (dx * dx + dy * dy).sqrt();
-                let dot = (dx * cdx + dy * cdy) / (len * cursor_len);
-                dot >= cos_threshold
+                    let (dx, dy) = (diff.x as f64, diff.y as f64);
+                    let len = (dx * dx + dy * dy).sqrt();
+                    let dot = (dx * cdx + dy * cdy) / (len * cursor_len);
+                    dot >= cos_threshold
+                });
+            }
+
+            viewshed.visible_tiles.retain(|&tile| {
+                has_clear_los(&game_map, origin, tile, &sand_cloud_tiles)
             });
         }
 
@@ -148,7 +161,7 @@ pub fn visibility_system(
         // ray from origin and check for smoke along the path. Each smoke
         // tile halves the remaining travel distance from that point onward.
         // Tiles beyond the attenuated range are removed.
-        if !sand_cloud_tiles.is_empty() || !game_map.0.sand_cloud_turns.is_empty() {
+        if is_player && (!sand_cloud_tiles.is_empty() || !game_map.0.sand_cloud_turns.is_empty()) {
             viewshed.visible_tiles.retain(|&tile| {
                 let diff = tile - origin;
                 if diff == GridVec::ZERO {
@@ -162,8 +175,9 @@ pub fn visibility_system(
                         return false;
                     }
                     let is_smoke = sand_cloud_tiles.contains(&ray_tile)
-                        || game_map.0.get_voxel_at(&ray_tile)
-                            .is_some_and(|v| matches!(v.floor, Some(crate::typeenums::Floor::SandCloud)));
+                        || game_map.0.get_voxel_at(&ray_tile).is_some_and(|v| {
+                            matches!(v.floor, Some(crate::typeenums::Floor::SandCloud))
+                        });
                     if is_smoke && ray_tile != tile {
                         remaining /= 2.0;
                     }
@@ -172,9 +186,12 @@ pub fn visibility_system(
             });
         }
 
-        // Merge visible into revealed (fog of war memory).
-        let newly_visible: Vec<MyPoint> = viewshed.visible_tiles.iter().copied().collect();
-        viewshed.revealed_tiles.extend(newly_visible);
+        if is_player {
+            let newly_visible: Vec<MyPoint> = viewshed.visible_tiles.iter().copied().collect();
+            viewshed.revealed_tiles.extend(newly_visible);
+        } else {
+            viewshed.revealed_tiles.clear();
+        }
         viewshed.dirty = false;
     }
 }
@@ -235,10 +252,69 @@ impl Slope {
 /// (handled in the post-filter step of `visibility_system`).
 fn is_opaque(game_map: &GameMapResource, point: MyPoint, _sand_clouds: &HashSet<MyPoint>) -> bool {
     match game_map.0.get_voxel_at(&point) {
-        Some(v) => {
-            v.props.as_ref().is_some_and(|f| f.blocks_vision())
-        }
+        Some(v) => v.props.as_ref().is_some_and(|f| f.blocks_vision()),
         None => true, // off-map ⇒ opaque
+    }
+}
+
+fn has_clear_los(
+    game_map: &GameMapResource,
+    origin: MyPoint,
+    tile: MyPoint,
+    sand_clouds: &HashSet<MyPoint>,
+) -> bool {
+    if tile == origin {
+        return true;
+    }
+
+    for ray_tile in origin.bresenham_line(tile).into_iter().skip(1) {
+        if ray_tile != tile && is_opaque(game_map, ray_tile, sand_clouds) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn cast_npc_cone(
+    game_map: &GameMapResource,
+    visible: &mut HashSet<MyPoint>,
+    origin: MyPoint,
+    dir: GridVec,
+    range: CoordinateUnit,
+    cos_threshold: f64,
+    sand_clouds: &HashSet<MyPoint>,
+) {
+    let dir_x = dir.x as f64;
+    let dir_y = dir.y as f64;
+    let dir_len = (dir_x * dir_x + dir_y * dir_y).sqrt();
+    if dir_len <= f64::EPSILON {
+        return;
+    }
+
+    let base_angle = dir_y.atan2(dir_x);
+    let half_angle = cos_threshold.clamp(-1.0, 1.0).acos();
+    let ray_count = NPC_RAY_COUNT.max(1);
+
+    for ray_idx in 0..ray_count {
+        let t = if ray_count == 1 {
+            0.5
+        } else {
+            ray_idx as f64 / (ray_count - 1) as f64
+        };
+        let angle = base_angle - half_angle + (2.0 * half_angle * t);
+        let endpoint = origin
+            + GridVec::new(
+                (angle.cos() * range as f64).round() as CoordinateUnit,
+                (angle.sin() * range as f64).round() as CoordinateUnit,
+            );
+
+        for tile in origin.bresenham_line(endpoint).into_iter().skip(1) {
+            visible.insert(tile);
+            if is_opaque(game_map, tile, sand_clouds) {
+                break;
+            }
+        }
     }
 }
 
@@ -325,7 +401,15 @@ fn shadowcast_octant(
                 x: 2 * row,
             };
             shadowcast_octant(
-                game_map, visible, origin, range, octant, row + 1, saved_start, next_end, sand_clouds,
+                game_map,
+                visible,
+                origin,
+                range,
+                octant,
+                row + 1,
+                saved_start,
+                next_end,
+                sand_clouds,
             );
         }
         prev_opaque = cur_opaque;
@@ -334,7 +418,15 @@ fn shadowcast_octant(
     // If the last tile in the row was transparent, continue scanning.
     if !prev_opaque {
         shadowcast_octant(
-            game_map, visible, origin, range, octant, row + 1, start, end, sand_clouds,
+            game_map,
+            visible,
+            origin,
+            range,
+            octant,
+            row + 1,
+            start,
+            end,
+            sand_clouds,
         );
     }
 }

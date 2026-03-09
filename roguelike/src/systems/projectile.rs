@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 
-use crate::components::{Faction, Health, Name, PlayerControlled, Position, Projectile, ProjectileVisual, Renderable, ThrownItemProjectile, display_name};
+use crate::components::{
+    Faction, Health, Name, PlayerControlled, Position, Projectile, ProjectileVisual, Renderable,
+    ThrownItemProjectile, Viewshed, display_name,
+};
 use crate::events::DamageEvent;
 use crate::grid_vec::GridVec;
 use crate::noise::value_noise;
@@ -33,6 +36,17 @@ pub const TILE_STEP_DELAY: f32 = 0.01;
 /// Shrapnel that hits the player who threw the grenade deals reduced damage.
 const SELF_DAMAGE_DIVISOR: i32 = 2;
 
+#[inline]
+fn player_can_see_event(
+    pos: GridVec,
+    player_visibility: Option<(GridVec, Option<&Viewshed>)>,
+) -> bool {
+    let Some((player_pos, viewshed)) = player_visibility else {
+        return false;
+    };
+    pos == player_pos || viewshed.is_some_and(|vs| vs.visible_tiles.contains(&pos))
+}
+
 /// Result of resolving a bullet hit-chance roll.
 enum BulletHitResult {
     Miss,
@@ -61,12 +75,20 @@ fn resolve_bullet_hit(
         return BulletHitResult::Miss;
     }
 
-    let hs_roll = value_noise(tile.x, tile.y + path_index as i32, roll_seed.wrapping_add(13));
+    let hs_roll = value_noise(
+        tile.x,
+        tile.y + path_index as i32,
+        roll_seed.wrapping_add(13),
+    );
     if hs_roll < headshot_chance {
-        return BulletHitResult::Headshot { damage: target_max_hp };
+        return BulletHitResult::Headshot {
+            damage: target_max_hp,
+        };
     }
 
-    BulletHitResult::Hit { damage: penetration }
+    BulletHitResult::Hit {
+        damage: penetration,
+    }
 }
 
 /// Spawns a bullet projectile entity along a Bresenham line from origin to endpoint.
@@ -83,7 +105,10 @@ pub fn spawn_bullet(
     }
     let start_pos = path.get(1).copied().unwrap_or(origin);
     commands.spawn((
-        Position { x: start_pos.x, y: start_pos.y },
+        Position {
+            x: start_pos.x,
+            y: start_pos.y,
+        },
         Renderable {
             symbol: "◦".into(),
             fg: RatColor::Rgb(255, 200, 80),
@@ -119,7 +144,10 @@ pub fn spawn_arrow(
     }
     let start_pos = path.get(1).copied().unwrap_or(origin);
     commands.spawn((
-        Position { x: start_pos.x, y: start_pos.y },
+        Position {
+            x: start_pos.x,
+            y: start_pos.y,
+        },
         Renderable {
             symbol: "◦".into(),
             fg: RatColor::Rgb(139, 90, 43),
@@ -165,7 +193,10 @@ pub fn spawn_shrapnel(
             }
             let start_pos = path.get(1).copied().unwrap_or(origin);
             commands.spawn((
-                Position { x: start_pos.x, y: start_pos.y },
+                Position {
+                    x: start_pos.x,
+                    y: start_pos.y,
+                },
                 Renderable {
                     symbol: "·".into(),
                     fg: RatColor::Rgb(255, 165, 0),
@@ -179,7 +210,7 @@ pub fn spawn_shrapnel(
                     penetration: SHRAPNEL_DAMAGE,
                     source,
                     tail_pos: None,
-                    visual: ProjectileVisual::BulletTrail,
+                    visual: ProjectileVisual::ShrapnelTrail,
                     is_bullet: false,
                     tile_timer: 0.0,
                 },
@@ -206,7 +237,10 @@ pub fn spawn_thrown_projectile(
     }
     let start_pos = path.get(1).copied().unwrap_or(origin);
     commands.spawn((
-        Position { x: start_pos.x, y: start_pos.y },
+        Position {
+            x: start_pos.x,
+            y: start_pos.y,
+        },
         Renderable {
             symbol: "/".into(),
             fg: RatColor::Rgb(200, 200, 200),
@@ -236,10 +270,25 @@ pub fn spawn_thrown_projectile(
 /// `tiles_per_tick` tiles per frame for backwards compatibility.
 pub fn projectile_system(
     mut commands: Commands,
-    mut projectiles: Query<(Entity, &mut Position, &mut Projectile, &mut Renderable, Option<&ThrownItemProjectile>), Without<crate::components::ThrownExplosive>>,
+    mut projectiles: Query<
+        (
+            Entity,
+            &mut Position,
+            &mut Projectile,
+            &mut Renderable,
+            Option<&ThrownItemProjectile>,
+        ),
+        Without<crate::components::ThrownExplosive>,
+    >,
     mut damage_events: MessageWriter<DamageEvent>,
-    targets: Query<(Entity, &Position, &Health, Option<&Name>, Option<&Faction>), (Without<PlayerControlled>, Without<Projectile>)>,
-    player_query: Query<(Entity, &Position, &Health, Option<&Name>), (With<PlayerControlled>, Without<Projectile>)>,
+    targets: Query<
+        (Entity, &Position, &Health, Option<&Name>, Option<&Faction>),
+        (Without<PlayerControlled>, Without<Projectile>),
+    >,
+    player_query: Query<
+        (Entity, &Position, &Health, Option<&Name>, Option<&Viewshed>),
+        (With<PlayerControlled>, Without<Projectile>),
+    >,
     source_factions: Query<Option<&Faction>>,
     source_names: Query<Option<&Name>>,
     game_map: Res<GameMapResource>,
@@ -249,18 +298,26 @@ pub fn projectile_system(
 ) {
     // Build a lookup of damageable entities by position for O(1) hit detection.
     // Hostility is purely faction-based: entities of different factions are hostile.
-    let mut target_by_pos: std::collections::HashMap<GridVec, Vec<(Entity, String, i32, Option<Faction>)>> =
-        std::collections::HashMap::new();
+    let mut target_by_pos: std::collections::HashMap<
+        GridVec,
+        Vec<(Entity, String, i32, Option<Faction>)>,
+    > = std::collections::HashMap::new();
     for (target_entity, target_pos, target_health, target_name, target_faction) in &targets {
         let t_name = display_name(target_name).to_string();
         target_by_pos
             .entry(target_pos.as_grid_vec())
             .or_default()
-            .push((target_entity, t_name, target_health.max, target_faction.copied()));
+            .push((
+                target_entity,
+                t_name,
+                target_health.max,
+                target_faction.copied(),
+            ));
     }
 
     // PlayerControlled position for NPC bullet hits and shrapnel self-damage.
     let player_info = player_query.single().ok();
+    let player_visibility = player_info.map(|(_, pos, _, _, viewshed)| (pos.as_grid_vec(), viewshed));
 
     for (proj_entity, mut proj_pos, mut proj, mut renderable, thrown_item) in &mut projectiles {
         // Determine how many tiles to advance this frame.
@@ -286,7 +343,8 @@ pub fn projectile_system(
         let proj_label = match proj.visual {
             ProjectileVisual::SpinningBlade => "thrown weapon",
             ProjectileVisual::BulletTrail if proj.is_bullet => "bullet",
-            _ => "shrapnel",
+            ProjectileVisual::BulletTrail => "projectile",
+            ProjectileVisual::ShrapnelTrail | ProjectileVisual::Asterisk => "shrapnel",
         };
 
         for _ in 0..steps {
@@ -319,12 +377,20 @@ pub fn projectile_system(
                     let is_bullet = proj.is_bullet;
                     if is_bullet {
                         let aim_point = proj.path.last().copied().unwrap_or(tile);
-                        match resolve_bullet_hit(tile, aim_point, proj.path_index, *t_max_hp, proj.penetration) {
+                        match resolve_bullet_hit(
+                            tile,
+                            aim_point,
+                            proj.path_index,
+                            *t_max_hp,
+                            proj.penetration,
+                        ) {
                             BulletHitResult::Miss => {
-                                combat_log.push_at(
-                                    format!("{source_name}'s bullet barely misses {t_name}!"),
-                                    tile,
-                                );
+                                if player_can_see_event(tile, player_visibility) {
+                                    combat_log.push_at(
+                                        format!("{source_name}'s bullet barely misses {t_name}!"),
+                                        tile,
+                                    );
+                                }
                                 continue;
                             }
                             BulletHitResult::Headshot { damage: hs_damage } => {
@@ -333,10 +399,10 @@ pub fn projectile_system(
                                     amount: hs_damage,
                                     source: Some(proj.source),
                                 });
-                                combat_log.push_at(
-                                    format!("{source_name} headshots {t_name}!"),
-                                    tile,
-                                );
+                                if player_can_see_event(tile, player_visibility) {
+                                    combat_log
+                                        .push_at(format!("{source_name} headshots {t_name}!"), tile);
+                                }
                                 sound_events.add(tile);
                                 continue;
                             }
@@ -353,10 +419,14 @@ pub fn projectile_system(
                         amount: hit_damage,
                         source: Some(proj.source),
                     });
-                    combat_log.push_at(
-                        format!("{source_name}'s {proj_label} hits {t_name} for {hit_damage} damage!"),
-                        tile,
-                    );
+                    if player_can_see_event(tile, player_visibility) {
+                        combat_log.push_at(
+                            format!(
+                                "{source_name}'s {proj_label} hits {t_name} for {hit_damage} damage!"
+                            ),
+                            tile,
+                        );
+                    }
                     sound_events.add(tile);
                     // Thrown weapons (knives/tomahawks) stop on first hit.
                     if proj.visual == ProjectileVisual::SpinningBlade {
@@ -374,7 +444,7 @@ pub fn projectile_system(
             // is NOT the player and it landed on the player's tile.
             // Always stop the bullet after hitting the player to prevent
             // any possibility of double damage.
-            if let Some((player_entity, player_pos, player_health, player_name)) = &player_info
+            if let Some((player_entity, player_pos, player_health, player_name, _)) = &player_info
                 && proj.source != *player_entity
                 && tile == player_pos.as_grid_vec()
                 && proj.penetration > 0
@@ -384,9 +454,20 @@ pub fn projectile_system(
                 if is_bullet {
                     let aim_point = proj.path.last().copied().unwrap_or(tile);
                     let p_name = display_name(*player_name);
-                    match resolve_bullet_hit(tile, aim_point, proj.path_index, player_health.max, proj.penetration) {
+                    match resolve_bullet_hit(
+                        tile,
+                        aim_point,
+                        proj.path_index,
+                        player_health.max,
+                        proj.penetration,
+                    ) {
                         BulletHitResult::Miss => {
-                            combat_log.push(format!("{source_name}'s bullet barely misses {p_name}!"));
+                            if player_can_see_event(tile, player_visibility) {
+                                combat_log.push_at(
+                                    format!("{source_name}'s bullet barely misses {p_name}!"),
+                                    tile,
+                                );
+                            }
                             // Bullet continues through on miss — don't despawn.
                         }
                         BulletHitResult::Headshot { damage: hs_damage } => {
@@ -395,7 +476,9 @@ pub fn projectile_system(
                                 amount: hs_damage,
                                 source: Some(proj.source),
                             });
-                            combat_log.push(format!("{source_name} headshots {p_name}!"));
+                            if player_can_see_event(tile, player_visibility) {
+                                combat_log.push_at(format!("{source_name} headshots {p_name}!"), tile);
+                            }
                             sound_events.add(tile);
                             despawn = true;
                             break;
@@ -406,7 +489,14 @@ pub fn projectile_system(
                                 amount: hit_damage,
                                 source: Some(proj.source),
                             });
-                            combat_log.push(format!("{source_name}'s bullet hits {p_name} for {hit_damage} damage!"));
+                            if player_can_see_event(tile, player_visibility) {
+                                combat_log.push_at(
+                                    format!(
+                                        "{source_name}'s bullet hits {p_name} for {hit_damage} damage!"
+                                    ),
+                                    tile,
+                                );
+                            }
                             sound_events.add(tile);
                             despawn = true;
                             break;
@@ -421,7 +511,14 @@ pub fn projectile_system(
                         source: Some(proj.source),
                     });
                     let p_name = display_name(*player_name);
-                    combat_log.push(format!("{source_name}'s {proj_label} hits {p_name} for {hit_damage} damage!"));
+                    if player_can_see_event(tile, player_visibility) {
+                        combat_log.push_at(
+                            format!(
+                                "{source_name}'s {proj_label} hits {p_name} for {hit_damage} damage!"
+                            ),
+                            tile,
+                        );
+                    }
                     sound_events.add(tile);
                     despawn = true;
                     break;
@@ -430,18 +527,22 @@ pub fn projectile_system(
 
             // Shrapnel self-damage: if the projectile's source is the player
             // and the projectile lands on the player's tile.
-            if let Some((player_entity, player_pos, _, _)) = &player_info
-                && proj.source == *player_entity && tile == player_pos.as_grid_vec() {
-                    let self_damage = (proj.damage / SELF_DAMAGE_DIVISOR).max(1);
-                    damage_events.write(DamageEvent {
-                        target: *player_entity,
-                        amount: self_damage,
-                        source: Some(proj.source),
-                    });
-                    combat_log.push(format!("Shrapnel hits you for {self_damage} damage!"));
-                    despawn = true;
-                    break;
+            if let Some((player_entity, player_pos, _, _, _)) = &player_info
+                && proj.source == *player_entity
+                && tile == player_pos.as_grid_vec()
+            {
+                let self_damage = (proj.damage / SELF_DAMAGE_DIVISOR).max(1);
+                damage_events.write(DamageEvent {
+                    target: *player_entity,
+                    amount: self_damage,
+                    source: Some(proj.source),
+                });
+                if player_can_see_event(tile, player_visibility) {
+                    combat_log.push_at(format!("Shrapnel hits you for {self_damage} damage!"), tile);
                 }
+                despawn = true;
+                break;
+            }
 
             // Record tail position before advancing.
             proj.tail_pos = Some(tile);
@@ -472,6 +573,15 @@ pub fn projectile_system(
                     renderable.fg = RatColor::Rgb(255, 180, 40);
                 }
             }
+            ProjectileVisual::ShrapnelTrail => {
+                let remaining = proj.path.len().saturating_sub(di);
+                renderable.symbol = if remaining <= 2 { "x".into() } else { "•".into() };
+                renderable.fg = if remaining <= 2 {
+                    RatColor::Rgb(255, 120, 40)
+                } else {
+                    RatColor::Rgb(255, 190, 80)
+                };
+            }
             ProjectileVisual::SpinningBlade => {
                 const SPIN_FRAMES: [&str; 4] = ["/", "—", "\\", "|"];
                 renderable.symbol = SPIN_FRAMES[di % SPIN_FRAMES.len()].into();
@@ -484,12 +594,12 @@ pub fn projectile_system(
             // landing position so the player can recover it.
             if let Some(thrown) = thrown_item {
                 let tile = proj.path[proj.path_index.min(proj.path.len() - 1)];
-                commands.entity(thrown.item_entity).insert(
-                    Position { x: tile.x, y: tile.y },
-                );
+                commands.entity(thrown.item_entity).insert(Position {
+                    x: tile.x,
+                    y: tile.y,
+                });
             }
             commands.entity(proj_entity).despawn();
         }
     }
 }
-

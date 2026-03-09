@@ -233,17 +233,6 @@ pub enum AiState {
     Fleeing,
 }
 
-/// Directional cursor for enemy entities. Defines which direction the enemy is
-/// currently looking. Used by the visibility system to restrict the enemy's
-/// viewshed to a cone (mirroring the player's cursor-based FOV). Enemies must
-/// spend ticks to rotate their look direction, making awareness directional.
-///
-/// The second field tracks remaining steps in a circular rotation sequence.
-/// When > 0, the NPC rotates one 45° CW step per turn and decrements until a
-/// full 360° circle is complete before resuming movement.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct AiLookDir(pub GridVec, pub u8);
-
 /// Patrol origin: the position this NPC considers "home". It will patrol
 /// around this position when not chasing the player.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -263,10 +252,16 @@ pub struct AiMemory {
     pub search_attempts: u8,
     /// Cursor steps taken since last fire (for blind-fire after 4 steps).
     pub cursor_steps: u8,
+    /// Remaining cursor rotation steps while searching at a last-known position.
+    pub search_rotation_steps: u8,
     /// Consecutive turns the NPC has been stationary (same tile).
     pub stationary_turns: u8,
     /// Previous position, used to detect stationarity.
     pub prev_pos: Option<GridVec>,
+    /// Last movement direction taken by the NPC.
+    pub last_move_dir: Option<GridVec>,
+    /// Turn when `last_move_dir` was recorded.
+    pub last_move_turn: u32,
 }
 
 impl Default for AiMemory {
@@ -276,8 +271,11 @@ impl Default for AiMemory {
             last_seen_turn: 0,
             search_attempts: 0,
             cursor_steps: 0,
+            search_rotation_steps: 0,
             stationary_turns: 0,
             prev_pos: None,
+            last_move_dir: None,
+            last_move_turn: 0,
         }
     }
 }
@@ -313,10 +311,9 @@ pub enum AimingStyle {
     Suppression,
 }
 
-/// Shared cursor component for aiming.  Both the player and NPCs use this
-/// same component — the AI system drives the cursor position; it does not
-/// bypass it.  The cursor advances one king-step per turn, matching player
-/// cursor speed exactly.
+/// Shared cursor component for aiming. Both the player and NPCs use this same
+/// component. NPC AI drives the cursor position directly and may never center
+/// it on their own tile.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Cursor {
     /// Current aim cursor position in world coordinates.
@@ -455,8 +452,10 @@ impl Stamina {
 /// its own `ProjectileVisual` so the renderer can pick the correct symbols.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectileVisual {
-    /// Bullets and shrapnel: center dot head (`◦`/`·`) with a trailing dot tail.
+    /// Bullets and arrows: center dot head with a trailing dot tail.
     BulletTrail,
+    /// Explosion fragments: hot spark / shard visuals distinct from normal shots.
+    ShrapnelTrail,
     /// Tomahawks and knives: spinning slashes and dashes (`/`, `—`, `\`, `|`).
     SpinningBlade,
     /// Everything else (dynamite, molotov, generic): asterisk (`*`).
@@ -501,9 +500,17 @@ pub struct Projectile {
 #[derive(Component, Debug)]
 pub enum ThrownExplosive {
     /// Dynamite: spawns shrapnel and environmental destruction on detonation.
-    Dynamite { damage: i32, radius: i32, grenade_index: usize },
+    Dynamite {
+        damage: i32,
+        radius: i32,
+        grenade_index: usize,
+    },
     /// Molotov: sets area on fire and generates smoke on detonation.
-    Molotov { damage: i32, radius: i32, item_index: usize },
+    Molotov {
+        damage: i32,
+        radius: i32,
+        item_index: usize,
+    },
 }
 
 // ─── Inventory & Item system ─────────────────────────────────────
@@ -530,11 +537,19 @@ pub enum ItemKind {
     /// A throwing tomahawk. Can be recovered after landing.
     Tomahawk { attack: i32, blunt_damage: i32 },
     /// A grenade (dynamite stick). Deals area damage.
-    Grenade { damage: i32, radius: i32, blunt_damage: i32 },
+    Grenade {
+        damage: i32,
+        radius: i32,
+        blunt_damage: i32,
+    },
     /// Whiskey bottle. Restores health when consumed.
     Whiskey { heal: i32, blunt_damage: i32 },
     /// A molotov cocktail. Thrown toward cursor; sets a large area on fire.
-    Molotov { damage: i32, radius: i32, blunt_damage: i32 },
+    Molotov {
+        damage: i32,
+        radius: i32,
+        blunt_damage: i32,
+    },
     /// A bow. Fires arrows. Used by Apache.
     Bow { attack: i32, blunt_damage: i32 },
     /// Beer. Restores a small amount of health when consumed.
@@ -623,6 +638,7 @@ pub struct LootTable;
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub enum CollectibleKind {
     Caps(i32),
+    Arrows(i32),
     Bullets31(i32),
     Bullets36(i32),
     Bullets44(i32),
@@ -710,7 +726,10 @@ mod tests {
 
     #[test]
     fn health_apply_damage_returns_actual() {
-        let mut h = Health { current: 5, max: 30 };
+        let mut h = Health {
+            current: 5,
+            max: 30,
+        };
         assert_eq!(h.apply_damage(3), 3);
         assert_eq!(h.current, 2);
         assert_eq!(h.apply_damage(10), 2);
@@ -719,7 +738,10 @@ mod tests {
 
     #[test]
     fn health_heal_clamps_to_max() {
-        let mut h = Health { current: 25, max: 30 };
+        let mut h = Health {
+            current: 25,
+            max: 30,
+        };
         let healed = h.heal(10);
         assert_eq!(healed, 5, "Should only heal the deficit");
         assert_eq!(h.current, 30);
@@ -727,27 +749,48 @@ mod tests {
 
     #[test]
     fn health_heal_returns_actual() {
-        let mut h = Health { current: 20, max: 30 };
+        let mut h = Health {
+            current: 20,
+            max: 30,
+        };
         assert_eq!(h.heal(5), 5);
         assert_eq!(h.current, 25);
     }
 
     #[test]
     fn health_heal_at_full_returns_zero() {
-        let mut h = Health { current: 30, max: 30 };
+        let mut h = Health {
+            current: 30,
+            max: 30,
+        };
         assert_eq!(h.heal(5), 0);
         assert_eq!(h.current, 30);
     }
 
     #[test]
     fn health_is_dead() {
-        assert!(Health { current: 0, max: 30 }.is_dead());
-        assert!(!Health { current: 1, max: 30 }.is_dead());
+        assert!(
+            Health {
+                current: 0,
+                max: 30
+            }
+            .is_dead()
+        );
+        assert!(
+            !Health {
+                current: 1,
+                max: 30
+            }
+            .is_dead()
+        );
     }
 
     #[test]
     fn health_fraction() {
-        let h = Health { current: 15, max: 30 };
+        let h = Health {
+            current: 15,
+            max: 30,
+        };
         assert!((h.fraction() - 0.5).abs() < 1e-10);
     }
 
@@ -759,7 +802,10 @@ mod tests {
 
     #[test]
     fn health_invariant_maintained() {
-        let mut h = Health { current: 10, max: 30 };
+        let mut h = Health {
+            current: 10,
+            max: 30,
+        };
         h.apply_damage(100);
         assert!(h.current >= 0 && h.current <= h.max);
         h.heal(100);
@@ -1001,46 +1047,63 @@ mod tests {
 
     #[test]
     fn stamina_spend_success() {
-        let mut s = Stamina { current: 50, max: 50 };
+        let mut s = Stamina {
+            current: 50,
+            max: 50,
+        };
         assert!(s.spend(10));
         assert_eq!(s.current, 40);
     }
 
     #[test]
     fn stamina_spend_insufficient() {
-        let mut s = Stamina { current: 5, max: 50 };
+        let mut s = Stamina {
+            current: 5,
+            max: 50,
+        };
         assert!(!s.spend(10));
         assert_eq!(s.current, 5, "Should not mutate on failed spend");
     }
 
     #[test]
     fn stamina_spend_exact() {
-        let mut s = Stamina { current: 10, max: 50 };
+        let mut s = Stamina {
+            current: 10,
+            max: 50,
+        };
         assert!(s.spend(10));
         assert_eq!(s.current, 0);
     }
 
     #[test]
     fn stamina_recover_clamps_to_max() {
-        let mut s = Stamina { current: 45, max: 50 };
+        let mut s = Stamina {
+            current: 45,
+            max: 50,
+        };
         s.recover(10);
         assert_eq!(s.current, 50);
     }
 
     #[test]
     fn stamina_recover_partial() {
-        let mut s = Stamina { current: 30, max: 50 };
+        let mut s = Stamina {
+            current: 30,
+            max: 50,
+        };
         s.recover(5);
         assert_eq!(s.current, 35);
     }
 
     #[test]
     fn stamina_invariant_maintained() {
-        let mut s = Stamina { current: 25, max: 50 };
+        let mut s = Stamina {
+            current: 25,
+            max: 50,
+        };
         s.spend(100); // Should fail (not enough), no mutation
         assert!(s.current >= 0 && s.current <= s.max);
         s.recover(100);
         assert!(s.current >= 0 && s.current <= s.max);
     }
-
 }

@@ -1,4 +1,8 @@
 use std::collections::{HashMap, VecDeque};
+#[cfg(not(feature = "windowed"))]
+use std::collections::HashSet;
+#[cfg(feature = "windowed")]
+use std::time::Duration;
 
 use bevy::prelude::*;
 
@@ -6,8 +10,8 @@ use crate::components::{Caliber, CollectibleKind};
 use crate::gamemap::GameMap;
 use crate::grid_vec::GridVec;
 use crate::noise::NoiseSeed;
-use crate::typeenums::{Floor, Props};
 use crate::typedefs::{MyPoint, SPAWN_X, SPAWN_Y};
+use crate::typeenums::{Floor, Props};
 
 /// Explosion radius for gunpowder barrels (Chebyshev distance).
 pub const GUNPOWDER_BARREL_EXPLOSION_RADIUS: i32 = 3;
@@ -54,14 +58,20 @@ impl GameMapResource {
                 let pos = origin + GridVec::new(dx, dy);
                 if let Some(voxel) = self.0.get_voxel_at(&pos)
                     && !matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall))
-                    && !matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater))
+                    && !matches!(
+                        voxel.floor,
+                        Some(Floor::ShallowWater) | Some(Floor::DeepWater)
+                    )
                 {
                     tiles_to_cloud.push((pos, voxel.floor.clone()));
                 }
             }
         }
         for (pos, prev_floor) in tiles_to_cloud {
-            self.0.sand_cloud_previous_floor.entry(pos).or_insert(prev_floor);
+            self.0
+                .sand_cloud_previous_floor
+                .entry(pos)
+                .or_insert(prev_floor);
             if let Some(voxel) = self.0.get_voxel_at_mut(&pos) {
                 voxel.floor = Some(Floor::SandCloud);
             }
@@ -80,15 +90,24 @@ impl GameMapResource {
         for gdx in -radius..=radius {
             for gdy in -radius..=radius {
                 let gp_dist = gdx.abs().max(gdy.abs());
-                if gp_dist > radius { continue; }
+                if gp_dist > radius {
+                    continue;
+                }
                 let fire_pos = origin + GridVec::new(gdx, gdy);
                 if let Some(voxel) = self.0.get_voxel_at(&fire_pos) {
-                    if matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall)) { continue; }
-                    let is_water = matches!(voxel.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater));
+                    if matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall)) {
+                        continue;
+                    }
+                    let is_water = matches!(
+                        voxel.floor,
+                        Some(Floor::ShallowWater) | Some(Floor::DeepWater)
+                    );
                     let has_flammable = voxel.props.as_ref().is_some_and(|p| p.is_flammable());
                     let prev = voxel.floor.clone();
                     tiles_to_ignite.push((fire_pos, prev, has_flammable));
-                    if is_water { continue; }
+                    if is_water {
+                        continue;
+                    }
                 }
             }
         }
@@ -100,8 +119,9 @@ impl GameMapResource {
                 fire_count += 1;
             }
             // Save previous floor before setting fire (avoids double mutable borrow).
-            let is_water = self.0.get_voxel_at(&fire_pos)
-                .is_some_and(|v| matches!(v.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater)));
+            let is_water = self.0.get_voxel_at(&fire_pos).is_some_and(|v| {
+                matches!(v.floor, Some(Floor::ShallowWater) | Some(Floor::DeepWater))
+            });
             if !is_water {
                 self.0.fire_previous_floor.entry(fire_pos).or_insert(prev);
                 self.0.fire_turns.entry(fire_pos).or_insert(turn);
@@ -339,25 +359,26 @@ impl SpellParticles {
         }
         self.frame_accumulator = 0;
 
-        self.particles.retain_mut(|(pos, life, delay, _is_sand, vx, vy)| {
-            if *delay > 0 {
-                *delay -= 1;
-                true // still waiting to appear
-            } else {
-                // Move the particle for visible motion
-                if *life > 0 {
-                    pos.x += *vx;
-                    pos.y += *vy;
+        self.particles
+            .retain_mut(|(pos, life, delay, _is_sand, vx, vy)| {
+                if *delay > 0 {
+                    *delay -= 1;
+                    true // still waiting to appear
+                } else {
+                    // Move the particle for visible motion
+                    if *life > 0 {
+                        pos.x += *vx;
+                        pos.y += *vy;
+                    }
+                    *life = life.saturating_sub(1);
+                    // Slow down particles as they age (plume dissipation)
+                    if *life < 3 {
+                        *vx = 0;
+                        *vy = 0;
+                    }
+                    *life > 0
                 }
-                *life = life.saturating_sub(1);
-                // Slow down particles as they age (plume dissipation)
-                if *life < 3 {
-                    *vx = 0;
-                    *vy = 0;
-                }
-                *life > 0
-            }
-        });
+            });
     }
 }
 
@@ -399,16 +420,43 @@ impl CombatLog {
     pub fn recent(&self, n: usize) -> Vec<&str> {
         let len = self.messages.len();
         let start = len.saturating_sub(n);
-        self.messages.iter().skip(start).map(|s| s.as_str()).collect()
+        self.messages
+            .iter()
+            .skip(start)
+            .map(|s| s.as_str())
+            .collect()
     }
 
     /// Returns the most recent `n` messages that are either untagged
     /// (always visible) or tagged with a position inside `visible`.
-    pub fn recent_visible(&self, n: usize, visible: &std::collections::HashSet<GridVec>) -> Vec<&str> {
-        let visible_msgs: Vec<&str> = self.messages
+    pub fn recent_visible(
+        &self,
+        n: usize,
+        visible: &std::collections::HashSet<GridVec>,
+    ) -> Vec<&str> {
+        let visible_msgs: Vec<&str> = self
+            .messages
             .iter()
             .zip(self.positions.iter())
             .filter(|(_, pos)| pos.is_none_or(|p| visible.contains(&p)))
+            .map(|(msg, _)| msg.as_str())
+            .collect();
+        let start = visible_msgs.len().saturating_sub(n);
+        visible_msgs[start..].to_vec()
+    }
+
+    /// Returns the most recent `n` messages tagged with positions inside `visible`.
+    /// Untagged/global messages are excluded.
+    pub fn recent_strictly_visible(
+        &self,
+        n: usize,
+        visible: &std::collections::HashSet<GridVec>,
+    ) -> Vec<&str> {
+        let visible_msgs: Vec<&str> = self
+            .messages
+            .iter()
+            .zip(self.positions.iter())
+            .filter(|(_, pos)| pos.is_some_and(|p| visible.contains(&p)))
             .map(|(msg, _)| msg.as_str())
             .collect();
         let start = visible_msgs.len().saturating_sub(n);
@@ -430,13 +478,50 @@ const BLOOD_MAX_AGE: u32 = 20;
 impl BloodMap {
     /// Removes blood stains older than `BLOOD_MAX_AGE` turns.
     pub fn prune(&mut self, current_turn: u32) {
-        self.stains.retain(|_, &mut turn| current_turn.saturating_sub(turn) <= BLOOD_MAX_AGE);
+        self.stains
+            .retain(|_, &mut turn| current_turn.saturating_sub(turn) <= BLOOD_MAX_AGE);
     }
 }
 
 /// Marker resource indicating a restart has been requested.
 #[derive(Resource, Debug, Default)]
 pub struct RestartRequested(pub bool);
+
+/// Wall tiles destroyed to create the player's starting breach. The opening
+/// effect is deferred until the welcome overlay is dismissed.
+#[derive(Resource, Debug)]
+pub struct StartupExplosionPending {
+    pub breach_tiles: Vec<GridVec>,
+}
+
+impl Default for StartupExplosionPending {
+    fn default() -> Self {
+        Self {
+            breach_tiles: Vec::new(),
+        }
+    }
+}
+
+/// Tracks held keys in windowed mode so repeated input can emulate terminal
+/// autorepeat: immediate first press, short delay, then steady repeats.
+#[derive(Resource, Debug)]
+pub struct WindowedKeyRepeat {
+    #[cfg(feature = "windowed")]
+    pub held: HashMap<bevy::input::keyboard::KeyCode, Duration>,
+    #[cfg(not(feature = "windowed"))]
+    pub held: HashSet<()>,
+}
+
+impl Default for WindowedKeyRepeat {
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "windowed")]
+            held: HashMap::default(),
+            #[cfg(not(feature = "windowed"))]
+            held: HashSet::default(),
+        }
+    }
+}
 
 /// When true, the player is dead but watching the game continue.
 /// Set by pressing "." on the death screen. The `end_world_turn_system` system
@@ -455,16 +540,6 @@ pub struct DeathFade {
 /// God mode: when true, the player cannot take damage. Toggled with Shift+G.
 #[derive(Resource, Debug, Default)]
 pub struct GodMode(pub bool);
-
-/// GTA-style star (wanted) level. Higher stars = more sheriffs spawn.
-/// Decays when the player is not in hostile or sheriff vision for a while.
-#[derive(Resource, Debug, Default)]
-pub struct StarLevel {
-    /// Current wanted level (0 = peaceful, 1+ = wanted).
-    pub level: u32,
-    /// Turns since last seen by a hostile or sheriff NPC.
-    pub unseen_turns: u32,
-}
 
 /// Prop health map: tracks damage dealt to props.
 /// When accumulated damage exceeds the prop's max HP, it is destroyed.
@@ -487,6 +562,8 @@ pub struct ExtraWorldTicks(pub i32);
 pub struct Collectibles {
     /// Percussion caps (needed for reloading: 1 per round)
     pub caps: i32,
+    /// Arrows for bows.
+    pub arrows: i32,
     /// .31 caliber lead bullets
     pub bullets_31: i32,
     /// .36 caliber lead bullets
@@ -509,6 +586,7 @@ impl Default for Collectibles {
     fn default() -> Self {
         Self {
             caps: 10,
+            arrows: 0,
             bullets_31: 0,
             bullets_36: 0,
             bullets_44: 0,
@@ -577,6 +655,7 @@ impl Collectibles {
     pub fn collect(&mut self, kind: CollectibleKind) {
         match kind {
             CollectibleKind::Caps(n) => self.caps += n,
+            CollectibleKind::Arrows(n) => self.arrows += n,
             CollectibleKind::Bullets31(n) => self.bullets_31 += n,
             CollectibleKind::Bullets36(n) => self.bullets_36 += n,
             CollectibleKind::Bullets44(n) => self.bullets_44 += n,
@@ -603,7 +682,10 @@ impl DynamicRng {
     /// given key, using map_seed + tick as the seed.
     pub fn roll(&self, map_seed: u64, key: u64) -> f64 {
         // LCG constant from Knuth (MMIX) for good bit-mixing properties
-        let seed = map_seed.wrapping_add(self.tick).wrapping_mul(6364136223846793005).wrapping_add(key);
+        let seed = map_seed
+            .wrapping_add(self.tick)
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(key);
         // Squirrel3-like hash for good distribution
         let mut h = seed;
         h ^= h >> 16;
@@ -616,7 +698,9 @@ impl DynamicRng {
 
     /// Returns a random index in `[0, len)` using the dynamic RNG.
     pub fn random_index(&self, map_seed: u64, key: u64, len: usize) -> usize {
-        if len == 0 { return 0; }
+        if len == 0 {
+            return 0;
+        }
         (self.roll(map_seed, key) * len as f64) as usize % len
     }
 
@@ -746,10 +830,7 @@ mod tests {
         assert_eq!(log.messages.len(), MAX_COMBAT_LOG_MESSAGES);
         // Oldest messages (0..9) were trimmed; first remaining is msg-10.
         assert_eq!(log.messages[0], "msg-10");
-        assert_eq!(
-            log.messages[MAX_COMBAT_LOG_MESSAGES - 1],
-            "msg-59"
-        );
+        assert_eq!(log.messages[MAX_COMBAT_LOG_MESSAGES - 1], "msg-59");
     }
 
     #[test]
@@ -884,7 +965,11 @@ mod tests {
     fn collectibles_default_has_starting_supplies() {
         let c = Collectibles::default();
         assert_eq!(c.caps, 10);
-        assert_eq!(c.bullets_31, 0, "Default has no .31 bullets — use for_starting_caliber()");
+        assert_eq!(
+            c.bullets_31, 0,
+            "Default has no .31 bullets — use for_starting_caliber()"
+        );
+        assert_eq!(c.arrows, 0);
         assert_eq!(c.bullets_36, 0);
         assert_eq!(c.bullets_44, 0);
         assert_eq!(c.powder, 10);

@@ -1,11 +1,15 @@
 use bevy::prelude::*;
 
-use crate::components::{CombatStats, Inventory, Item, ItemKind, Projectile, ProjectileVisual, SPELL_STAMINA_COST, Stamina, ThrownExplosive, Name, Position, Renderable, display_name};
+use crate::components::{
+    CombatStats, Inventory, Item, ItemKind, Name, Position, Projectile, ProjectileVisual,
+    Renderable, SPELL_STAMINA_COST, Stamina, ThrownExplosive, display_name,
+};
 use crate::events::{MolotovCastIntent, SpellCastIntent};
 use crate::grid_vec::GridVec;
 use crate::resources::{CombatLog, GameMapResource, MapSeed, SpellParticles, TurnCounter};
-use crate::typeenums::{Floor, Props};
+use crate::systems::input::SAND_STAMINA_COST;
 use crate::typedefs::RatColor;
+use crate::typeenums::{Floor, Props};
 
 /// Resolves grenade throw intents by spawning shrapnel projectile entities.
 ///
@@ -18,13 +22,21 @@ use crate::typedefs::RatColor;
 pub fn spell_system(
     mut commands: Commands,
     mut intents: MessageReader<SpellCastIntent>,
-    mut caster_query: Query<(&CombatStats, Option<&Name>, Option<&mut Stamina>, Option<&mut Inventory>, Option<&Position>)>,
+    mut caster_query: Query<(
+        &CombatStats,
+        Option<&Name>,
+        Option<&mut Stamina>,
+        Option<&mut Inventory>,
+        Option<&Position>,
+    )>,
     mut combat_log: ResMut<CombatLog>,
     mut game_map: ResMut<GameMapResource>,
     turn_counter: Res<TurnCounter>,
 ) {
     for intent in intents.read() {
-        let Ok((caster_stats, caster_name, stamina, inventory, caster_pos)) = caster_query.get_mut(intent.caster) else {
+        let Ok((caster_stats, caster_name, stamina, inventory, caster_pos)) =
+            caster_query.get_mut(intent.caster)
+        else {
             continue;
         };
 
@@ -34,42 +46,56 @@ pub fn spell_system(
         // direction (plume shape away from the caster).
         if intent.grenade_index == usize::MAX {
             if let Some(mut stamina) = stamina {
-                stamina.spend(5); // Sand throw costs 5 stamina
+                stamina.spend(SAND_STAMINA_COST);
             }
             let origin = intent.target;
             let radius_f = intent.radius as f64;
             let caster_vec = caster_pos.map(|p| p.as_grid_vec());
-            let dir = caster_vec.map(|cv| {
-                let d = origin - cv;
-                let len = ((d.x as f64).powi(2) + (d.y as f64).powi(2)).sqrt();
-                if len > 0.01 { (d.x as f64 / len, d.y as f64 / len) } else { (0.0, 0.0) }
-            }).unwrap_or((0.0, 0.0));
+            let dir = caster_vec
+                .map(|cv| {
+                    let d = origin - cv;
+                    let len = ((d.x as f64).powi(2) + (d.y as f64).powi(2)).sqrt();
+                    if len > 0.01 {
+                        (d.x as f64 / len, d.y as f64 / len)
+                    } else {
+                        (0.0, 0.0)
+                    }
+                })
+                .unwrap_or((0.0, 0.0));
 
             let scan_radius = intent.radius + 1;
             let base_radius = radius_f * 0.5;
             let directional_scale = radius_f;
-            game_map.place_sand_cloud(origin, turn_counter.0, dir, scan_radius, base_radius, directional_scale);
+            game_map.place_sand_cloud(
+                origin,
+                turn_counter.0,
+                dir,
+                scan_radius,
+                base_radius,
+                directional_scale,
+            );
             continue;
         }
 
         // Consume stamina.
         if let Some(mut stamina) = stamina
-            && !stamina.spend(SPELL_STAMINA_COST) {
-                combat_log.push("Not enough stamina!".into());
-                continue;
-            }
+            && !stamina.spend(SPELL_STAMINA_COST)
+        {
+            combat_log.push("Not enough stamina!".into());
+            continue;
+        }
 
         // Consume the grenade item from inventory.
         if let Some(mut inv) = inventory
-            && let Some(grenade_entity) = inv.remove_at(intent.grenade_index) {
-                commands.entity(grenade_entity).despawn();
-            }
+            && let Some(grenade_entity) = inv.remove_at(intent.grenade_index)
+        {
+            commands.entity(grenade_entity).despawn();
+        }
 
+        let caster_gv = caster_pos.map(|p| p.as_grid_vec()).unwrap_or(intent.target);
         let c_name = display_name(caster_name);
         combat_log.push(format!("{c_name} throws dynamite!"));
-
         // Spawn a traveling explosive projectile toward the target.
-        let caster_gv = caster_pos.map(|p| p.as_grid_vec()).unwrap_or(intent.target);
         spawn_explosive_projectile(
             &mut commands,
             caster_gv,
@@ -90,32 +116,41 @@ pub fn spell_system(
 pub fn molotov_system(
     mut commands: Commands,
     mut intents: MessageReader<MolotovCastIntent>,
-    mut caster_query: Query<(&CombatStats, Option<&Name>, Option<&mut Stamina>, Option<&mut Inventory>, Option<&Position>)>,
+    mut caster_query: Query<(
+        &CombatStats,
+        Option<&Name>,
+        Option<&mut Stamina>,
+        Option<&mut Inventory>,
+        Option<&Position>,
+    )>,
     mut combat_log: ResMut<CombatLog>,
 ) {
     for intent in intents.read() {
-        let Ok((_caster_stats, caster_name, stamina, inventory, caster_pos)) = caster_query.get_mut(intent.caster) else {
+        let Ok((_caster_stats, caster_name, stamina, inventory, caster_pos)) =
+            caster_query.get_mut(intent.caster)
+        else {
             continue;
         };
 
         // Consume stamina.
         if let Some(mut stamina) = stamina
-            && !stamina.spend(SPELL_STAMINA_COST) {
-                combat_log.push("Not enough stamina!".into());
-                continue;
-            }
+            && !stamina.spend(SPELL_STAMINA_COST)
+        {
+            combat_log.push("Not enough stamina!".into());
+            continue;
+        }
 
         // Consume the molotov item from inventory.
         if let Some(mut inv) = inventory
-            && let Some(molotov_entity) = inv.remove_at(intent.item_index) {
-                commands.entity(molotov_entity).despawn();
-            }
+            && let Some(molotov_entity) = inv.remove_at(intent.item_index)
+        {
+            commands.entity(molotov_entity).despawn();
+        }
 
+        let caster_gv = caster_pos.map(|p| p.as_grid_vec()).unwrap_or(intent.target);
         let c_name = display_name(caster_name);
         combat_log.push(format!("{c_name} hurls a Molotov cocktail!"));
-
         // Spawn a traveling explosive projectile toward the target.
-        let caster_gv = caster_pos.map(|p| p.as_grid_vec()).unwrap_or(intent.target);
         spawn_explosive_projectile(
             &mut commands,
             caster_gv,
@@ -138,24 +173,46 @@ fn spawn_container_loot(commands: &mut Commands, x: i32, y: i32, roll: f64) {
             Position { x, y },
             Item,
             Name("Whiskey".into()),
-            Renderable { symbol: "w".into(), fg: RatColor::Rgb(180, 120, 60), bg: RatColor::Black },
-            ItemKind::Whiskey { heal: 10, blunt_damage: 4 },
+            Renderable {
+                symbol: "w".into(),
+                fg: RatColor::Rgb(180, 120, 60),
+                bg: RatColor::Black,
+            },
+            ItemKind::Whiskey {
+                heal: 10,
+                blunt_damage: 4,
+            },
         ));
     } else if roll < 0.5 {
         commands.spawn((
             Position { x, y },
             Item,
             Name("Knife".into()),
-            Renderable { symbol: "/".into(), fg: RatColor::Rgb(192, 192, 210), bg: RatColor::Black },
-            ItemKind::Knife { attack: 4, blunt_damage: 6 },
+            Renderable {
+                symbol: "/".into(),
+                fg: RatColor::Rgb(192, 192, 210),
+                bg: RatColor::Black,
+            },
+            ItemKind::Knife {
+                attack: 4,
+                blunt_damage: 6,
+            },
         ));
     } else if roll < 0.65 {
         commands.spawn((
             Position { x, y },
             Item,
             Name("Dynamite".into()),
-            Renderable { symbol: "*".into(), fg: RatColor::Rgb(255, 165, 0), bg: RatColor::Black },
-            ItemKind::Grenade { damage: 8, radius: 2, blunt_damage: 3 },
+            Renderable {
+                symbol: "*".into(),
+                fg: RatColor::Rgb(255, 165, 0),
+                bg: RatColor::Black,
+            },
+            ItemKind::Grenade {
+                damage: 8,
+                radius: 2,
+                blunt_damage: 3,
+            },
         ));
     }
     // else: no drop (35% chance)
@@ -163,7 +220,12 @@ fn spawn_container_loot(commands: &mut Commands, x: i32, y: i32, roll: f64) {
 
 /// Spawns smoke (SandCloud) around a molotov detonation point, similar to gun smoke.
 /// The smoke cloud is larger than gun smoke to represent the thick black smoke from fire.
-fn spawn_molotov_smoke(game_map: &mut GameMapResource, origin: crate::grid_vec::GridVec, turn: u32, radius: i32) {
+fn spawn_molotov_smoke(
+    game_map: &mut GameMapResource,
+    origin: crate::grid_vec::GridVec,
+    turn: u32,
+    radius: i32,
+) {
     let smoke_radius = (radius / 2).max(2);
     let mut tiles_to_cloud: Vec<(crate::grid_vec::GridVec, Option<Floor>)> = Vec::new();
     for dx in -smoke_radius..=smoke_radius {
@@ -175,13 +237,18 @@ fn spawn_molotov_smoke(game_map: &mut GameMapResource, origin: crate::grid_vec::
             let pos = origin + crate::grid_vec::GridVec::new(dx, dy);
             if let Some(voxel) = game_map.0.get_voxel_at(&pos)
                 && !matches!(voxel.props, Some(Props::Wall) | Some(Props::StoneWall))
-                    && !matches!(voxel.floor, Some(Floor::Fire)) {
-                    tiles_to_cloud.push((pos, voxel.floor.clone()));
-                }
+                && !matches!(voxel.floor, Some(Floor::Fire))
+            {
+                tiles_to_cloud.push((pos, voxel.floor.clone()));
+            }
         }
     }
     for (pos, prev_floor) in tiles_to_cloud {
-        game_map.0.sand_cloud_previous_floor.entry(pos).or_insert(prev_floor);
+        game_map
+            .0
+            .sand_cloud_previous_floor
+            .entry(pos)
+            .or_insert(prev_floor);
         if let Some(voxel) = game_map.0.get_voxel_at_mut(&pos) {
             voxel.floor = Some(Floor::SandCloud);
         }
@@ -218,7 +285,10 @@ fn spawn_explosive_projectile(
         ThrownExplosive::Molotov { .. } => ("m", RatColor::Rgb(255, 100, 0)),
     };
     commands.spawn((
-        Position { x: start_pos.x, y: start_pos.y },
+        Position {
+            x: start_pos.x,
+            y: start_pos.y,
+        },
         Renderable {
             symbol: symbol.into(),
             fg,
@@ -247,7 +317,13 @@ fn spawn_explosive_projectile(
 pub fn explosive_projectile_system(
     mut commands: Commands,
     mut explosives: Query<(Entity, &mut Position, &mut Projectile, &ThrownExplosive)>,
-    blockers: Query<Entity, (bevy::prelude::With<crate::components::BlocksMovement>, bevy::prelude::Without<Projectile>)>,
+    blockers: Query<
+        Entity,
+        (
+            bevy::prelude::With<crate::components::BlocksMovement>,
+            bevy::prelude::Without<Projectile>,
+        ),
+    >,
     spatial: Res<crate::resources::SpatialIndex>,
     mut combat_log: ResMut<CombatLog>,
     mut game_map: ResMut<GameMapResource>,
@@ -255,7 +331,6 @@ pub fn explosive_projectile_system(
     seed: Res<MapSeed>,
     turn_counter: Res<TurnCounter>,
 ) {
-
     for (proj_entity, mut proj_pos, mut proj, explosive) in &mut explosives {
         let steps = proj.tiles_per_tick;
         let mut detonate_pos: Option<GridVec> = None;
@@ -273,7 +348,9 @@ pub fn explosive_projectile_system(
 
             // Check for blocking entity at this tile (not the source)
             let ents = spatial.entities_at(&tile);
-            let hit_entity = ents.iter().any(|&e| e != proj.source && blockers.contains(e));
+            let hit_entity = ents
+                .iter()
+                .any(|&e| e != proj.source && blockers.contains(e));
             if hit_entity {
                 detonate_pos = Some(tile);
                 break;
@@ -291,10 +368,30 @@ pub fn explosive_projectile_system(
             // Detonate at this position
             match explosive {
                 ThrownExplosive::Dynamite { damage, radius, .. } => {
-                    detonate_dynamite(&mut commands, &mut game_map, &mut combat_log, &seed, &turn_counter, det_pos, *damage, *radius, proj.source);
+                    detonate_dynamite(
+                        &mut commands,
+                        &mut game_map,
+                        &mut combat_log,
+                        &seed,
+                        &turn_counter,
+                        det_pos,
+                        *damage,
+                        *radius,
+                        proj.source,
+                    );
                 }
                 ThrownExplosive::Molotov { damage, radius, .. } => {
-                    detonate_molotov(&mut commands, &mut game_map, &mut combat_log, &mut spell_particles, &turn_counter, det_pos, *damage, *radius, proj.source);
+                    detonate_molotov(
+                        &mut commands,
+                        &mut game_map,
+                        &mut combat_log,
+                        &mut spell_particles,
+                        &turn_counter,
+                        det_pos,
+                        *damage,
+                        *radius,
+                        proj.source,
+                    );
                 }
             }
             commands.entity(proj_entity).despawn();
@@ -316,8 +413,6 @@ fn detonate_dynamite(
     radius: i32,
     source: Entity,
 ) {
-    combat_log.push("Dynamite explodes!".to_string());
-
     crate::systems::projectile::spawn_shrapnel(commands, origin, radius, damage, source);
 
     let mut destroyed_count = 0;
@@ -349,8 +444,17 @@ fn detonate_dynamite(
                                 gunpowder_positions.push(target_pos);
                             }
                             if is_lootable {
-                                let loot_roll = crate::noise::value_noise(target_pos.x, target_pos.y, seed.0.wrapping_add(88888));
-                                spawn_container_loot(commands, target_pos.x, target_pos.y, loot_roll);
+                                let loot_roll = crate::noise::value_noise(
+                                    target_pos.x,
+                                    target_pos.y,
+                                    seed.0.wrapping_add(88888),
+                                );
+                                spawn_container_loot(
+                                    commands,
+                                    target_pos.x,
+                                    target_pos.y,
+                                    loot_roll,
+                                );
                             }
                             // Dynamite destroys everything unconditionally.
                             voxel.props = None;
@@ -378,7 +482,9 @@ fn detonate_dynamite(
         }
     }
     if destroyed_count > 0 {
-        combat_log.push(format!("The explosion destroys {destroyed_count} obstacle(s)!"));
+        combat_log.push(format!(
+            "The explosion destroys {destroyed_count} obstacle(s)!"
+        ));
     }
     if water_count > 0 {
         combat_log.push(format!("{water_count} water trough(s) spill water!"));
@@ -422,7 +528,9 @@ fn detonate_molotov(
         }
     }
     if fire_count > 0 {
-        combat_log.push(format!("A blazing inferno! {fire_count} tile(s) set ablaze!"));
+        combat_log.push(format!(
+            "A blazing inferno! {fire_count} tile(s) set ablaze!"
+        ));
     }
 
     spawn_molotov_smoke(game_map, origin, turn_counter.0, radius);

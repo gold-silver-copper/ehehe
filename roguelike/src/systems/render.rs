@@ -3,26 +3,31 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 use bevy_ratatui::RatatuiContext;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
 
-use crate::components::{AiLookDir, Faction, Health, Inventory, ItemKind, Projectile, ProjectileVisual, Stamina, Name, PlayerControlled, Position, Renderable, Viewshed, display_name, item_display_name};
+use crate::components::{
+    Cursor, Faction, Health, Inventory, ItemKind, Name, PlayerControlled, Position, Projectile,
+    ProjectileVisual, Renderable, Stamina, Viewshed, display_name, item_display_name,
+};
 use crate::grid_vec::GridVec;
 use crate::resources::{
-    BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, GameMapResource, GameState, InputMode,
-    InputState, KillCount, SoundEvents, SpellParticles, TurnCounter, SOUND_RANGE,
+    BloodMap, CameraPosition, Collectibles, CombatLog, CursorPosition, GameMapResource, GameState,
+    InputMode, InputState, KillCount, SOUND_RANGE, SoundEvents, SpellParticles, TurnCounter,
 };
 use crate::systems::input::KEYBINDINGS;
-use crate::systems::visibility::NPC_PROXIMITY_RADIUS;
 use crate::typedefs::{CoordinateUnit, MyPoint, RatColor};
+
+const UI_BG: Color = Color::Black;
 
 /// Lifetime (in frames) for combat particle animations.
 /// Must match the lifetime used in spell.rs when creating particles.
 const PARTICLE_LIFETIME: f32 = 8.0;
 
 /// Maximum expected lifetime for smoke particles, used to normalize intensity.
-const SMOKE_PARTICLE_MAX_LIFETIME: f32 = 10.0;
+const SMOKE_PARTICLE_MAX_LIFETIME: f32 = 34.0;
 
 /// Minimum intensity for explosion particles so they remain visible.
 const MIN_EXPLOSION_INTENSITY: f32 = 0.15;
@@ -81,12 +86,24 @@ pub fn draw_system(
     camera: Res<CameraPosition>,
     renderables: Query<(&Position, &Renderable, Option<&Name>), Without<Projectile>>,
     player_query: Query<
-        (&Position, Option<&Viewshed>, Option<&Health>, Option<&Stamina>, Option<&Inventory>),
+        (
+            &Position,
+            Option<&Viewshed>,
+            Option<&Health>,
+            Option<&Stamina>,
+            Option<&Inventory>,
+        ),
         With<PlayerControlled>,
     >,
     item_query: Query<(Option<&Name>, Option<&ItemKind>), With<crate::components::Item>>,
-    npc_viewsheds: Query<(&Viewshed, Option<&Faction>, &Position, Option<&AiLookDir>)>,
-    npc_info_query: Query<(&Position, Option<&Name>, Option<&Faction>, Option<&Inventory>, Option<&Health>)>,
+    npc_viewsheds: Query<(&Viewshed, Option<&Faction>, &Position, Option<&Cursor>)>,
+    npc_info_query: Query<(
+        &Position,
+        Option<&Name>,
+        Option<&Faction>,
+        Option<&Inventory>,
+        Option<&Health>,
+    )>,
     projectiles: Query<(&Position, &Renderable, &Projectile)>,
     state: Res<State<GameState>>,
     combat_log: Res<CombatLog>,
@@ -122,7 +139,14 @@ pub fn draw_system(
         let render_height = game_area.height;
 
         // Collect the player's visible and revealed tiles.
-        let (visible_tiles, revealed_tiles, player_hp, player_stamina, player_inv, player_world_pos): (
+        let (
+            visible_tiles,
+            revealed_tiles,
+            player_hp,
+            player_stamina,
+            player_inv,
+            player_world_pos,
+        ): (
             Option<&HashSet<MyPoint>>,
             Option<&HashSet<MyPoint>>,
             Option<&Health>,
@@ -165,18 +189,23 @@ pub fn draw_system(
                 for (screen_x, cell) in row.iter_mut().enumerate() {
                     let world = bottom_left + GridVec::new(screen_x as i32, screen_y as i32);
                     if let Some(voxel) = game_map.0.get_voxel_at(&world) {
-                        let is_visible = visible_tiles
-                            .map(|vt| vt.contains(&world))
-                            .unwrap_or(true);
-                        if !is_visible { continue; }
+                        let is_visible =
+                            visible_tiles.map(|vt| vt.contains(&world)).unwrap_or(true);
+                        if !is_visible {
+                            continue;
+                        }
                         match &voxel.floor {
                             Some(crate::typeenums::Floor::ShallowWater) => {
                                 // Position-based phase offset for varied ripple timing.
-                                let pos_hash = ((world.x.wrapping_mul(7) ^ world.y.wrapping_mul(13)) as usize) & 3;
+                                let pos_hash = ((world.x.wrapping_mul(7) ^ world.y.wrapping_mul(13))
+                                    as usize)
+                                    & 3;
                                 let sym_idx = (water_phase + pos_hash) % SHALLOW_SYMS.len();
                                 cell.0 = SHALLOW_SYMS[sym_idx].into();
                                 // Slight color variation based on position.
-                                let color_var = ((world.x.wrapping_mul(3) ^ world.y.wrapping_mul(11)) & 15) as u8;
+                                let color_var = ((world.x.wrapping_mul(3)
+                                    ^ world.y.wrapping_mul(11))
+                                    & 15) as u8;
                                 cell.1 = RatColor::Rgb(
                                     90_u8.wrapping_add(color_var),
                                     160_u8.wrapping_add(color_var / 2),
@@ -189,10 +218,14 @@ pub fn draw_system(
                                 );
                             }
                             Some(crate::typeenums::Floor::DeepWater) => {
-                                let pos_hash = ((world.x.wrapping_mul(11) ^ world.y.wrapping_mul(7)) as usize) & 3;
+                                let pos_hash = ((world.x.wrapping_mul(11) ^ world.y.wrapping_mul(7))
+                                    as usize)
+                                    & 3;
                                 let sym_idx = (water_phase + pos_hash) % DEEP_SYMS.len();
                                 cell.0 = DEEP_SYMS[sym_idx].into();
-                                let color_var = ((world.x.wrapping_mul(5) ^ world.y.wrapping_mul(9)) & 15) as u8;
+                                let color_var = ((world.x.wrapping_mul(5)
+                                    ^ world.y.wrapping_mul(9))
+                                    & 15) as u8;
                                 cell.1 = RatColor::Rgb(
                                     20_u8.wrapping_add(color_var),
                                     70_u8.wrapping_add(color_var / 2),
@@ -222,14 +255,16 @@ pub fn draw_system(
         // All NPCs (hostile or not): tint only a small arc in their facing direction.
         // This shows just enough of their FOV to indicate where they're looking.
         // Animals (Wildlife) and Civilians are excluded from FOV highlighting.
-        // The 3-tile circular proximity awareness zone is NOT tinted.
         {
             /// Maximum Chebyshev distance from an NPC for direction tint.
-            const FOV_TINT_ARC_RADIUS: i32 = 8;
+            const FOV_TINT_ARC_RADIUS: i32 = 3;
 
             let mut enemy_visible: HashSet<MyPoint> = HashSet::new();
-            for (vs, faction, npc_pos, ai_look) in &npc_viewsheds {
+            for (vs, faction, npc_pos, npc_cursor) in &npc_viewsheds {
                 if faction.is_some_and(|f| matches!(f, Faction::Wildlife | Faction::Civilians)) {
+                    continue;
+                }
+                if vs.dirty {
                     continue;
                 }
                 // Only tint FOV for NPCs that the player can currently see
@@ -240,28 +275,21 @@ pub fn draw_system(
                 if !npc_in_player_view {
                     continue;
                 }
-
-                let prox_sq = (NPC_PROXIMITY_RADIUS * NPC_PROXIMITY_RADIUS) as i64;
+                let Some(look_delta) = npc_cursor
+                    .map(|cursor| (cursor.pos - npc_gv).king_step())
+                    .filter(|delta| !delta.is_zero())
+                else {
+                    continue;
+                };
 
                 // Tint only a small arc in facing direction — just enough to
                 // see where people are looking.
-                // Skip tiles within the circular proximity zone.
                 for &tile in &vs.visible_tiles {
                     let diff = tile - npc_gv;
-                    let dist_sq = (diff.x as i64) * (diff.x as i64) + (diff.y as i64) * (diff.y as i64);
-                    // For tiles in the circular proximity zone, only tint
-                    // those in the forward-facing direction (fixes the gap
-                    // between NPC and their FOV tint).
-                    let in_proximity = dist_sq <= prox_sq;
                     if diff.x.abs().max(diff.y.abs()) <= FOV_TINT_ARC_RADIUS {
-                        if let Some(look) = ai_look {
-                            let dot = diff.x as i64 * look.0.x as i64
-                                    + diff.y as i64 * look.0.y as i64;
-                            if dot <= 0 && diff != GridVec::ZERO {
-                                continue;
-                            }
-                        } else if in_proximity {
-                            // No look direction and in proximity — skip.
+                        let dot =
+                            diff.x as i64 * look_delta.x as i64 + diff.y as i64 * look_delta.y as i64;
+                        if dot <= 0 && diff != GridVec::ZERO {
                             continue;
                         }
                         enemy_visible.insert(tile);
@@ -271,17 +299,18 @@ pub fn draw_system(
             for (screen_y, row) in render_packet.iter_mut().enumerate() {
                 for (screen_x, cell) in row.iter_mut().enumerate() {
                     let world = bottom_left + GridVec::new(screen_x as i32, screen_y as i32);
-                    let in_player_view = visible_tiles
-                        .map(|vt| vt.contains(&world))
-                        .unwrap_or(false);
-                    if in_player_view && enemy_visible.contains(&world)
-                        && let RatColor::Rgb(r, g, b) = cell.2 {
-                            cell.2 = RatColor::Rgb(
-                                r.saturating_add(40),
-                                g.saturating_sub(10),
-                                b.saturating_sub(10),
-                            );
-                        }
+                    let in_player_view =
+                        visible_tiles.map(|vt| vt.contains(&world)).unwrap_or(false);
+                    if in_player_view
+                        && enemy_visible.contains(&world)
+                        && let RatColor::Rgb(r, g, b) = cell.2
+                    {
+                        cell.2 = RatColor::Rgb(
+                            r.saturating_add(40),
+                            g.saturating_sub(10),
+                            b.saturating_sub(10),
+                        );
+                    }
                 }
             }
         }
@@ -314,30 +343,41 @@ pub fn draw_system(
         // Collect visible entities for the info panel.
         let mut visible_entity_infos: Vec<(String, RatColor, RatColor, String)> = Vec::new();
 
+        let mut visible_renderables: Vec<(i32, GridVec, &Renderable, Option<&Name>)> = Vec::new();
         for (pos, renderable, name) in &renderables {
-            let screen = pos.as_grid_vec() - bottom_left;
+            let world = pos.as_grid_vec();
+            let screen = world - bottom_left;
 
-            if in_bounds(screen, render_width, render_height)
-            {
-                // Only draw entities that are currently visible (not merely revealed)
-                let entity_visible = visible_tiles
-                    .map(|vt| vt.contains(&pos.as_grid_vec()))
-                    .unwrap_or(true);
-                if entity_visible {
-                    let bg = render_packet[screen.y as usize][screen.x as usize].2;
-                    render_packet[screen.y as usize][screen.x as usize] =
-                        (renderable.symbol.clone(), renderable.fg, bg);
-
-                    // Collect for visible entities panel.
-                    let full_name = display_name(name).to_string();
-                    visible_entity_infos.push((
-                        renderable.symbol.clone(),
-                        renderable.fg,
-                        renderable.bg,
-                        full_name,
-                    ));
-                }
+            if !in_bounds(screen, render_width, render_height) {
+                continue;
             }
+            // Only draw entities that are currently visible (not merely revealed)
+            let entity_visible = visible_tiles.map(|vt| vt.contains(&world)).unwrap_or(true);
+            if !entity_visible {
+                continue;
+            }
+
+            let draw_priority = match renderable.symbol.as_str() {
+                "@" => 2,
+                "X" => 1,
+                _ => 0,
+            };
+            visible_renderables.push((draw_priority, screen, renderable, name));
+
+            // Collect for visible entities panel.
+            let full_name = display_name(name).to_string();
+            visible_entity_infos.push((
+                renderable.symbol.clone(),
+                renderable.fg,
+                renderable.bg,
+                full_name,
+            ));
+        }
+        visible_renderables.sort_by_key(|(priority, _, _, _)| *priority);
+        for (_, screen, renderable, _) in visible_renderables {
+            let bg = render_packet[screen.y as usize][screen.x as usize].2;
+            render_packet[screen.y as usize][screen.x as usize] =
+                (renderable.symbol.clone(), renderable.fg, bg);
         }
 
         // Overlay combat particles on the render packet.
@@ -346,29 +386,53 @@ pub fn draw_system(
                 continue; // not yet visible
             }
             let screen = *particle_pos - bottom_left;
-            if in_bounds(screen, render_width, render_height)
-            {
+            if in_bounds(screen, render_width, render_height) {
                 let visible = visible_tiles
                     .map(|vt| vt.contains(particle_pos))
                     .unwrap_or(true);
                 if visible {
                     let bg = render_packet[screen.y as usize][screen.x as usize].2;
                     if *is_sand {
-                        // Smoke plume: particles fade through different symbols
-                        // as they drift and dissipate, creating a visible plume effect.
-                        let intensity = (*lifetime as f32 / SMOKE_PARTICLE_MAX_LIFETIME).clamp(0.2, 1.0);
-                        let (symbol, r, g, b) = if *lifetime > 6 {
-                            ("*", (220.0 * intensity) as u8, (190.0 * intensity) as u8, (130.0 * intensity) as u8)
-                        } else if *lifetime > 3 {
-                            ("*", (180.0 * intensity) as u8, (150.0 * intensity) as u8, (100.0 * intensity) as u8)
+                        // Smoke plume: gray billows that linger longer than the
+                        // opening flash so a breached wall reads as smoke, not
+                        // just a brief spark burst.
+                        let intensity =
+                            (*lifetime as f32 / SMOKE_PARTICLE_MAX_LIFETIME).clamp(0.2, 1.0);
+                        let (symbol, r, g, b) = if *lifetime > 18 {
+                            (
+                                "@",
+                                (190.0 * intensity) as u8,
+                                (190.0 * intensity) as u8,
+                                (190.0 * intensity) as u8,
+                            )
+                        } else if *lifetime > 10 {
+                            (
+                                "o",
+                                (160.0 * intensity) as u8,
+                                (160.0 * intensity) as u8,
+                                (165.0 * intensity) as u8,
+                            )
+                        } else if *lifetime > 5 {
+                            (
+                                "*",
+                                (125.0 * intensity) as u8,
+                                (125.0 * intensity) as u8,
+                                (130.0 * intensity) as u8,
+                            )
                         } else {
-                            ("*", (120.0 * intensity) as u8, (100.0 * intensity) as u8, (70.0 * intensity) as u8)
+                            (
+                                ".",
+                                (90.0 * intensity) as u8,
+                                (90.0 * intensity) as u8,
+                                (95.0 * intensity) as u8,
+                            )
                         };
                         render_packet[screen.y as usize][screen.x as usize] =
                             (symbol.into(), RatColor::Rgb(r, g, b), bg);
                     } else {
                         // Explosion/fire particle: visible movement with changing symbols
-                        let intensity = (*lifetime as f32 / PARTICLE_LIFETIME).clamp(MIN_EXPLOSION_INTENSITY, 1.0);
+                        let intensity = (*lifetime as f32 / PARTICLE_LIFETIME)
+                            .clamp(MIN_EXPLOSION_INTENSITY, 1.0);
                         let r = (255.0 * intensity) as u8;
                         let g = (165.0 * intensity) as u8;
                         let symbol = "*";
@@ -384,21 +448,19 @@ pub fn draw_system(
         let cursor_blink_visible = cursor.blink_visible();
         {
             let cursor_screen = cursor.pos - bottom_left;
-            if in_bounds(cursor_screen, render_width, render_height)
-                && cursor_blink_visible {
-                    let sx = cursor_screen.x as usize;
-                    let sy = cursor_screen.y as usize;
-                    // Invert fg and bg colors for the cursor cell.
-                    let (sym, fg, bg) = &render_packet[sy][sx];
-                    render_packet[sy][sx] = (sym.clone(), *bg, *fg);
-                }
+            if in_bounds(cursor_screen, render_width, render_height) && cursor_blink_visible {
+                let sx = cursor_screen.x as usize;
+                let sy = cursor_screen.y as usize;
+                // Invert fg and bg colors for the cursor cell.
+                let (sym, fg, bg) = &render_packet[sy][sx];
+                render_packet[sy][sx] = (sym.clone(), *bg, *fg);
+            }
         }
 
         // Render projectile entities on the map with fast blinking effect.
         for (proj_pos, proj_render, proj) in &projectiles {
             let screen = proj_pos.as_grid_vec() - bottom_left;
-            if in_bounds(screen, render_width, render_height)
-            {
+            if in_bounds(screen, render_width, render_height) {
                 let visible = visible_tiles
                     .map(|vt| vt.contains(&proj_pos.as_grid_vec()))
                     .unwrap_or(true);
@@ -420,30 +482,44 @@ pub fn draw_system(
                     render_packet[screen.y as usize][screen.x as usize] =
                         (proj_render.symbol.clone(), fg, bg);
 
-                    // Render tail (only for BulletTrail visuals)
-                    if proj.visual == ProjectileVisual::BulletTrail
-                        && let Some(tail) = proj.tail_pos {
-                            let tail_screen = tail - bottom_left;
-                            if in_bounds(tail_screen, render_width, render_height) {
-                                let tail_visible = visible_tiles
-                                    .map(|vt| vt.contains(&tail))
-                                    .unwrap_or(true);
-                                if tail_visible {
-                                    let tail_bg = render_packet[tail_screen.y as usize][tail_screen.x as usize].2;
-                                    let tail_fg = if let RatColor::Rgb(r, g, b) = proj_render.fg {
-                                        if blink_bright {
-                                            RatColor::Rgb(r.saturating_sub(60), g.saturating_sub(60), b.saturating_sub(60))
-                                        } else {
-                                            RatColor::Rgb(r / 3, g / 3, b / 3)
-                                        }
+                    // Render tail for fast moving linear projectiles.
+                    if matches!(
+                        proj.visual,
+                        ProjectileVisual::BulletTrail | ProjectileVisual::ShrapnelTrail
+                    )
+                        && let Some(tail) = proj.tail_pos
+                    {
+                        let tail_screen = tail - bottom_left;
+                        if in_bounds(tail_screen, render_width, render_height) {
+                            let tail_visible =
+                                visible_tiles.map(|vt| vt.contains(&tail)).unwrap_or(true);
+                            if tail_visible {
+                                let tail_bg =
+                                    render_packet[tail_screen.y as usize][tail_screen.x as usize].2;
+                                let tail_fg = if let RatColor::Rgb(r, g, b) = proj_render.fg {
+                                    if blink_bright {
+                                        RatColor::Rgb(
+                                            r.saturating_sub(60),
+                                            g.saturating_sub(60),
+                                            b.saturating_sub(60),
+                                        )
                                     } else {
-                                        proj_render.fg
-                                    };
-                                    render_packet[tail_screen.y as usize][tail_screen.x as usize] =
-                                        ("·".into(), tail_fg, tail_bg);
-                                }
+                                        RatColor::Rgb(r / 3, g / 3, b / 3)
+                                    }
+                                } else {
+                                    proj_render.fg
+                                };
+                                let tail_symbol = if proj.visual == ProjectileVisual::ShrapnelTrail
+                                {
+                                    "∙"
+                                } else {
+                                    "·"
+                                };
+                                render_packet[tail_screen.y as usize][tail_screen.x as usize] =
+                                    (tail_symbol.into(), tail_fg, tail_bg);
                             }
                         }
+                    }
                 }
             }
         }
@@ -452,8 +528,7 @@ pub fn draw_system(
         // (Sound indicators are pre-computed in particle_tick_system.)
         for event_pos in &spell_particles.sound_indicators {
             let screen = *event_pos - bottom_left;
-            if in_bounds(screen, render_width, render_height)
-            {
+            if in_bounds(screen, render_width, render_height) {
                 let bg = render_packet[screen.y as usize][screen.x as usize].2;
                 render_packet[screen.y as usize][screen.x as usize] =
                     ("!".into(), RatColor::Rgb(255, 255, 0), bg);
@@ -463,53 +538,62 @@ pub fn draw_system(
         // ── Final pass: re-draw entities OVER everything else ──
         // PlayerControlled and NPC symbols should always be drawn over every other symbol
         // (particles, projectiles, blood, etc.)
+        let mut final_pass_renderables: Vec<(i32, GridVec, &Renderable)> = Vec::new();
         for (pos, renderable, _) in &renderables {
-            let screen = pos.as_grid_vec() - bottom_left;
-            if in_bounds(screen, render_width, render_height)
-            {
-                let entity_visible = visible_tiles
-                    .map(|vt| vt.contains(&pos.as_grid_vec()))
-                    .unwrap_or(true);
-                if entity_visible {
-                    let bg = render_packet[screen.y as usize][screen.x as usize].2;
-                    render_packet[screen.y as usize][screen.x as usize] =
-                        (renderable.symbol.clone(), renderable.fg, bg);
-                }
+            let world = pos.as_grid_vec();
+            let screen = world - bottom_left;
+            if !in_bounds(screen, render_width, render_height) {
+                continue;
             }
+            let entity_visible = visible_tiles.map(|vt| vt.contains(&world)).unwrap_or(true);
+            if !entity_visible {
+                continue;
+            }
+            let draw_priority = match renderable.symbol.as_str() {
+                "@" => 2,
+                "X" => 1,
+                _ => 0,
+            };
+            final_pass_renderables.push((draw_priority, screen, renderable));
+        }
+        final_pass_renderables.sort_by_key(|(priority, _, _)| *priority);
+        for (_, screen, renderable) in final_pass_renderables {
+            let bg = render_packet[screen.y as usize][screen.x as usize].2;
+            render_packet[screen.y as usize][screen.x as usize] =
+                (renderable.symbol.clone(), renderable.fg, bg);
         }
 
         // ── Apply per-tile color noise (final step before rendering) ──
         // Each tile gets a deterministic ±TILE_COLOR_NOISE_RANGE jitter
         // on every RGB channel, seeded by its world coordinates.
         {
-            use crate::noise::{tile_color_noise, TILE_COLOR_NOISE_RANGE};
+            use crate::noise::{TILE_COLOR_NOISE_RANGE, tile_color_noise};
             for (screen_y, row) in render_packet.iter_mut().enumerate() {
                 for (screen_x, cell) in row.iter_mut().enumerate() {
                     let world = bottom_left + GridVec::new(screen_x as i32, screen_y as i32);
                     if let RatColor::Rgb(r, g, b) = cell.1 {
-                        let (nr, ng, nb) = tile_color_noise(r, g, b, world.x, world.y, TILE_COLOR_NOISE_RANGE);
+                        let (nr, ng, nb) =
+                            tile_color_noise(r, g, b, world.x, world.y, TILE_COLOR_NOISE_RANGE);
                         cell.1 = RatColor::Rgb(nr, ng, nb);
                     }
                     if let RatColor::Rgb(r, g, b) = cell.2 {
-                        let (nr, ng, nb) = tile_color_noise(r, g, b, world.x, world.y, TILE_COLOR_NOISE_RANGE);
+                        let (nr, ng, nb) =
+                            tile_color_noise(r, g, b, world.x, world.y, TILE_COLOR_NOISE_RANGE);
                         cell.2 = RatColor::Rgb(nr, ng, nb);
                     }
                 }
             }
         }
 
-        // ── Death darkening effect ─────────────────────────────────
-        // When the player is dead, tint the entire map background dark
-        // red and darken tiles in a circle around the player — the further
-        // a tile is from the player, the darker it becomes.
-        // The effect fades in gradually over ~120 frames (~2 seconds at 60 FPS).
+        // ── Death tint effect ──────────────────────────────────────
+        // When the player dies, apply a restrained red wash instead of
+        // a heavy blackout so the player can still watch the map.
         let player_is_dead = player_hp.is_some_and(|hp| hp.is_dead());
         if player_is_dead {
             death_fade.frames = death_fade.frames.saturating_add(1);
-            let fade = (death_fade.frames as f32 / DEATH_FADE_FRAMES as f32).min(1.0);
+            let fade = (death_fade.frames as f32 / DEATH_FADE_FRAMES as f32).min(1.0) * 0.35;
 
-            let player_screen = player_world_pos
-                .map(|pw| pw - bottom_left);
+            let player_screen = player_world_pos.map(|pw| pw - bottom_left);
             for (screen_y, row) in render_packet.iter_mut().enumerate() {
                 for (screen_x, cell) in row.iter_mut().enumerate() {
                     // Compute distance from the player in screen coordinates.
@@ -522,24 +606,21 @@ pub fn draw_system(
                         40
                     };
 
-                    // Darkening factor: 1.0 at player, 0.0 at ≥ DEATH_DARK_RADIUS.
-                    const DEATH_DARK_RADIUS: i32 = 20;
-                    let factor = 1.0 - (dist as f32 / DEATH_DARK_RADIUS as f32).min(1.0);
+                    // Strongest near the player, but never fades to black.
+                    const DEATH_TINT_RADIUS: i32 = 18;
+                    let focus = 1.0 - (dist as f32 / DEATH_TINT_RADIUS as f32).min(1.0);
+                    let tint = fade * (0.65 + focus * 0.35);
 
-                    // Tint both fg and bg toward dark red, scaled by fade.
-                    // Dark red base: (80, 0, 0).
                     if let RatColor::Rgb(r, g, b) = cell.1 {
-                        let nr = ((r as f32 * (1.0 - fade + fade * factor)) as u8)
-                            .max((80.0 * fade * (1.0 - factor)) as u8);
-                        let ng = (g as f32 * (1.0 - fade + fade * factor * 0.3)) as u8;
-                        let nb = (b as f32 * (1.0 - fade + fade * factor * 0.3)) as u8;
+                        let nr = ((r as f32 * (1.0 - tint * 0.08)) + 36.0 * tint) as u8;
+                        let ng = (g as f32 * (1.0 - tint * 0.22)) as u8;
+                        let nb = (b as f32 * (1.0 - tint * 0.18)) as u8;
                         cell.1 = RatColor::Rgb(nr, ng, nb);
                     }
                     if let RatColor::Rgb(r, g, b) = cell.2 {
-                        let nr = ((r as f32 * (1.0 - fade + fade * factor)) as u8)
-                            .max((80.0 * fade * (1.0 - factor)) as u8);
-                        let ng = (g as f32 * (1.0 - fade + fade * factor * 0.3)) as u8;
-                        let nb = (b as f32 * (1.0 - fade + fade * factor * 0.3)) as u8;
+                        let nr = ((r as f32 * (1.0 - tint * 0.10)) + 28.0 * tint) as u8;
+                        let ng = (g as f32 * (1.0 - tint * 0.28)) as u8;
+                        let nb = (b as f32 * (1.0 - tint * 0.24)) as u8;
                         cell.2 = RatColor::Rgb(nr, ng, nb);
                     }
                 }
@@ -554,9 +635,7 @@ pub fn draw_system(
             if y < render_packet.len() {
                 let spans: Vec<Span> = render_packet[y]
                     .iter()
-                    .map(|gt| {
-                        Span::from(gt.0.clone()).fg(gt.1).bg(gt.2)
-                    })
+                    .map(|gt| Span::from(gt.0.clone()).fg(gt.1).bg(gt.2))
                     .collect();
                 render_lines.push(Line::from(spans));
             }
@@ -566,13 +645,15 @@ pub fn draw_system(
         render_lines.reverse();
 
         let game_bg = if player_is_dead {
-            let fade = (death_fade.frames as f32 / DEATH_FADE_FRAMES as f32).min(1.0);
-            let r = (80.0 * fade) as u8;
-            RatColor::Rgb(r, 0, 0) // gradually darken to dark red when dead
+            let fade = (death_fade.frames as f32 / DEATH_FADE_FRAMES as f32).min(1.0) * 0.25;
+            RatColor::Rgb((18.0 * fade) as u8, 0, 0)
         } else {
             RatColor::Black
         };
-        frame.render_widget(Paragraph::new(Text::from(render_lines)).bg(game_bg), game_area);
+        frame.render_widget(
+            Paragraph::new(Text::from(render_lines)).bg(game_bg),
+            game_area,
+        );
 
         // Collect inventory item names and kinds for the bottom panel and inventory overlay.
         let inv_item_info: Vec<(String, String)> = player_inv
@@ -580,19 +661,20 @@ pub fn draw_system(
                 inv.items
                     .iter()
                     .map(|&ent| {
-                        let name = item_query
-                            .get(ent)
-                            .ok()
-                            .and_then(|(n, _)| n);
+                        let name = item_query.get(ent).ok().and_then(|(n, _)| n);
                         let name_str = item_display_name(name).to_string();
-                        let desc = item_query
-                            .get(ent)
-                            .ok()
-                            .and_then(|(_, k)| k)
-                            .map_or("".to_string(), |k| match k {
-                                ItemKind::Gun { loaded, capacity, caliber, .. } => format!("{loaded}/{capacity} {caliber}"),
+                        let desc = item_query.get(ent).ok().and_then(|(_, k)| k).map_or(
+                            "".to_string(),
+                            |k| match k {
+                                ItemKind::Gun {
+                                    loaded,
+                                    capacity,
+                                    caliber,
+                                    ..
+                                } => format!("{loaded}/{capacity} {caliber}"),
                                 _ => "".to_string(),
-                            });
+                            },
+                        );
                         (name_str, desc)
                     })
                     .collect()
@@ -614,14 +696,22 @@ pub fn draw_system(
 
         // Ground & prop from map
         if let Some(voxel) = game_map.0.get_voxel_at(&cursor_world) {
-            cursor_ground = voxel.floor.as_ref().map_or("(void)".into(), |f| format!("{f:?}"));
-            cursor_prop = voxel.props.as_ref().map_or("(none)".into(), |p| format!("{p}"));
+            cursor_ground = voxel
+                .floor
+                .as_ref()
+                .map_or("(void)".into(), |f| format!("{f:?}"));
+            cursor_prop = voxel
+                .props
+                .as_ref()
+                .map_or("(none)".into(), |p| format!("{p}"));
             // Effects
             if let Some(ref floor) = voxel.floor {
                 match floor {
                     crate::typeenums::Floor::SandCloud => cursor_effects.push("Smoke Cloud".into()),
                     crate::typeenums::Floor::Fire => cursor_effects.push("Fire".into()),
-                    crate::typeenums::Floor::ShallowWater => cursor_effects.push("Shallow Water".into()),
+                    crate::typeenums::Floor::ShallowWater => {
+                        cursor_effects.push("Shallow Water".into())
+                    }
                     crate::typeenums::Floor::DeepWater => cursor_effects.push("Deep Water".into()),
                     _ => {}
                 }
@@ -633,24 +723,25 @@ pub fn draw_system(
 
         // NPCs and ground items at cursor
         for (npc_pos, npc_name, npc_fac, npc_inv, npc_hp) in &npc_info_query {
-            if npc_pos.as_grid_vec() == cursor_world
-                && cursor_npc_name.is_empty() {
-                    cursor_npc_name = display_name(npc_name).to_string();
-                    cursor_npc_faction = npc_fac.map_or("".into(), |f| format!("{f:?}"));
-                    // Hostility is faction-based: all NPCs with a faction are hostile to the player.
-                    cursor_npc_hostile = npc_fac.is_some();
-                    if let Some(hp) = npc_hp {
-                        cursor_npc_hp = format!("{}/{}", hp.current, hp.max);
-                    }
-                    if let Some(inv) = npc_inv {
-                        for &item_ent in &inv.items {
-                            let iname = item_query.get(item_ent).ok()
-                                .and_then(|(n, _)| n)
-                                .map_or("?".into(), |n| n.0.clone());
-                            cursor_npc_inv.push(iname);
-                        }
+            if npc_pos.as_grid_vec() == cursor_world && cursor_npc_name.is_empty() {
+                cursor_npc_name = display_name(npc_name).to_string();
+                cursor_npc_faction = npc_fac.map_or("".into(), |f| format!("{f:?}"));
+                // Hostility is faction-based: all NPCs with a faction are hostile to the player.
+                cursor_npc_hostile = npc_fac.is_some();
+                if let Some(hp) = npc_hp {
+                    cursor_npc_hp = format!("{}/{}", hp.current, hp.max);
+                }
+                if let Some(inv) = npc_inv {
+                    for &item_ent in &inv.items {
+                        let iname = item_query
+                            .get(item_ent)
+                            .ok()
+                            .and_then(|(n, _)| n)
+                            .map_or("?".into(), |n| n.0.clone());
+                        cursor_npc_inv.push(iname);
                     }
                 }
+            }
         }
 
         // Ground items at cursor (items with Position that are NOT in NPC inventories)
@@ -701,7 +792,7 @@ pub fn draw_system(
 
         // Show "VICTORY" overlay centered on game area when the gate is destroyed
         if *state.get() == GameState::Victory {
-            let label = " VICTORY! You escaped the town! Press R to restart. ";
+            let label = " VICTORY! You escaped Yerba Buena! Press R to restart. ";
             let label_width = label.len() as u16;
             if render_width >= label_width && render_height >= 1 {
                 let cx = game_area.x + (render_width - label_width) / 2;
@@ -776,9 +867,9 @@ fn render_bottom_panel(
     let horiz_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(22),   // Stats column (HP, Stamina)
-            Constraint::Min(1),       // Central log (wide, fills remaining space)
-            Constraint::Length(40),   // Cursor info (two sub-columns)
+            Constraint::Length(22), // Stats column (HP, Stamina)
+            Constraint::Min(1),     // Central log (wide, fills remaining space)
+            Constraint::Length(40), // Cursor info (two sub-columns)
         ])
         .split(area);
 
@@ -791,10 +882,11 @@ fn render_bottom_panel(
 
     // ── Central Log (middle) ────────────────────────────────────
     let log_height = log_area.height.saturating_sub(2) as usize;
-    let log_lines: Vec<Line> = combat_log.recent(log_height.max(1))
-    .into_iter()
-    .map(|s| Line::from(format!(" {s}")).dark_gray())
-    .collect();
+    let log_lines: Vec<Line> = combat_log
+        .recent(log_height.max(1))
+        .into_iter()
+        .map(|s| Line::from(format!(" {s}")).dark_gray())
+        .collect();
 
     let title = format!(" Log | Tick:{} Kills:{} ", turn_counter.0, kill_count.0);
     frame.render_widget(
@@ -803,15 +895,31 @@ fn render_bottom_panel(
         } else {
             log_lines
         })
-        .block(Block::default().borders(Borders::ALL).title(title))
+        .style(Style::default().bg(UI_BG))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .style(Style::default().bg(UI_BG)),
+        )
         .wrap(Wrap { trim: true }),
         log_area,
     );
 
     // ── Cursor Info (right, two sub-columns) ────────────────────
-    render_cursor_info(frame, cursor_info_area, cursor_ground, cursor_prop,
-        cursor_npc_name, cursor_npc_faction, cursor_npc_hp, cursor_npc_hostile,
-        cursor_npc_inv, cursor_ground_items, cursor_effects);
+    render_cursor_info(
+        frame,
+        cursor_info_area,
+        cursor_ground,
+        cursor_prop,
+        cursor_npc_name,
+        cursor_npc_faction,
+        cursor_npc_hp,
+        cursor_npc_hostile,
+        cursor_npc_inv,
+        cursor_ground_items,
+        cursor_effects,
+    );
 }
 
 /// Renders the stats column (HP, Stamina gauges stacked vertically).
@@ -830,51 +938,91 @@ fn render_stats_column(
             Constraint::Length(1), // Collectibles row 1
             Constraint::Length(1), // Collectibles row 2
             Constraint::Length(1), // Collectibles row 3
-            Constraint::Min(0),   // padding
+            Constraint::Length(1), // Collectibles row 4
         ])
-        .split(Block::default().borders(Borders::ALL).title("Stats").inner(area));
+        .split(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Stats")
+                .style(Style::default().bg(UI_BG))
+                .inner(area),
+        );
 
     frame.render_widget(
-        Block::default().borders(Borders::ALL).title("Stats"),
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Stats")
+            .style(Style::default().bg(UI_BG)),
         area,
     );
 
     // HP
     if let Some(hp) = player_hp {
-        let ratio = if hp.max > 0 { (hp.current as f64 / hp.max as f64).clamp(0.0, 1.0) } else { 0.0 };
+        let percent = if hp.max > 0 {
+            ((hp.current.max(0) as f64 / hp.max as f64) * 100.0).round() as u16
+        } else {
+            0
+        };
         let gauge = Gauge::default()
-            .gauge_style(ratatui::style::Style::default().fg(ratatui::style::Color::Red).bg(ratatui::style::Color::DarkGray))
-            .ratio(ratio)
-            .label(Span::from(format!("HP {}/{}", hp.current, hp.max)).style(ratatui::style::Style::default().fg(ratatui::style::Color::White)));
+            .gauge_style(Style::default().fg(Color::Red).bg(Color::DarkGray))
+            .percent(percent.min(100))
+            .label(
+                Span::from(format!("HP {}/{}", hp.current, hp.max))
+                    .style(Style::default().fg(Color::White)),
+            );
         frame.render_widget(gauge, chunks[0]);
     }
 
     // Stamina
     if let Some(stamina) = player_stamina {
-        let ratio = if stamina.max > 0 { (stamina.current as f64 / stamina.max as f64).clamp(0.0, 1.0) } else { 0.0 };
+        let percent = if stamina.max > 0 {
+            ((stamina.current.max(0) as f64 / stamina.max as f64) * 100.0).round() as u16
+        } else {
+            0
+        };
         let gauge = Gauge::default()
-            .gauge_style(ratatui::style::Style::default().fg(ratatui::style::Color::Blue).bg(ratatui::style::Color::DarkGray))
-            .ratio(ratio)
-            .label(Span::from(format!("STA {}/{}", stamina.current, stamina.max)).style(ratatui::style::Style::default().fg(ratatui::style::Color::White)));
+            .gauge_style(Style::default().fg(Color::Blue).bg(Color::DarkGray))
+            .percent(percent.min(100))
+            .label(
+                Span::from(format!("STA {}/{}", stamina.current, stamina.max))
+                    .style(Style::default().fg(Color::White)),
+            );
         frame.render_widget(gauge, chunks[1]);
     }
 
     // Collectibles — 3 entries per row
     let row1 = format!(
-        "Cap:{} Pdr:{} .31:{}",
-        collectibles.caps, collectibles.powder, collectibles.bullets_31,
+        "Cap:{} Pdr:{} Arr:{}",
+        collectibles.caps, collectibles.powder, collectibles.arrows,
     );
     let row2 = format!(
-        ".36:{} .44:{} .50:{}",
-        collectibles.bullets_36, collectibles.bullets_44, collectibles.bullets_50,
+        ".31:{} .36:{} .44:{}",
+        collectibles.bullets_31, collectibles.bullets_36, collectibles.bullets_44,
     );
     let row3 = format!(
-        ".58:{} .577:{} .69:{}",
-        collectibles.bullets_58, collectibles.bullets_577, collectibles.bullets_69,
+        ".50:{} .58:{} .577:{}",
+        collectibles.bullets_50, collectibles.bullets_58, collectibles.bullets_577,
     );
-    frame.render_widget(Paragraph::new(Line::from(row1).dark_gray()), chunks[2]);
-    frame.render_widget(Paragraph::new(Line::from(row2).dark_gray()), chunks[3]);
-    frame.render_widget(Paragraph::new(Line::from(row3).dark_gray()), chunks[4]);
+    let row4 = format!(
+        ".69:{}",
+        collectibles.bullets_69,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(row1).white()).style(Style::default().bg(UI_BG)),
+        chunks[2],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(row2).white()).style(Style::default().bg(UI_BG)),
+        chunks[3],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(row3).white()).style(Style::default().bg(UI_BG)),
+        chunks[4],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(row4).white()).style(Style::default().bg(UI_BG)),
+        chunks[5],
+    );
 }
 
 /// Renders the cursor info panel as a two-column display.
@@ -892,8 +1040,18 @@ fn render_cursor_info(
     cursor_ground_items: &[String],
     cursor_effects: &[String],
 ) {
-    let inner = Block::default().borders(Borders::ALL).title("Cursor").inner(area);
-    frame.render_widget(Block::default().borders(Borders::ALL).title("Cursor"), area);
+    let inner = Block::default()
+        .borders(Borders::ALL)
+        .title("Cursor")
+        .style(Style::default().bg(UI_BG))
+        .inner(area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Cursor")
+            .style(Style::default().bg(UI_BG)),
+        area,
+    );
 
     // Split into two columns
     let cols = Layout::default()
@@ -930,14 +1088,19 @@ fn render_cursor_info(
             ]));
         }
         for item_name in cursor_npc_inv.iter() {
-            if left_lines.len() >= max_lines { break; }
+            if left_lines.len() >= max_lines {
+                break;
+            }
             left_lines.push(Line::from(vec![
                 Span::from(format!("  {item_name}")).white(),
             ]));
         }
     }
     left_lines.truncate(max_lines);
-    frame.render_widget(Paragraph::new(left_lines), cols[0]);
+    frame.render_widget(
+        Paragraph::new(left_lines).style(Style::default().bg(UI_BG)),
+        cols[0],
+    );
 
     // ── Right column: Ground items, effects ──
     let mut right_lines: Vec<Line> = Vec::new();
@@ -950,7 +1113,9 @@ fn render_cursor_info(
     if !cursor_effects.is_empty() {
         right_lines.push(Line::from(" Effects:").bold().dark_gray());
         for effect in cursor_effects {
-            if right_lines.len() >= max_lines { break; }
+            if right_lines.len() >= max_lines {
+                break;
+            }
             right_lines.push(Line::from(format!("  {effect}")).yellow());
         }
     }
@@ -958,7 +1123,10 @@ fn render_cursor_info(
         right_lines.push(Line::from(" (empty)").dark_gray());
     }
     right_lines.truncate(max_lines);
-    frame.render_widget(Paragraph::new(right_lines), cols[1]);
+    frame.render_widget(
+        Paragraph::new(right_lines).style(Style::default().bg(UI_BG)),
+        cols[1],
+    );
 }
 
 /// Renders the inventory bar as a wide horizontal bar showing usable items.
@@ -985,7 +1153,13 @@ fn render_inventory_bar(
     let line = Line::from(spans);
     frame.render_widget(
         Paragraph::new(line)
-            .block(Block::default().borders(Borders::ALL).title("Inventory 1-0:Use")),
+            .style(Style::default().bg(UI_BG))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Inventory 1-0:Use")
+                    .style(Style::default().bg(UI_BG)),
+            ),
         area,
     );
 }
@@ -996,8 +1170,10 @@ fn render_inventory_bar(
 fn render_command_bar(frame: &mut ratatui::Frame, area: Rect, input_state: &InputState) {
     let spans = if input_state.mode == InputMode::EscMenu {
         vec![
-            Span::from(" Q").bold().yellow(), Span::from(":Resume ").dark_gray(),
-            Span::from("R").bold().yellow(), Span::from(":Restart ").dark_gray(),
+            Span::from(" Q").bold().yellow(),
+            Span::from(":Resume ").dark_gray(),
+            Span::from("R").bold().yellow(),
+            Span::from(":Restart ").dark_gray(),
         ]
     } else {
         let mut s: Vec<Span> = Vec::new();
@@ -1018,8 +1194,7 @@ fn render_command_bar(frame: &mut ratatui::Frame, area: Rect, input_state: &Inpu
 fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
     let binding_count = KEYBINDINGS.len() as u16;
     let w = 62u16.min(game_area.width.saturating_sub(4));
-    // Extra lines: alliances(7) + roundhouse(3) = 10 more lines
-    let h = (binding_count + 23).min(game_area.height.saturating_sub(4));
+    let h = (binding_count + 29).min(game_area.height.saturating_sub(4));
 
     if w < 20 || h < 10 {
         return;
@@ -1038,24 +1213,38 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
 
     let mut lines = vec![
         Line::from(""),
-        Line::from("  -*-  DEAD MAN'S HAND  -*-").bold().yellow(),
+        Line::from("  -*-  ESCAPE FROM YERBA BUENA  -*-").bold().yellow(),
         Line::from(""),
-        Line::from("  Welcome to a peaceful frontier town.").white(),
-        Line::from("  Walk around, talk to folks, visit the").white(),
-        Line::from("  saloon for a drink. Everyone minds").white(),
-        Line::from("  their own business... unless you start").white(),
-        Line::from("  trouble.").white(),
+        Line::from("  You were in a riverfront cell when the").white(),
+        Line::from("  wall came apart in fire and smoke.").white(),
+        Line::from("  Somebody broke you out, but that does").white(),
+        Line::from("  not make them allies. Four gangs are").white(),
+        Line::from("  already tearing the city to pieces.").white(),
         Line::from(""),
-        Line::from("  Kick (F) or Throw sand (G) to start").yellow(),
-        Line::from("  a brawl! Their faction will aggro.").yellow(),
-        Line::from("  Cause too much chaos and sheriffs will").yellow(),
-        Line::from("  come after you (star level).").yellow(),
+        Line::from("  HOW TO PLAY").bold().yellow(),
+        Line::from("  Reach any edge of Yerba Buena alive to escape.").white(),
+        Line::from("  Aim with IJKL, then press 1-0 to use the").white(),
+        Line::from("  matching item slot in the inventory bar.").white(),
+        Line::from("  Guns need the right bullets, caps, and powder.").white(),
+        Line::from("  Booze heals. Grenades and molotovs clear rooms.").white(),
+        Line::from(""),
+        Line::from("  Stay moving, pick your fights, take what").yellow(),
+        Line::from("  you need, and get out before the whole").yellow(),
+        Line::from("  town turns into a killbox. Nobody in").yellow(),
+        Line::from("  this city is coming to save you.").yellow(),
+        Line::from("  Roundhouse (F) also smashes props around").yellow(),
+        Line::from("  you, opening space when a room gets tight.").yellow(),
         Line::from(""),
     ];
     for binding in KEYBINDINGS {
+        let desc = if binding.name == "Roundhouse" {
+            "Roundhouse (breaks nearby props)"
+        } else {
+            binding.name
+        };
         lines.push(Line::from(vec![
             Span::from(format!("  {:<16}", binding.key)).bold().yellow(),
-            Span::from(binding.name.to_string()).white(),
+            Span::from(desc.to_string()).white(),
         ]));
     }
     lines.push(Line::from(""));
@@ -1067,7 +1256,9 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
                 Block::default()
                     .borders(Borders::ALL)
                     .title(" Welcome ")
-                    .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Yellow)),
+                    .border_style(
+                        ratatui::style::Style::default().fg(ratatui::style::Color::Yellow),
+                    ),
             )
             .wrap(Wrap { trim: false })
             .on_black(),
@@ -1077,32 +1268,33 @@ fn render_welcome_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
 
 /// Renders the ESC menu overlay with Resume and Restart options.
 fn render_esc_menu_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
-    // Build keybinding reference grouped by category from the live binding map.
-    let categories = ["Movement", "Combat", "Inventory", "Other"];
     let mut lines: Vec<Line> = Vec::new();
 
-    // Prominent restart line at the top
     lines.push(Line::from(""));
     lines.push(Line::from("  R — Restart").bold().yellow());
     lines.push(Line::from(""));
     lines.push(Line::from("  Q — Resume").white());
     lines.push(Line::from(""));
+    lines.push(Line::from("  HOW TO PLAY").bold().yellow());
+    lines.push(Line::from("  Escape by reaching any edge of Yerba Buena alive.").white());
+    lines.push(Line::from("  Aim with IJKL, then press 1-0 to use that slot.").white());
+    lines.push(Line::from("  Reload with R. Roundhouse with F breaks nearby props.").white());
+    lines.push(Line::from("  Pick up gear, manage stamina, and let gangs fight each other.").white());
+    lines.push(Line::from(""));
+    lines.push(Line::from("  CONTROLS").bold().dark_gray());
 
-    // Full keybinding reference derived from the live binding map.
-    for cat in &categories {
-        let group: Vec<&crate::systems::input::CommandBinding> = KEYBINDINGS.iter()
-            .filter(|b| b.category == *cat)
-            .collect();
-        if group.is_empty() { continue; }
-        lines.push(Line::from(format!("  {cat}")).bold().dark_gray());
-        for binding in &group {
-            lines.push(Line::from(format!("    [{}]  {}", binding.key, binding.name)).white());
-        }
+    for binding in KEYBINDINGS {
+        let label = if binding.name == "Roundhouse" {
+            format!("    [{}]  {}", binding.key, binding.docs)
+        } else {
+            format!("    [{}]  {}", binding.key, binding.docs)
+        };
+        lines.push(Line::from(label).white());
     }
     lines.push(Line::from(""));
 
     let content_height = lines.len() as u16 + 2; // +2 for border
-    let w = 44u16.min(game_area.width.saturating_sub(4));
+    let w = 72u16.min(game_area.width.saturating_sub(4));
     let h = content_height.min(game_area.height.saturating_sub(4));
 
     if w < 20 || h < 5 {
@@ -1126,7 +1318,9 @@ fn render_esc_menu_overlay(frame: &mut ratatui::Frame, game_area: Rect) {
                 Block::default()
                     .borders(Borders::ALL)
                     .title(" Menu ")
-                    .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Yellow)),
+                    .border_style(
+                        ratatui::style::Style::default().fg(ratatui::style::Color::Yellow),
+                    ),
             )
             .wrap(Wrap { trim: false })
             .on_black(),

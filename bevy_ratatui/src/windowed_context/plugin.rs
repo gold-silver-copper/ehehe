@@ -13,7 +13,8 @@ pub struct WindowedPlugin;
 
 impl Plugin for WindowedPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostStartup, terminal_render_setup)
+        app.insert_resource(ClearColor(Color::BLACK))
+            .add_systems(PostStartup, terminal_render_setup)
             .add_systems(PreUpdate, handle_resize_messages)
             .add_systems(Update, render_terminal_to_handle);
     }

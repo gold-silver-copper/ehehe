@@ -1,6 +1,6 @@
 use crate::graphic_trait::GraphicElement;
-use crate::typeenums::{Floor, Props};
 use crate::typedefs::{GraphicTriple, RatColor};
+use crate::typeenums::{Floor, Props};
 
 /// A single cell in the game map grid.
 ///

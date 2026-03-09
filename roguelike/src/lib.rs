@@ -11,6 +11,6 @@ pub mod noise;
 pub mod plugins;
 pub mod resources;
 pub mod systems;
-pub mod typeenums;
 pub mod typedefs;
+pub mod typeenums;
 pub mod voxel;

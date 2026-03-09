@@ -2,11 +2,12 @@ use bevy::prelude::*;
 
 use crate::components::{
     CollectibleKind, Dead, Health, Inventory, Item, ItemKind, Name, PlayerControlled, Position,
-    item_display_name,
+    Stamina, item_display_name,
 };
 use crate::events::{PickupItemIntent, ThrowItemIntent, UseItemIntent};
 use crate::grid_vec::GridVec;
 use crate::resources::{Collectibles, CombatLog, InputState, SpatialIndex};
+use crate::systems::input::THROW_ITEM_STAMINA_COST;
 
 /// Maximum inventory capacity (unified for players and NPCs).
 pub const MAX_INVENTORY_SLOTS: usize = 9;
@@ -66,6 +67,7 @@ pub fn use_item_system(
     mut inventory_query: Query<&mut Inventory>,
     mut health_query: Query<&mut Health>,
     mut item_kind_query: Query<(&mut ItemKind, Option<&Name>)>,
+    user_names: Query<Option<&Name>>,
     mut combat_log: ResMut<CombatLog>,
     mut collectibles: ResMut<Collectibles>,
 ) {
@@ -85,6 +87,12 @@ pub fn use_item_system(
         };
 
         let item_name = item_display_name(name);
+        let user_name = user_names
+            .get(intent.user)
+            .ok()
+            .flatten()
+            .map(|name| name.0.as_str())
+            .unwrap_or("Someone");
 
         // Dereference Bevy's `Mut<ItemKind>` wrapper to pattern match.
         // This borrows the inner value immutably first; if we need to mutate
@@ -99,7 +107,7 @@ pub fn use_item_system(
                 let heal = *heal;
                 if let Ok(mut hp) = health_query.get_mut(intent.user) {
                     let healed = hp.heal(heal);
-                    combat_log.push(format!("Used {item_name}, healed {healed} HP"));
+                    combat_log.push(format!("{user_name} used {item_name}, healed {healed} HP"));
                 }
                 inv.remove_at(intent.item_index);
                 commands.entity(item_entity).despawn();
@@ -109,24 +117,33 @@ pub fn use_item_system(
                 inv.remove_at(intent.item_index);
                 commands.entity(item_entity).despawn();
             }
-            ItemKind::Gun { loaded, capacity, caliber, name: gun_name, .. } => {
+            ItemKind::Gun {
+                loaded,
+                capacity,
+                caliber,
+                name: gun_name,
+                ..
+            } => {
                 let gun_name = gun_name.clone();
                 let caliber = *caliber;
                 let loaded = *loaded;
                 let capacity = *capacity;
 
                 if loaded >= capacity {
-                    combat_log.push(format!("{gun_name} is fully loaded ({capacity}/{capacity})"));
+                    combat_log.push(format!(
+                        "{gun_name} is fully loaded ({capacity}/{capacity})"
+                    ));
                 } else if collectibles.can_reload(caliber) {
                     collectibles.consume_reload(caliber);
                     if let Ok((mut kind_mut, _)) = item_kind_query.get_mut(item_entity)
-                        && let ItemKind::Gun { ref mut loaded, .. } = *kind_mut {
-                            *loaded += 1;
-                            combat_log.push(format!(
-                                "Loaded 1 round into {gun_name} ({}/{capacity})",
-                                *loaded
-                            ));
-                        }
+                        && let ItemKind::Gun { ref mut loaded, .. } = *kind_mut
+                    {
+                        *loaded += 1;
+                        combat_log.push(format!(
+                            "Loaded 1 round into {gun_name} ({}/{capacity})",
+                            *loaded
+                        ));
+                    }
                 } else {
                     combat_log.push(format!(
                         "Need: 1 {caliber} bullet, 1 cap, 1 powder to reload {gun_name}"
@@ -167,14 +184,16 @@ pub fn reload_system(
     };
 
     // Collect all guns that are not fully loaded.
-    let gun_entities: Vec<Entity> = inv.items.iter().copied().filter(|&ent| {
-        item_kind_query
-            .get(ent)
-            .ok()
-            .is_some_and(|(k, _)| {
-                matches!(k, ItemKind::Gun { loaded, capacity, .. } if *loaded < *capacity)
-            })
-    }).collect();
+    let gun_entities: Vec<Entity> = inv
+        .items
+        .iter()
+        .copied()
+        .filter(|&ent| {
+            item_kind_query.get(ent).ok().is_some_and(
+                |(k, _)| matches!(k, ItemKind::Gun { loaded, capacity, .. } if *loaded < *capacity),
+            )
+        })
+        .collect();
 
     if gun_entities.is_empty() {
         combat_log.push("No guns need reloading.".into());
@@ -197,13 +216,18 @@ pub fn reload_system(
         if collectibles.can_reload(caliber) {
             collectibles.consume_reload(caliber);
             if let Ok((mut kind_mut, _)) = item_kind_query.get_mut(*gun_ent)
-                && let ItemKind::Gun { ref mut loaded, capacity, .. } = *kind_mut {
-                    *loaded += 1;
-                    combat_log.push(format!(
-                        "Loaded 1 round into {gun_name} ({}/{capacity})",
-                        *loaded
-                    ));
-                }
+                && let ItemKind::Gun {
+                    ref mut loaded,
+                    capacity,
+                    ..
+                } = *kind_mut
+            {
+                *loaded += 1;
+                combat_log.push(format!(
+                    "Loaded 1 round into {gun_name} ({}/{capacity})",
+                    *loaded
+                ));
+            }
             return;
         }
     }
@@ -211,11 +235,12 @@ pub fn reload_system(
     // No gun could be reloaded — report the first gun's requirements.
     let first_gun = gun_entities[0];
     if let Ok((ref kind, _)) = item_kind_query.get(first_gun)
-        && let ItemKind::Gun { caliber, name, .. } = kind {
-            combat_log.push(format!(
-                "Need: 1 {caliber} bullet, 1 cap, 1 powder to reload {name}"
-            ));
-        }
+        && let ItemKind::Gun { caliber, name, .. } = kind
+    {
+        combat_log.push(format!(
+            "Need: 1 {caliber} bullet, 1 cap, 1 powder to reload {name}"
+        ));
+    }
 }
 
 /// Auto-pickup system: automatically picks up any item when the player walks
@@ -252,11 +277,12 @@ pub fn auto_pickup_system(
         }
 
         if let Ok(mut inv) = inventory_query.single_mut()
-            && inv.items.len() < MAX_INVENTORY_SLOTS {
-                commands.entity(item_entity).remove::<Position>();
-                inv.items.push(item_entity);
-                combat_log.push(format!("Picked up {name_str}"));
-            }
+            && inv.items.len() < MAX_INVENTORY_SLOTS
+        {
+            commands.entity(item_entity).remove::<Position>();
+            inv.items.push(item_entity);
+            combat_log.push(format!("Picked up {name_str}"));
+        }
     }
 }
 
@@ -267,14 +293,21 @@ pub fn auto_pickup_system(
 pub fn throw_system(
     mut intents: MessageReader<ThrowItemIntent>,
     mut commands: Commands,
-    mut inventory_query: Query<(&mut Inventory, &Position), With<PlayerControlled>>,
+    mut inventory_query: Query<(&mut Inventory, &Position, Option<&mut Stamina>), With<PlayerControlled>>,
     mut combat_log: ResMut<CombatLog>,
     name_query: Query<Option<&Name>>,
 ) {
     for intent in intents.read() {
-        let Ok((mut inv, player_pos)) = inventory_query.single_mut() else {
+        let Ok((mut inv, player_pos, stamina)) = inventory_query.single_mut() else {
             continue;
         };
+
+        if let Some(mut stamina) = stamina
+            && !stamina.spend(THROW_ITEM_STAMINA_COST)
+        {
+            combat_log.push("Not enough stamina to throw!".into());
+            continue;
+        }
 
         // Remove from inventory
         if let Some(idx) = inv.items.iter().position(|&e| e == intent.item_entity) {
@@ -283,9 +316,7 @@ pub fn throw_system(
             continue;
         }
 
-        let item_name = item_display_name(
-            name_query.get(intent.item_entity).ok().flatten()
-        );
+        let item_name = item_display_name(name_query.get(intent.item_entity).ok().flatten());
 
         let origin = player_pos.as_grid_vec();
         let endpoint = origin + GridVec::new(intent.dx * intent.range, intent.dy * intent.range);
