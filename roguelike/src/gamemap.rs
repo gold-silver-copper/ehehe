@@ -8,6 +8,11 @@ use crate::voxel::Voxel;
 
 /// Side length of a map chunk (tiles). Used for chunk-based spatial queries.
 pub const CHUNK_SIZE: CoordinateUnit = 16;
+// Hash constants for lightweight 2D coordinate mixing used by procedural helpers.
+const NOISE_X_PRIME: u64 = 73_856_093;
+const NOISE_Y_PRIME: u64 = 19_349_663;
+const NOISE_MIXER: u64 = 1_274_126_177;
+const NOISE_FINALIZER: u32 = 2_654_435_761;
 
 /// The game map: a simple 2D grid of voxels.
 pub struct GameMap {
@@ -86,7 +91,6 @@ impl TerrainPhase {
     fn create_map(width: CoordinateUnit, height: CoordinateUnit, seed: NoiseSeed) -> GameMap {
         let biome_seed = seed;
         let detail_seed = seed.wrapping_add(12345);
-
         let mut voxels = Vec::with_capacity(height as usize);
         for y in 0..height {
             let mut row = Vec::with_capacity(width as usize);
@@ -3124,15 +3128,17 @@ fn place_building(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
                 }
 
                 // Door positions
-                let is_door = y == b.y + b.h - 1
+                let is_door = (y == b.y + b.h - 1
                     && x == b.x + b.w / 2
-                    && (shape_type != SHAPE_L || x < notch_x_start);
+                    && (shape_type != SHAPE_L || x < notch_x_start))
+                    || (y == b.y && x == b.x + b.w / 2);
 
                 // Side doors for bigger buildings
                 let is_side_door = if building_has_side_door(b) {
-                    x == b.x + b.w - 1
-                        && y == b.y + b.h / 2
-                        && (shape_type != SHAPE_L || y < notch_y_start)
+                    (x == b.x && y == b.y + b.h / 2)
+                        || (x == b.x + b.w - 1
+                            && y == b.y + b.h / 2
+                            && (shape_type != SHAPE_L || y < notch_y_start))
                 } else {
                     false
                 };
@@ -3552,13 +3558,15 @@ fn validate_building_walls(map: &mut GameMap, b: &Building, seed: NoiseSeed) {
                 false
             };
             // Door positions
-            let is_door = y == b.y + b.h - 1
+            let is_door = (y == b.y + b.h - 1
                 && x == b.x + b.w / 2
-                && (shape_type != SHAPE_L || x < notch_x_start);
+                && (shape_type != SHAPE_L || x < notch_x_start))
+                || (y == b.y && x == b.x + b.w / 2);
             let is_side_door = if building_has_side_door(b) {
-                x == b.x + b.w - 1
-                    && y == b.y + b.h / 2
-                    && (shape_type != SHAPE_L || y < notch_y_start)
+                (x == b.x && y == b.y + b.h / 2)
+                    || (x == b.x + b.w - 1
+                        && y == b.y + b.h / 2
+                        && (shape_type != SHAPE_L || y < notch_y_start))
             } else {
                 false
             };
@@ -5750,6 +5758,13 @@ pub fn clear_around_collect_walls(
         }
     }
     removed_walls
+}
+
+/// Hash-based deterministic pseudo-noise used for procedural tile variation.
+fn procedural_noise(x: CoordinateUnit, y: CoordinateUnit) -> u32 {
+    let mut n = (x as u64).wrapping_mul(NOISE_X_PRIME) ^ (y as u64).wrapping_mul(NOISE_Y_PRIME);
+    n = (n ^ (n >> 13)).wrapping_mul(NOISE_MIXER);
+    (n as u32).wrapping_mul(NOISE_FINALIZER)
 }
 
 impl Default for GameMap {

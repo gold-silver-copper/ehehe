@@ -1,10 +1,10 @@
 /// Floor tile types for the game map.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Floor {
-    Gravel,
+    Grass,
     Sand,
     Dirt,
-    Grass,
+    Gravel,
     TallGrass,
     ScorchedEarth,
     WoodPlanks,
